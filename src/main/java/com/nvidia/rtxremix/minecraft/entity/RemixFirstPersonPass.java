@@ -140,6 +140,11 @@ public final class RemixFirstPersonPass implements AutoCloseable {
         return pendingResult != null;
     }
 
+    /** Whether {@code result} is this pass's first-person model rather than an entity in the world. */
+    static boolean isViewModelCapture(RemixEntityPass.EntityCaptureResult result) {
+        return CAPTURE_TYPE_KEY.equals(result.entityTypeKey());
+    }
+
     /** World-space emitter anchor used by the shaped held-beacon light path. */
     public Vec3 getPendingHeldLightPosition(EquipmentSlot slot) {
         if (pendingResult == null) return null;

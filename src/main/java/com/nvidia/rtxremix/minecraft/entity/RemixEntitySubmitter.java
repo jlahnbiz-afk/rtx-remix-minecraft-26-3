@@ -848,9 +848,12 @@ public class RemixEntitySubmitter {
         if (texId == null) return;
         RenderType renderLayer = layer.renderLayer();
         RenderLayerUtils.SurfaceMode layerMode = RenderLayerUtils.surfaceMode(renderLayer);
-        RenderLayerUtils.SurfaceMode surfaceMode = playerSkinSurfaceMode(layerMode,
-                result.owner() instanceof Player
-                        && renderLayer == RenderTypes.entityTranslucent(texId));
+        boolean vanillaPlayerSkinLayer = result.owner() instanceof Player
+                && renderLayer == RenderTypes.entityTranslucent(texId);
+        RenderLayerUtils.SurfaceMode surfaceMode = playerSkinSurfaceMode(layerMode, vanillaPlayerSkinLayer);
+        if (vanillaPlayerSkinLayer && RemixFirstPersonPass.isViewModelCapture(result)) {
+            texId = FirstPersonSleeves.flattenedTexture(texId);
+        }
 
         RemixCapturingConsumer consumer = layer.consumer();
         // Guard on parts, not vertices: a cuboid part carries no captured
@@ -2168,14 +2171,17 @@ public class RemixEntitySubmitter {
         var client = Minecraft.getInstance();
         if (client == null) return null;
         ResourceManager rm = client.getResourceManager();
+        // A derived texture reads its source's pixels and LabPBR variants and keeps its own
+        // identity for the material, the meshes and the dynamic-upload version.
+        Identifier sourceId = FirstPersonSleeves.sourceTexture(textureId);
         // getResource walks every registered pack and stats the directory-backed ones. For a
         // texture that is not in any pack this never succeeds, so without the memo it is paid
         // on the render thread on every frame the entity is visible.
-        Optional<Resource> resource = resourceMissing.contains(textureId)
+        Optional<Resource> resource = resourceMissing.contains(sourceId)
                 ? Optional.empty()
-                : rm.getResource(textureId);
+                : rm.getResource(sourceId);
         if (resource.isEmpty()) {
-            resourceMissing.add(textureId);
+            resourceMissing.add(sourceId);
         }
 
         int width, height;
@@ -2190,7 +2196,7 @@ public class RemixEntitySubmitter {
         } else {
             // A downloaded skin reaches the cache when its texture uploads. Until then the
             // entity renders with the default and picks the skin up on a later frame.
-            DynamicTextureCache.Pixels cached = DynamicTextureCache.get(textureId);
+            DynamicTextureCache.Pixels cached = DynamicTextureCache.get(sourceId);
             if (cached == null) {
                 return null;
             }
@@ -2200,7 +2206,11 @@ public class RemixEntitySubmitter {
             cachedPixels = cached;
         }
 
-        Identifier spriteId = deriveLabPBRSpriteId(textureId);
+        if (FirstPersonSleeves.isFlattened(textureId)) {
+            FirstPersonSleeves.flatten(pixels, width, height);
+        }
+
+        Identifier spriteId = deriveLabPBRSpriteId(sourceId);
         NativeImage nImg = loadVariant(rm, spriteId, "_n");
         NativeImage sImg = loadVariant(rm, spriteId, "_s");
         NativeImage sssImg = loadVariant(rm, spriteId, "_sss");
@@ -2431,7 +2441,7 @@ public class RemixEntitySubmitter {
     }
 
     private void refreshDynamicTexture(Identifier textureId) {
-        DynamicTextureCache.Pixels pixels = DynamicTextureCache.get(textureId);
+        DynamicTextureCache.Pixels pixels = DynamicTextureCache.get(FirstPersonSleeves.sourceTexture(textureId));
         if (pixels == null || pixels.version() <= 0L) return;
 
         Long appliedVersion = dynamicTextureVersions.get(textureId);
@@ -2453,7 +2463,12 @@ public class RemixEntitySubmitter {
         }
 
         try {
-            updateTextureFromMemory(textures.albedo, pixels.data(), pixels.width(), pixels.height());
+            byte[] data = pixels.data();
+            if (FirstPersonSleeves.isFlattened(textureId)) {
+                data = Arrays.copyOf(data, data.length);
+                FirstPersonSleeves.flatten(data, pixels.width(), pixels.height());
+            }
+            updateTextureFromMemory(textures.albedo, data, pixels.width(), pixels.height());
 
             dynamicTextureVersions.put(textureId, pixels.version());
             dynamicTextureSizes.put(textureId, new TextureSize(pixels.width(), pixels.height()));
