@@ -213,9 +213,9 @@ pose every frame and is a different case.
 
 Before distributing a fixture intended for ordinary movement, inspect both
 `level.dat` and the fallback `level.dat_old` with a type-preserving NBT viewer.
-For Minecraft 1.21.1, the ordinary ability values are float `flySpeed: 0.05`
-and `walkSpeed: 0.1`; preserve intentional alternatives as fixture metadata,
-not accidental authoring state.
+For Minecraft 26.3, as for 1.21.1, the ordinary ability values are float
+`flySpeed: 0.05` and `walkSpeed: 0.1`; preserve intentional alternatives as
+fixture metadata, not accidental authoring state.
 
 ### Zone Coverage
 
@@ -258,8 +258,8 @@ For a custom editor:
 - Re-serialize only changed chunks. Copy untouched compressed payloads verbatim
   and confirm they remain byte-identical after rebuilding the region.
 - After block edits, discard stale `Heightmaps` and set `isLightOn` to 0 so the
-  game recomputes them. For the 1.21.1 section format, rebuild `block_states`
-  palettes from used entries and repack `data` at
+  game recomputes them. For the section format 26.3 writes, unchanged from
+  1.21.1, rebuild `block_states` palettes from used entries and repack `data` at
   `max(4, bitLength(paletteSize - 1))` bits per entry without entries straddling
   a long. A single-entry palette omits `data`. Wrong array lengths make the
   chunk unreadable.

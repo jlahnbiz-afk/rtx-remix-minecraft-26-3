@@ -188,48 +188,53 @@ for new script text and preserve the BOM on `packaging/installer.ps1`.
 
 ### Cancelling Vanilla Render Work
 
-A `HEAD` cancel, `@Redirect`, or `@WrapOperation` that skips a render method
-must leave the net state its caller expects. Stale GL state can slow
-`Remix.Present` only on another driver, without an obvious visual failure.
-Disassemble both ends of the target with `javap -p -c` before changing it.
+A `HEAD` cancel, `@Redirect`, or `@WrapOperation` that skips render work must
+leave what its caller expects. Disassemble both ends of the target with
+`javap -p -c` before changing it.
 
-At entry, look for callbacks, `RenderSystem` calls,
-`LightmapTextureManager.enable()`, and `Framebuffer.beginWrite`.
-`renderSky` calls its fog-setup `Runnable` immediately. At return, look for
-cleanup: `ParticleManager.renderParticles` enables the lightmap and depth
-test, then ends with `depthMask(true)`, `disableBlend()`, and lightmap disable.
-Replay the net change, not just the entry. `renderLayer` pairs
-`startDrawing()` with `endDrawing()`, so skipping it is state-neutral while
-replaying only its entry would not be.
+Minecraft 26.3 renders a level in two halves. Extraction fills render states
+such as `LevelRenderState`, `EntityRenderState`, and `BlockEntityRenderState`
+from the world; submission turns them into nodes on a `SubmitNodeCollector`,
+which `FeatureRenderDispatcher` draws inside the frame graph's passes. Remix
+capture reads the extracted states, so skip a submit rather than an
+extraction: the particle, entity, and block-entity hooks in
+`WorldRendererMixin` replace collector calls and leave extraction alone.
 
-A pure read or early-return guard needs no replay. In Minecraft 1.21.1,
-`renderClouds` returns for a dimension without cloud height, `renderWeather`
-returns without rain, and `renderEntity` starts with position interpolation.
-Check the pinned Minecraft version rather than treating these examples as
-permanent contracts.
+Draws reach the GPU through renderpearl `RenderPass`es, and each
+`RenderPipeline` carries its own blend, depth, and cull state, so a skipped
+draw no longer leaks fixed-function GL state. It can still leave pass state
+half set. `ChunkSectionsToRender.renderLayers` binds uniforms and samplers on
+the `RenderPass` its caller opened and wraps each layer in a debug group, so
+skip it whole, as `ChunkSectionsToRenderMixin` does, never only its draws.
+Code that steps outside renderpearl to make raw GL calls saves and restores
+what it changes, as `AtmosphericSkyGenerator` does with `GL_CURRENT_PROGRAM`.
 
-Cancel only draws that Remix replaces, such as terrain layers, particles and
-clouds. Do not bypass the outer vanilla traversal: camera, frustum, matrices,
-framebuffers, tick delta, in-place entity capture, section scheduling, and
-`WorldRenderEvents` all come from it. Judge a cancellation by its injection
-and state correctness, not only a frame-time delta. A GPU-bound run can hide a
-real render-thread saving.
+A pure read or early-return guard needs no replay. In Minecraft 26.3,
+`LevelRenderer.submitBlockOutline` returns when the level state holds no
+outline. Check the pinned Minecraft version rather than treating such examples
+as permanent contracts.
+
+Cancel only draws that Remix replaces, such as terrain layers and particles. Do
+not bypass the outer vanilla traversal: camera, frustum, matrices, render
+targets, tick delta, extraction, in-place entity capture, section scheduling,
+and Fabric's `LevelRenderEvents` all come from it. Judge a cancellation by its
+injection and state correctness, not only a frame-time delta. A GPU-bound run
+can hide a real render-thread saving.
 
 ### Reading Vanilla Bytecode
 
-The Yarn-named merged JAR Loom already caches is enough for `javap`; generating
-all decompiled sources is not necessary. Read the mappings coordinate in
-`build.gradle` and select its exact cache directory. Old versions remain in
-the cache after a mappings bump. The sibling
-`~/.gradle/caches/fabric-loom/<minecraft-version>/minecraft-merged.jar` is the
-obfuscated merge, not the Yarn-named one.
+Minecraft 26.3 ships unobfuscated, so the merged JAR Loom already caches
+carries Mojang's own names and is enough for `javap`; generating all
+decompiled sources is not necessary. Select the cache directory for the
+`minecraft` coordinate in `build.gradle`. Old versions remain in the cache
+after a version bump.
 
-For the currently pinned mapping, a Git Bash example is:
+For the currently pinned version, a Git Bash example is:
 
 ```bash
-merged=~/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-merged
-version=1.21.1-net.fabricmc.yarn.1_21_1.1.21.1+build.3-v2
-javap -p -c -classpath "$merged/$version/minecraft-merged-$version.jar" net.minecraft.client.render.VertexConsumer
+merged=~/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-merged-deobf
+version=26.3
+javap -p -c -classpath "$merged/$version/minecraft-merged-deobf-$version.jar" com.mojang.blaze3d.vertex.VertexConsumer
 ```
 
 If you need to search all callers of a descriptor, extract the whole JAR into
@@ -242,21 +247,20 @@ the extraction afterwards. Do not leave thousands of class files in the tree.
 
 `Mixing X from ... into net.minecraft...` in `run/logs/debug.log` proves
 registration, not an applied injection or an executed target. The check reads
-Loom's Yarn-named development client, which `runClient`, Fabric's standard
-Gradle task, starts from `run/`. Temporarily add `-Dmixin.debug.export=true` to
-the client `vmArgs` in `build.gradle`, launch `runClient`, and disassemble the
-transformed class under
-`run/.mixin.out/class/<package path>/<Class>.class` with `javap -p -c`.
-Classes are exported at load, so a later shutdown crash does not invalidate
-the export.
+Loom's development client, which `runClient`, Fabric's standard Gradle task,
+starts from `run/`. Temporarily add `-Dmixin.debug.export=true` to the client
+`vmArgs` in `build.gradle`, launch `runClient`, and disassemble the transformed
+class under `run/.mixin.out/class/<package path>/<Class>.class` with
+`javap -p -c`. Classes are exported at load, so a later shutdown crash does
+not invalidate the export.
 
 An `@Inject` merges a `handler$<id>$rtx-remix-renderer$<handler name>` method
 and a call at the intended offset: `invokespecial` for a private instance
 handler, `invokestatic` for a static one. If the call is present but does not
 fire, investigate vanilla's frustum, dimension, cloud-mode and weather gates.
-Exports and the classes loaded from `build/classes/` use Yarn names. The
-remapped JAR in `build/libs/` instead embeds intermediary `method_NNNNN` names
-in injection annotations. Remove the diagnostic flag and export afterwards.
+With no obfuscation there is no remapping step: the exports, the classes
+loaded from `build/classes/`, and the JAR in `build/libs/` all use the same
+Mojang names. Remove the diagnostic flag and export afterwards.
 
 ## Tests
 
@@ -277,7 +281,7 @@ position, are the most useful thing you can attach.
 
 For wrapper changes, the same root Gradle workflow compiles the shim with its
 mod callers and builds the bridge into `build/native/{win64|arm64}/`.
-Visual Studio C++ tools and `JAVA_HOME` pointing to a 64-bit JDK 21 are
+Visual Studio C++ tools and `JAVA_HOME` pointing to a 64-bit JDK 25 are
 required. Gradle fetches the pinned runtime automatically when it is missing.
 Use `.\tools\rtx.bat sdk local --path <runtime dir> --arch win64` for a local build,
 as described in [Getting Started](docs/GETTING_STARTED.md#get-a-runtime).
@@ -370,7 +374,7 @@ runners. [`check`](.github/workflows/check.yml) installs uv and runs
 `tools\rtx.bat check --tests`: Ruff formatting and lint, ty, the Python tests,
 and the public-boundary gate. On a pull request it also scans the commit
 messages from the base SHA to the head SHA.
-[`build`](.github/workflows/build.yml) installs JDK 21 and runs
+[`build`](.github/workflows/build.yml) installs JDK 25 and runs
 `gradlew.bat build test`. Both use read-only repository permissions and no
 secrets, including for fork pull requests. The build fetches the pinned
 runtime from public Packman, so it needs no credentials; never add private
