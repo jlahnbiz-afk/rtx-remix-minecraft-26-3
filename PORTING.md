@@ -373,3 +373,4 @@ cd tools && uv run --frozen pytest -q && uv run --frozen ruff check . && uv run 
 | `dfd24d4` | 縁のぼかしだけのスプライトを屈折する半透明にしない (ドア、花) |
 | `ae4f7e3` | Fabric レンダラー API のメッシュをアイテムとブロックモデルで拾う |
 | `24719a1` | 地形のバケツを 6 面/ブロックの上限を超えて伸ばす (フェンスのクラッシュ) |
+| `e89fdef` | ヒープを最小・最大とも 16 GB に固定 |
