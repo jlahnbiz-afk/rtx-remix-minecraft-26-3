@@ -70,6 +70,7 @@
         "TorchBlockAccessor",
         "UnfocusedFramerateMixin",
         "ViewAreaAccessor",
+        "WeatherEffectRendererMixin",
         "WorldChunkMixin",
         "WorldRendererMixin"
     ],

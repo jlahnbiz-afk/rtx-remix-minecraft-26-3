@@ -52,6 +52,10 @@ import net.minecraft.client.renderer.state.level.BlockBreakingRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.ParticlesRenderState;
+import net.minecraft.client.renderer.state.level.WeatherRenderState;
+import net.minecraft.client.renderer.WeatherEffectRenderer;
+import net.minecraft.client.renderer.oit.OitStage;
+import com.mojang.renderpearl.api.commands.RenderPass;
 import net.minecraft.core.SectionPos;
 import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -285,6 +289,46 @@ public abstract class WorldRendererMixin
             Operation<Void> original) {
         if (!RtxRemixMod.isRemixWorldRendering()) {
             original.call(particles, collector, camera);
+        }
+    }
+
+    /**
+     * Remix draws the weather over its image ({@code RemixWeatherRenderer}); vanilla's draw
+     * would land in the frame that image replaces. The draw sets its pipeline, uniforms
+     * and buffers on the pass and the pass's next draw sets its own, so skipping it whole
+     * leaves nothing for a later draw to inherit.
+     */
+    @WrapOperation(
+            method = "executeClassicTransparency",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/WeatherEffectRenderer;render(Lnet/minecraft/client/renderer/state/level/WeatherRenderState;Lcom/mojang/renderpearl/api/commands/RenderPass;)V"
+            ))
+    private void rtxremix$skipVanillaWeather(
+            WeatherEffectRenderer weather,
+            WeatherRenderState state,
+            RenderPass pass,
+            Operation<Void> original) {
+        if (!RtxRemixMod.isRemixWorldRendering()) {
+            original.call(weather, state, pass);
+        }
+    }
+
+    /** The order-independent transparency counterpart of {@link #rtxremix$skipVanillaWeather}. */
+    @WrapOperation(
+            method = "executeOit",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/WeatherEffectRenderer;renderOit(Lnet/minecraft/client/renderer/oit/OitStage;Lnet/minecraft/client/renderer/state/level/WeatherRenderState;Lcom/mojang/renderpearl/api/commands/RenderPass;)V"
+            ))
+    private void rtxremix$skipVanillaOitWeather(
+            WeatherEffectRenderer weather,
+            OitStage stage,
+            WeatherRenderState state,
+            RenderPass pass,
+            Operation<Void> original) {
+        if (!RtxRemixMod.isRemixWorldRendering()) {
+            original.call(weather, stage, state, pass);
         }
     }
 

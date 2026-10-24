@@ -333,7 +333,6 @@ public class RtxRemixMod implements ClientModInitializer {
         BlockEntityRenderers.register(
                 CopperBeaconBlockEntity.TYPE, CopperBeaconBlockEntityRenderer::new);
         MenuScreens.register(CopperBeaconScreenHandler.TYPE, CopperBeaconScreen::new);
-        RemixWeatherRenderer.registerShaders();
         LOGGER.info("========================================");
         LOGGER.info("RTX Remix Renderer v{} initializing...", getModVersion());
         LOGGER.info("========================================");

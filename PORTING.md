@@ -42,7 +42,7 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
 | Access widener の検証 (26.3 の jar に対して全行) | 問題 0 |
 | Mixin の静的チェック (ASM で全ターゲットのメソッド、フィールド、`@At` の存在を確認) | 問題 0 |
 | Mixin の監査 (`MixinEnvironment.audit()` で全ターゲットクラスを強制ロード、`required` 厳格) | 失敗 0 |
-| JVM テスト `test -x setupRuntime` | 754 件すべて成功 |
+| JVM テスト `test -x setupRuntime` | 757 件すべて成功 |
 | Python ツールのテスト (`tools/` で `uv run pytest`) | 992 件成功。失敗 3 件は上流 `main` でも Linux で失敗する Windows 専用テスト |
 | Ruff format / lint | 問題なし |
 | `installer.ps1` の構文 (PowerShell 7 のパーサ) | エラー 0 |
@@ -148,6 +148,27 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
 - プレイヤースキンは `DynamicTexture` になったので、`PlayerSkinTextureMixin` は
   不要になりました。
 
+### 雨と雪
+
+- Remix の画が vanilla の雨と雪を覆うので、合成の後に描き直しています
+  (`weather/RemixWeatherRenderer`)。vanilla の `WeatherEffectRenderer.prepare` が
+  毎フレーム作る頂点 (カメラ相対、雨の列の後に雪の列、PARTICLE 形式) を
+  `WeatherEffectRendererMixin` で写し、vanilla 自身の天候描画は
+  `WorldRendererMixin` で止めます (通常の透過と OIT の両方)。
+- 26.3 はコアシェーダーの登録がなくなったので、1.21.1 の屈折シェーダーを
+  自前の GL プログラムに移しました。雪は vanilla のパーティクル用シェーダーと
+  同じく、テクスチャ × 頂点色 × ライトマップで描きます。
+- Remix の深度との前後判定は、深度バッファを作らずにフラグメントシェーダー内で
+  インターロップ深度テクスチャを読んで行います。投影は Remix のカメラと同じ
+  near 0.05 / far 1000 で、GL バックエンドが `glClipControl(ZERO_TO_ONE)` を
+  設定していればそれに合わせます。vanilla の逆深度は使いません。
+- GL バックエンドがキャッシュするステート (フレームバッファ、アクティブな
+  テクスチャユニットとその束縛、深度、ブレンド、カリング、シザー、カラーマスク)
+  は `GlStateManager` 経由で設定し、キャッシュしないもの (プログラム、頂点配列、
+  サンプラー、ビューポート) は元に戻します。シェーダーは Mesa の GLSL
+  コンパイラでコンパイルとリンクを確認しましたが、描画結果は Windows で
+  確かめる必要があります。
+
 ### パーティクル、空、雲、光
 
 - パーティクルは `ParticleGroup` と `SingleQuadParticle` の `Layer` から
@@ -202,7 +223,7 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
 
 ## Mixin の増減
 
-上流の 1.21.1 (client 70、common 3) から、client 65、common 1 になりました。
+上流の 1.21.1 (client 70、common 3) から、client 66、common 1 になりました。
 
 追加したもの:
 `BitmapGlyphStagingMixin`、`ChunkSectionsToRenderMixin`、
@@ -211,7 +232,8 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
 `ItemStackRenderStateAccessor`、`ItemStackRenderStateMixin`、
 `LevelExtractorAccessor`、`LevelExtractorMixin`、`ParticleGroupAccessor`、
 `ParticleResourcesAccessor`、`PreferredGraphicsApiMixin`、
-`RenderStateOwnerMixin`、`SectionCopyMixin`、`ViewAreaAccessor`。
+`RenderStateOwnerMixin`、`SectionCopyMixin`、`ViewAreaAccessor`、
+`WeatherEffectRendererMixin`。
 
 削除したものと理由:
 
@@ -233,21 +255,14 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
 
 優先度の高い順です。
 
-1. **雨と雪** (`weather/RemixWeatherRenderer`): スタブです。RTX が有効な間は
-   Remix の画が vanilla の雨と雪を覆うので、雨も雪も画面に出ません。1.21.1 版は
-   vanilla の天候メッシュを取り込み、屈折用のコアシェーダーを使って生の GL で
-   Remix の画の上に描いていました。26.3 は天候を頂点バッファとレンダー
-   パイプラインで描き、深度が逆 (reversed depth) で、コアシェーダーの登録も
-   なくなったので、renderpearl のパイプラインと逆深度に合わせた深度の初期化を
-   用意する必要があります。地面に落ちる雨粒などのパーティクルは別経路で出ます。
-2. **アイテムアトラスのパーティクル**: アイテムが割れるときなど、アイテム用
+1. **アイテムアトラスのパーティクル**: アイテムが割れるときなど、アイテム用
    アトラスを使うパーティクルは Remix に送っていません。
-3. **アニメーションするスプライトの余白**: 水や溶岩などは毎フレーム本体だけを
+2. **アニメーションするスプライトの余白**: 水や溶岩などは毎フレーム本体だけを
    差し替えるので、余白は最初のフレームの端の画素のままです。遠くで縁の色が
    わずかにずれる程度で、黒い線にはなりません。
-4. **Fabric Renderer API のメッシュ**: FRAPI のメッシュを持つアイテムやブロックは
+3. **Fabric Renderer API のメッシュ**: FRAPI のメッシュを持つアイテムやブロックは
    vanilla の経路で提出されたものだけを取り込みます。
-5. **性能面で未移植のもの** (正しさには影響しない):
+4. **性能面で未移植のもの** (正しさには影響しない):
    - 可視性ウォークの割り当てなし版と粗い視錐台インデックス
      (`-Drtxremix.vanillaVisibilityWalk`、`-Drtxremix.logVisibleSet` も消えた)。
    - チャンク読み込み時の近傍の再ビルド抑制 (`NeighbourReflagFilter`)。26.3 では
@@ -259,9 +274,9 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
    - モデル選択の割り当て削減 (`WeightedBakedModelMixin`、
      `MultipartBakedModelMixin`)。
    - vanilla の雲描画の抑止 (Remix が置き換える GL のフレームに描かれるだけ)。
-6. **Prism のフォールバック版** (`PRISM_FALLBACK_VERSION = '9.1'`): 26.3 を
+5. **Prism のフォールバック版** (`PRISM_FALLBACK_VERSION = '9.1'`): 26.3 を
    起動できるかは未確認です。GitHub から最新版を取れる通常の経路では使われません。
-7. **Java ソースのコメント**: Yarn 時代の名前がコメントに残っている箇所が
+6. **Java ソースのコメント**: Yarn 時代の名前がコメントに残っている箇所が
    あります。ドキュメント (`docs/`、`tools/docs/`、`CONTRIBUTING.md`) は
    26.3 の名前に直しました。
 
