@@ -482,6 +482,10 @@ public final class BlockQuadEmitter {
             emitBlockWaterQuad(nx, ny, nz, color, layerName);
             return;
         }
+        if (layerOverride == null && material.layer() == ChunkSectionLayer.TRANSLUCENT
+                && !readsAsTranslucent(spriteId)) {
+            layerName = "cutout";
+        }
         float su0 = sprite != null ? sprite.getU0() : 0;
         float sv0 = sprite != null ? sprite.getV0() : 0;
         float su1 = sprite != null ? sprite.getU1() : 1;
@@ -489,6 +493,18 @@ public final class BlockQuadEmitter {
 
         writer.stageQuad(tempPositions, tempUvs, nx, ny, nz, color,
                 spriteId, su0, sv0, su1, sv1, layerName);
+    }
+
+    /**
+     * Whether a quad vanilla put on the translucent layer stays translucent for Remix:
+     * only when its sprite reads as a see-through surface
+     * ({@link BlockTextureManager#readsAsTranslucent(int, int, int)}). A sprite the
+     * manager has not scanned keeps vanilla's layer.
+     */
+    private boolean readsAsTranslucent(@Nullable Identifier spriteId) {
+        BlockTextureManager.SpriteEntry entry = texManager != null && spriteId != null
+                ? texManager.getSpriteById(spriteId) : null;
+        return entry == null || entry.readsAsTranslucent;
     }
 
     /** Writes the unit normal of the quad in {@code tempPositions} into {@code tempNormal}. */
@@ -613,6 +629,10 @@ public final class BlockQuadEmitter {
 
         TextureAtlasSprite sprite = frapiSpriteFinder != null ? frapiSpriteFinder.find(quad) : null;
         Identifier spriteId = sprite != null ? sprite.contents().name() : null;
+        if (frapiLayerOverride == null && quad.chunkLayer() == ChunkSectionLayer.TRANSLUCENT
+                && !readsAsTranslucent(spriteId)) {
+            layerName = "cutout";
+        }
         float su0 = sprite != null ? sprite.getU0() : 0;
         float sv0 = sprite != null ? sprite.getV0() : 0;
         float su1 = sprite != null ? sprite.getU1() : 1;
@@ -1153,15 +1173,19 @@ public final class BlockQuadEmitter {
      * question, so it shades as its placed counterpart does.
      *
      * <p>Vanilla picks a layer per quad from its sprite since 26.1, so a whole
-     * block is translucent when any of its quads is, otherwise cutout when its
-     * particle sprite has transparent pixels, and solid otherwise.
+     * block is translucent when any of its quads is and shows a see-through sprite
+     * there, as terrain decides quad by quad; otherwise cutout when it has translucent
+     * quads or its particle sprite has transparent pixels, and solid otherwise.
      */
     public static String classifyBlockLayer(BlockState state) {
         Minecraft client = Minecraft.getInstance();
         String override = blockLayerOverride(state, client.options.cutoutLeaves().get());
         if (override != null) return override;
         BlockStateModel model = client.getModelManager().getBlockStateModelSet().get(state);
-        if (model.hasMaterialFlag(BakedQuad.FLAG_TRANSLUCENT)) return "translucent";
+        if (model.hasMaterialFlag(BakedQuad.FLAG_TRANSLUCENT)) {
+            BlockTextureManager textures = BlockTextureManager.get();
+            return textures == null || textures.hasSeeThroughQuads(state, model) ? "translucent" : "cutout";
+        }
         if (model.particleMaterial().sprite().transparency().hasTransparent()) return "cutout";
         return "solid";
     }

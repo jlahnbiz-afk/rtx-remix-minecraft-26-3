@@ -42,7 +42,7 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
 | Access widener の検証 (26.3 の jar に対して全行) | 問題 0 |
 | Mixin の静的チェック (ASM で全ターゲットのメソッド、フィールド、`@At` の存在を確認) | 問題 0 |
 | Mixin の監査 (`MixinEnvironment.audit()` で全ターゲットクラスを強制ロード、`required` 厳格) | 失敗 0 |
-| JVM テスト `test -x setupRuntime` | 757 件すべて成功 |
+| JVM テスト `test -x setupRuntime` | 760 件すべて成功 |
 | Python ツールのテスト (`tools/` で `uv run pytest`) | 992 件成功。失敗 3 件は上流 `main` でも Linux で失敗する Windows 専用テスト |
 | Ruff format / lint | 問題なし |
 | `installer.ps1` の構文 (PowerShell 7 のパーサ) | エラー 0 |
@@ -112,6 +112,15 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
   しません。
 - 再キャプチャは `WorldRenderer.reload()` ではなく `LevelExtractor.allChanged()`
   の前に `builtSections` を取る形になっています。
+- 26.1 以降の vanilla は、面ごとのレイヤーをテクスチャの透明度から決めます
+  (`ChunkSectionLayer.byTransparency`)。アルファ 1〜254 の画素が1つでもあれば
+  半透明です。リソースパックの縁のぼかしだけでドアの窓や花が半透明になり、
+  Remix の屈折する半透明マテリアル (色付きガラス用) で描かれてガラスのように
+  見えていました。そこで、半透明の画素が完全透明の画素以上あり、かつ全体の
+  1/8 以上あるスプライト (色付きガラス、氷、スライムなど) だけを半透明のまま
+  にし、それ以外はカットアウトにします (`BlockTextureManager.readsAsTranslucent`)。
+  1.21.1 はブロックごとの固定表でドアや花をカットアウトにしていたので、その
+  見た目に戻ります。手に持ったブロックも同じ判定です。
 
 ### エンティティ、ブロックエンティティ、アイテム
 

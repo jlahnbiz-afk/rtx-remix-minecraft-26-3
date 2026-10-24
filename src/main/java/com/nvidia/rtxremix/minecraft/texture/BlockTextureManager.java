@@ -36,6 +36,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.SpriteContents;
@@ -45,6 +46,12 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.core.Direction;
+import net.minecraft.util.RandomSource;
 
 /**
  * Per-sprite texture and material management for Minecraft's block atlas.
@@ -160,6 +167,11 @@ public class BlockTextureManager {
         public final Identifier id;
         public final float u0, v0, u1, v1;
         public final boolean hasTransparency;
+        /**
+         * Whether the sprite reads as a see-through surface, such as stained glass or ice,
+         * rather than a cut-out shape; see {@link #readsAsTranslucent(int, int, int)}.
+         */
+        public final boolean readsAsTranslucent;
         final int pixW, pixH, pixX, pixY;
         private final BitSet transparentPixels;
         RemixTexture albedo, normal, roughness, metallic, height, emissive, sss, sssAlbedo;
@@ -174,6 +186,20 @@ public class BlockTextureManager {
             pixW = contents.width(); pixH = contents.height();
             transparentPixels = scanTransparency(contents, pixW, pixH);
             hasTransparency = transparentPixels != null && !transparentPixels.isEmpty();
+            readsAsTranslucent = scanReadsAsTranslucent(contents, pixW, pixH);
+        }
+
+        private static boolean scanReadsAsTranslucent(SpriteContents contents, int w, int h) {
+            NativeImage img = ((SpriteContentsAccessor) contents).getImage();
+            if (img == null) return true;
+            int clear = 0, partial = 0;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++) {
+                    int alpha = (img.getPixelABGR(x, y) >> 24) & 0xFF;
+                    if (alpha == 0) clear++;
+                    else if (alpha < 255) partial++;
+                }
+            return readsAsTranslucent(clear, partial, w * h);
         }
 
         /**
@@ -230,6 +256,56 @@ public class BlockTextureManager {
         private static float clamp(float value, float min, float max) {
             return Math.max(min, Math.min(max, value));
         }
+    }
+
+    /**
+     * Whether a sprite with {@code clear} fully transparent and {@code partial} partly
+     * transparent texels out of {@code total} reads as a see-through surface.
+     *
+     * <p>Since 26.1 vanilla puts a quad on the translucent layer as soon as one texel
+     * under it is partly transparent, and a resource pack's antialiased edges are. Remix's
+     * translucent material refracts like stained glass, so a door's window or a flower
+     * drawn with soft edges would turn to glass. A see-through surface is mostly partly
+     * transparent; a cut-out shape is mostly holes with a soft rim, and 1.21.1 drew it on
+     * the cutout layer by block.
+     */
+    static boolean readsAsTranslucent(int clear, int partial, int total) {
+        return partial >= clear && partial * 8 >= total;
+    }
+
+    private final Map<BlockState, Boolean> seeThroughBlocks = new ConcurrentHashMap<>();
+
+    /**
+     * Whether any quad vanilla puts on the translucent layer for {@code state} shows a
+     * see-through sprite, the question terrain asks quad by quad, asked once per block for
+     * a held block item. True until the sprites are scanned.
+     */
+    public boolean hasSeeThroughQuads(BlockState state, BlockStateModel model) {
+        if (!isInitialized()) return true;
+        return seeThroughBlocks.computeIfAbsent(state, ignored -> scanSeeThroughQuads(model));
+    }
+
+    private boolean scanSeeThroughQuads(BlockStateModel model) {
+        List<BlockStateModelPart> parts = new ArrayList<>();
+        model.collectParts(RandomSource.create(42L), parts);
+        for (BlockStateModelPart part : parts) {
+            for (Direction direction : Direction.values()) {
+                if (hasSeeThroughQuad(part.getQuads(direction))) return true;
+            }
+            if (hasSeeThroughQuad(part.getQuads(null))) return true;
+        }
+        return false;
+    }
+
+    private boolean hasSeeThroughQuad(List<BakedQuad> quads) {
+        for (BakedQuad quad : quads) {
+            BakedQuad.MaterialInfo material = quad.materialInfo();
+            if (material.layer() != ChunkSectionLayer.TRANSLUCENT) continue;
+            SpriteEntry entry = material.sprite() != null
+                    ? spriteById.get(material.sprite().contents().name()) : null;
+            if (entry == null || entry.readsAsTranslucent) return true;
+        }
+        return false;
     }
 
     public BlockTextureManager(RemixRenderer renderer) {
@@ -1290,6 +1366,7 @@ public class BlockTextureManager {
     public void reload() { cleanup(); initialized = initFailed = false; initialize(); }
 
     public void cleanup() {
+        seeThroughBlocks.clear();
         for (RemixMaterial mat : managedMaterials)
             if (!mat.isDeleted()) mat.destroy();
         managedMaterials.clear();
