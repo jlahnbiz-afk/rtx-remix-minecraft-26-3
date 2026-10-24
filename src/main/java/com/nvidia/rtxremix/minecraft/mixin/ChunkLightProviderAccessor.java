@@ -10,8 +10,8 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
 /**
- * Vanilla hands out each layer's ChunkLightProvider through {@code LightingProvider.get}
- * but keeps its LightStorage to itself; the RTX toggle needs the storage to republish a
+ * Vanilla hands out each layer's LightEngine through {@code LevelLightEngine.getLayerListener}
+ * but keeps its LayerLightSectionStorage to itself; the RTX toggle needs the storage to republish a
  * real light snapshot before capture switches off.
  */
 @Mixin(LightEngine.class)

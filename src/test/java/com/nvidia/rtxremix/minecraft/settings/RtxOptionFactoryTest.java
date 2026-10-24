@@ -51,7 +51,7 @@ class RtxOptionFactoryTest {
         // one and drops it from the other. The built widget's message is what
         // the screen shows, whichever way a kind renders.
         for (RtxSetting.Kind kind : RtxSetting.Kind.values()) {
-            // GameOptions is only written when a widget's value changes.
+            // Options is only written when a widget's value changes.
             String message = toOption(settingOf(kind))
                     .createButton(null).getMessage().getString();
 
@@ -152,7 +152,7 @@ class RtxOptionFactoryTest {
             callbacksField.setAccessible(true);
             return (OptionInstance.SliderableValueSet<?>) callbacksField.get(option);
         } catch (ReflectiveOperationException e) {
-            throw new AssertionError("Could not inspect SimpleOption callbacks", e);
+            throw new AssertionError("Could not inspect OptionInstance callbacks", e);
         }
     }
 

@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Decides whether the client's chunk apply seeds the sky-light surface scan from the
  * packet's {@code WORLD_SURFACE} heightmap.
  *
- * <p>Vanilla recomputes {@code ChunkSkyLight} for every chunk the client receives by
+ * <p>Vanilla recomputes {@code ChunkSkyLightSources} for every chunk the client receives by
  * walking each of the 256 columns downward from the top of the chunk's highest non-empty
  * section until a block pair blocks sky light. Almost all of that walk is air over air,
  * which never blocks, and it is most of the render thread's cost of applying a chunk.

@@ -188,7 +188,7 @@ class RemixCapturingConsumerTest {
         return new TextureAtlasSprite(Identifier.fromNamespaceAndPath("minecraft", "textures/atlas/blocks.png"), contents, 64, 64, 16, 32, 0) {};
     }
 
-    /** Renders both full faces of an item card, as ItemRenderer does for a flat item. */
+    /** Renders both full faces of an item card, as ItemFeatureRenderer does for a flat item. */
     private static void cardFaces(RemixCapturingConsumer consumer, TextureAtlasSprite sprite) {
         PoseStack.Pose pose = new PoseStack().last();
         QuadInstance white = new QuadInstance();
@@ -582,7 +582,7 @@ class RemixCapturingConsumerTest {
 
     // ---- Block item layer ----
 
-    /** Renders one baked quad under {@code pose}, as ItemRenderer does for an item model. */
+    /** Renders one baked quad under {@code pose}, as ItemFeatureRenderer does for an item model. */
     private static void itemQuad(RemixCapturingConsumer consumer, PoseStack.Pose pose) {
         consumer.putBakedQuad(pose, itemModelQuad(), new QuadInstance());
     }

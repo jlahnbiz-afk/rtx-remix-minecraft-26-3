@@ -233,7 +233,7 @@ public class RemixEntitySubmitter {
     }
 
     /**
-     * Geometry identified by the {@code ModelPart.Cuboid} it was baked from and the
+     * Geometry identified by the {@code ModelPart.Cube} it was baked from and the
      * sprite it was painted with.
      *
      * <p>{@code sides} is a key component for its <em>identity</em>, not its
@@ -662,8 +662,8 @@ public class RemixEntitySubmitter {
     private final Transform reusableWorldTransform = new Transform();
     private final Transform reusableRigidTransform = new Transform();
 
-    // Cuboid parts carry no captured vertices, so a pool miss rebuilds the
-    // geometry here from the immutable ModelPart.Cuboid. Misses run at ~0.2 per
+    // Cube parts carry no captured vertices, so a pool miss rebuilds the
+    // geometry here from the immutable ModelPart.Cube. Misses run at ~0.2 per
     // frame, so the round trip costs nothing. recordParts is false: this
     // consumer never needs part records of its own.
     private final RemixCapturingConsumer rebuildScratch =
@@ -2287,7 +2287,7 @@ public class RemixEntitySubmitter {
             if (client == null) return null;
             AbstractTexture tex = client.getTextureManager().getTexture(textureId);
             if (!(tex instanceof TextureAtlas atlas)) {
-                LOGGER.warn("Atlas texture {} is not a SpriteAtlasTexture", textureId);
+                LOGGER.warn("Atlas texture {} is not a TextureAtlas", textureId);
                 failedTextures.add(textureId);
                 return null;
             }

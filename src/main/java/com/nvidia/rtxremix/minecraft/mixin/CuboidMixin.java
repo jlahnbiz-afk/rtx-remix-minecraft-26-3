@@ -19,7 +19,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Intercepts {@code ModelPart.Cuboid.renderCuboid()} so a cuboid reaches the Remix
+ * Intercepts {@code ModelPart.Cube.compile()} so a cube reaches the Remix
  * capture as the immutable object it is rather than as expanded vertices.
  *
  * <p>When the active {@link VertexConsumer} is a {@link RemixCapturingConsumer}
@@ -45,7 +45,7 @@ public class CuboidMixin {
         // wrapper is looked through and the sprite travels with the part: one cuboid
         // is baked once and painted with many sprites, so the sprite is part of the
         // part's identity. A wrapper around anything else, such as the glint union
-        // ItemRenderer builds, is left to vanilla.
+        // ItemFeatureRenderer builds, is left to vanilla.
         VertexConsumer target = vertexConsumer;
         TextureAtlasSprite sprite = null;
         if (target instanceof SpriteCoordinateExpander wrapped

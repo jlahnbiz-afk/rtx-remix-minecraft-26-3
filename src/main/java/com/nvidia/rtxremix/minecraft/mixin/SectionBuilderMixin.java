@@ -66,7 +66,7 @@ public class SectionBuilderMixin {
      * a toggle could land <em>between</em> two of them inside one build, routing
      * some blocks of a section into the Remix emitter and the rest into vanilla's
      * GL path. Reading one latched value keeps a build wholly in one mode;
-     * {@code setRtxEnabled} forces a WorldRenderer.reload(), so sections built
+     * {@code setRtxEnabled} forces a LevelExtractor.allChanged(), so sections built
      * in the losing mode are rebuilt immediately afterwards.
      *
      * <p>The latch is taken through {@link VanillaSectionBuilds}: a build that

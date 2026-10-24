@@ -639,7 +639,7 @@ public class RemixRenderer {
     /**
      * Opens a fresh entity capture window for the world render that is starting.
      *
-     * <p>{@code WorldRenderEvents.END} does not fire during loading screens, so a
+     * <p>{@code LevelRenderEvents.END_MAIN} does not fire during loading screens, so a
      * capture window can be opened and never closed. Resetting at the start of
      * every world render stops a dropped frame bleeding into the next one, and
      * opening the submitter's frame here (rather than in

@@ -15,7 +15,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Hooks into MinecraftClient lifecycle events.
+ * Hooks into Minecraft's lifecycle events.
  */
 @Mixin(Minecraft.class)
 public abstract class MinecraftClientMixin {

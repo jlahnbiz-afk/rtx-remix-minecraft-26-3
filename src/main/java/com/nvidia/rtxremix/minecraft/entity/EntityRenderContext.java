@@ -16,7 +16,7 @@ import net.minecraft.world.entity.LivingEntity;
 
 /**
  * Thread-local context tracking whether a Remix capture is open and which rigid
- * pivot (ModelPart/Cuboid) is active.
+ * pivot (ModelPart/Cube) is active.
  *
  * <p>Capture boundaries are opened by {@code EntityRenderDispatcherMixin} around
  * each vanilla entity render, or directly by a Remix capture pass. Boundaries
@@ -24,7 +24,7 @@ import net.minecraft.world.entity.LivingEntity;
  * one (an entity rendered from inside another render, such as a spawner's display
  * entity) appends its bones to the enclosing capture, exactly as feature-renderer
  * overlays already do. Bone boundaries are detected by
- * {@link RemixCapturingConsumer} when the {@code MatrixStack.Entry} pose changes
+ * {@link RemixCapturingConsumer} when the {@code PoseStack.Pose} changes
  * between vertices.
  *
  * <h3>Rigid pivot tracking</h3>
@@ -165,10 +165,10 @@ public final class EntityRenderContext {
     // ---- Bone tracking ----
 
     /**
-     * Called at each {@code ModelPart.Cuboid.renderCuboid()} to register a rigid pivot.
+     * Called at each {@code ModelPart.Cube.compile()} to register a rigid pivot.
      *
      * <p>Bones are appended in traversal order. Several rendering passes can run
-     * for one entity (base model plus FeatureRenderer overlays) and each appends
+     * for one entity (base model plus RenderLayer overlays) and each appends
      * its own bones to the same array, so an index is absolute across the whole
      * capture rather than relative to a layer.
      *

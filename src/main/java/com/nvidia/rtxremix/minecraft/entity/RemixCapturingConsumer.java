@@ -34,7 +34,7 @@ import net.minecraft.resources.Identifier;
  * <p>Every consumer is fed inside a Remix capture pass, so the geometry it stores is
  * local to the pose that produced it and the pose itself is recorded as a bone
  * through {@link EntityRenderContext}. The matrix-aware paths
- * ({@code vertex(MatrixStack.Entry, ...)}, {@code vertex(Matrix4f, ...)} and
+ * ({@code addVertex(PoseStack.Pose, ...)}, {@code vertex(Matrix4f, ...)} and
  * {@code quad(...)} for {@link BakedQuad} input) register the pose and keep the
  * untransformed coordinates, and {@code CuboidMixin} hands over whole cuboids by
  * identity through {@link #acceptCuboid}. Rigid instancing needs exactly that: a
@@ -103,7 +103,7 @@ public class RemixCapturingConsumer implements VertexConsumer {
     // it by changing pivot every few vertices; parts past the cap are dropped.
     private static final int MAX_PARTS = MAX_VERTICES / 4;
     private static final int VERTICES_PER_QUAD = 4;
-    /** partStart for a cuboid part: its geometry lives in the Cuboid, not here. */
+    /** partStart for a cube part: its geometry lives in the ModelPart.Cube, not here. */
     static final int NO_VERTICES = -1;
     /** The two planes of ItemModelGenerator's card, in sixteenths: 7.5 and 8.5. */
     private static final float CARD_FRONT_Z = 7.5f / 16f;
@@ -626,7 +626,7 @@ public class RemixCapturingConsumer implements VertexConsumer {
         }
     }
 
-    // ---- BakedQuad interception (items, BakedModel entities) ----
+    // ---- BakedQuad interception (items, block-model entities) ----
 
     private final int[] quadColors = new int[4];
 
@@ -1115,13 +1115,13 @@ public class RemixCapturingConsumer implements VertexConsumer {
 
 
     /**
-     * Records one {@code ModelPart.Cuboid} as a rigid part that carries no vertices:
+     * Records one {@code ModelPart.Cube} as a rigid part that carries no vertices:
      * the cuboid's identity, its tint and the bone it hangs off. Its geometry is
      * expanded only when the submitter misses the mesh pool, through
      * {@link #emitCuboidGeometry}, so a pooled cuboid costs no vertex work at capture.
      *
      * <p>{@code sides} is retained for its <em>identity</em>, not its contents.
-     * {@code ModelPart.Cuboid.sides}, {@code Quad.vertices}/{@code direction} and
+     * {@code ModelPart.Cube.polygons}, {@code Polygon.vertices}/{@code normal} and
      * {@code Vertex.pos}/{@code u}/{@code v} are all final and written once at bake
      * time, so one array reference means one fixed set of positions, normals and
      * UVs for the life of the object. A resource reload bakes new objects, which

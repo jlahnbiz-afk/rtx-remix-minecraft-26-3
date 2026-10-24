@@ -64,13 +64,13 @@ final class RenderLayerUtils {
     private RenderLayerUtils() {}
 
     /**
-     * Cache of RenderLayer -> capturable texture. Most RenderLayer instances are reused,
+     * Cache of RenderType -> capturable texture. Most RenderType instances are reused,
      * but weak keys avoid retaining dynamic layers created by mods or skin features.
      */
     private static final Map<RenderType, Optional<Identifier>> capturableTextureCache =
             Collections.synchronizedMap(new WeakHashMap<>());
 
-    /** Cache of RenderLayer -> streamed-per-frame verdict, weak-keyed like {@link #capturableTextureCache}. */
+    /** Cache of RenderType -> streamed-per-frame verdict, weak-keyed like {@link #capturableTextureCache}. */
     private static final Map<RenderType, Boolean> streamedPerFrameCache =
             Collections.synchronizedMap(new WeakHashMap<>());
 

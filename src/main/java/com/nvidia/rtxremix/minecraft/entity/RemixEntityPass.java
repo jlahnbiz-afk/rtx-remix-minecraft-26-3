@@ -297,7 +297,7 @@ public class RemixEntityPass {
 
     /**
      * Hands one entity to the submitter and keeps a failure to that entity. The
-     * in-place path runs inside vanilla's WorldRenderer.render, where an escaping
+     * in-place path runs inside vanilla's LevelRenderer.render, where an escaping
      * native failure would end the frame and crash the client; on the off-frustum
      * sweep it would abandon every entity behind this one and retire their instances
      * at endFrame. The submitter retires the entity's own retained parts before the
@@ -483,7 +483,7 @@ public class RemixEntityPass {
                     - (frameSubmitNanos - submitNanosBefore);
         } finally {
             // Release the references immediately: a world switch between frames
-            // would otherwise keep the unloaded ClientWorld reachable through them.
+            // would otherwise keep the unloaded ClientLevel reachable through them.
             entityHeap.clear();
         }
     }
@@ -603,7 +603,7 @@ public class RemixEntityPass {
      * its model again.
      *
      * <p>Only cuboid-backed geometry can be replayed: a cuboid part names the
-     * immutable {@code ModelPart.Cuboid} it came from, so it can be rebuilt at any
+     * immutable {@code ModelPart.Cube} it came from, so it can be rebuilt at any
      * time, while a baked item or map part exists only as captured vertices in a
      * pooled consumer that is recycled the moment the next entity renders. An
      * entity carrying any of the latter is skipped rather than half-snapshotted.
@@ -804,7 +804,7 @@ public class RemixEntityPass {
      *                  compose onto. A caller that supplies its own root passes
      *                  {@link Vec3#ZERO}.
      * @param yaw       the owner's interpolated yaw at capture, in degrees
-     * @param layers    captured vertices grouped by RenderLayer and texture
+     * @param layers    captured vertices grouped by RenderType and texture
      * @param boneData  flat float array: 12 floats per bone (3 rows x 4 cols).
      *                  Layout per bone matches Transform's set(row, col) order.
      * @param boneCount number of bones (boneData.length / 12)

@@ -15,7 +15,7 @@ import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 
-/** Converts an RtxSetting into a vanilla SimpleOption for OptionListWidget. */
+/** Converts an RtxSetting into a vanilla OptionInstance for OptionsList. */
 final class RtxOptionFactory {
 
     static final String ENTITY_DISTANCE_ID = "dist.entity";

@@ -8,7 +8,7 @@ import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.levelgen.Heightmap;
 
 /**
- * Seeded surface refresh of one chunk's sky-light palette, implemented by the ChunkSkyLight mixin.
+ * Seeded surface refresh of one chunk's sky-light palette, implemented by the ChunkSkyLightSources mixin.
  */
 public interface SkyLightSurfaceAccess {
 

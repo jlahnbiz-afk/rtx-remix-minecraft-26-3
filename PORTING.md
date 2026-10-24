@@ -277,11 +277,6 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
      `MultipartBakedModelMixin`)。26.3 は部品の収集が面ごとではなくブロックごとに
      なり、重み付きの選択は割り当てなし、multipart もブロックごとに `BitSet` と
      イテレータを作るだけになったので、移植していません。
-4. **Prism のフォールバック版** (`PRISM_FALLBACK_VERSION = '9.1'`): 26.3 を
-   起動できるかは未確認です。GitHub から最新版を取れる通常の経路では使われません。
-5. **Java ソースのコメント**: Yarn 時代の名前がコメントに残っている箇所が
-   あります。ドキュメント (`docs/`、`tools/docs/`、`CONTRIBUTING.md`) は
-   26.3 の名前に直しました。
 
 ## 上流のファイルへの変更と取り込み時の注意
 
@@ -292,6 +287,11 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
   `NeighbourReflagFilter`、`-Drtxremix.vanillaVisibilityWalk`。このフォークでは
   このファイルとソースの方を正としてください。
 - `CHANGELOG.md` は上流の履歴なので、移植の項目は足していません。
+- Mixin のクラス名 (`WorldRendererMixin`、`BuiltChunkMixin` など) とプロファイラの
+  スパン名は、上流との差分と記録の比較のために 1.21.1 時代の名前のままです。
+  コメントとドキュメントの中の vanilla のクラス名は 26.3 の名前に直しました。
+- Prism のフォールバック版 (`PRISM_FALLBACK_VERSION`) は 11.1.1 にしました。
+  チェックサムのサイドカーがないため、SHA-256 はリリースの zip から計算しています。
 - 版や手順を書いたドキュメント (`README.md`、`docs/`、`tools/docs/`、
   `packaging/*.md`、`CONTRIBUTING.md`、`THIRD_PARTY_NOTICES.md`、
   `rtxremix-java/README.md`) は 26.3 に合わせて直しています。上流の更新を

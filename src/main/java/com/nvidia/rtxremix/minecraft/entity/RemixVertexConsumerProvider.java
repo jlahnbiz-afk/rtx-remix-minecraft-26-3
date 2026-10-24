@@ -34,7 +34,7 @@ import net.minecraft.resources.Identifier;
 public class RemixVertexConsumerProvider {
 
     /**
-     * Consumers created during the current entity's render, keyed by RenderLayer, in
+     * Consumers created during the current entity's render, keyed by RenderType, in
      * request order. Multiple layers per entity are common (body + eyes + glint) but the
      * count is small, so parallel arrays with a linear scan replace a map: a map entry per
      * layer per entity was a steady allocation on the render thread.
@@ -138,7 +138,7 @@ public class RemixVertexConsumerProvider {
     // ---- Result container ----
 
     /**
-     * Captured vertex data for a single RenderLayer within an entity render: a view of the
+     * Captured vertex data for a single RenderType within an entity render: a view of the
      * consumer that captured it, holding its flat arrays directly (no copy). One instance
      * lives with each pooled consumer and is re-pointed per entity, so a frame of entity
      * capture allocates no layer objects. Valid until the provider's next

@@ -20,7 +20,7 @@ import org.jetbrains.annotations.Nullable;
  * The integrated server's published light snapshot, as an immutable view over the engine's
  * live map instead of a clone of it.
  *
- * <p>Vanilla's {@code LightStorage.notifyChanges} clones the whole section map into
+ * <p>Vanilla's {@code LayerLightSectionStorage.swapSectionMap} clones the whole section map into
  * {@code uncachedStorage} whenever any section changed, so the server thread and chunk
  * serialisation can read light while the engine keeps mutating its own map. At render
  * distance 32 that map holds about a hundred thousand sections, so every pass that touched

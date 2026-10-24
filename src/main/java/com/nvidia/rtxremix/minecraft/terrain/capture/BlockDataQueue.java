@@ -36,7 +36,7 @@ public final class BlockDataQueue {
             Long.getLong("rtxremix.blockDataQueue.maxDrainBytes", DEFAULT_MAX_DRAIN_BYTES));
     // Total time a producer may block on a full queue before trading the
     // oldest queued capture for liveness. Producers are vanilla's shared
-    // chunk workers holding ChunkBuilder buffer slots; parking them
+    // chunk workers holding SectionRenderDispatcher buffer slots; parking them
     // indefinitely halts world loading everywhere, so a wedged or outpaced
     // drain must cost a recapture, never a frozen worker pool.
     private static final long DEFAULT_PUBLISH_WAIT_BUDGET_NS = Math.max(50_000_000L,
@@ -131,7 +131,7 @@ public final class BlockDataQueue {
     }
 
     /**
-     * Called with the identity captured at SectionBuilder.build HEAD. Takes over
+     * Called with the identity captured at SectionCompiler.compile HEAD. Takes over
      * the capture's mesh data: it is released here when the capture is dropped
      * and otherwise travels to the render thread with the queue entry.
      */
@@ -285,7 +285,7 @@ public final class BlockDataQueue {
         if (!isCaptureCurrent(state, data, capture)) return false;
         if (tryReserveCapacity(state, bytes)) return true;
 
-        // WorldRenderer can rebuild nearby chunks synchronously. It is also
+        // LevelRenderer can rebuild nearby chunks synchronously. It is also
         // the sole consumer, so waiting here would prevent the queue from ever
         // freeing capacity. Worker captures remain subject to both bounds.
         if (isRenderThread()) {

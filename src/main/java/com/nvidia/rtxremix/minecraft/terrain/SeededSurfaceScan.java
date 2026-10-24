@@ -10,7 +10,7 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.LevelHeightAccessor;
 
 /**
- * Vanilla's {@code ChunkSkyLight.refreshSurfaceY} walk with each column started at its
+ * Vanilla's {@code ChunkSkyLightSources.findLowestSourceY} walk with each column started at its
  * {@code WORLD_SURFACE} height instead of the top of the chunk's highest non-empty section.
  *
  * <p>The walk is vanilla's, step for step: the same block pairs are tested with the same
@@ -40,7 +40,7 @@ public final class SeededSurfaceScan {
         S state(int index, int localX, int localY, int localZ);
     }
 
-    /** Vanilla's {@code ChunkSkyLight.faceBlocksLight}: whether the lower block of a vertical pair stops sky light. */
+    /** Vanilla's {@code ChunkSkyLightSources.isEdgeOccluded}: whether the lower block of a vertical pair stops sky light. */
     public interface FaceBlocksLight<S> {
         boolean test(BlockPos upperPos, S upperState, BlockPos lowerPos, S lowerState);
     }
