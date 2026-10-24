@@ -78,6 +78,12 @@ public final class BlockQuadEmitter {
     };
     private static final Direction[] CULLED_DIRECTIONS = Direction.values();
 
+    /**
+     * Block units a see-through block's face moves into a neighbour that draws the face
+     * it meets; see {@link #meetsNeighbourFace}.
+     */
+    static final float SHARED_FACE_PUSH = 1f / 512f;
+
     private static final ThreadLocal<BlockQuadEmitter> INSTANCE = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> threadNamed =
             ThreadLocal.withInitial(() -> Boolean.FALSE);
@@ -165,6 +171,10 @@ public final class BlockQuadEmitter {
     private final long[] fluidStateKnown = new long[64];
     private int blockCount, fluidCount;
     private int tintValidMask;
+    /** Sides of the current block {@link #meetsNeighbourFace} has decided, and those it found shared. */
+    private int sharedSidesTested, sharedSides;
+    /** Added to every position staged for the current face; non-zero only on a shared side. */
+    private float facePushX, facePushY, facePushZ;
     private int waterColorKnownMask;
     private FluidState waterTopCellCacheFluid;
     private BlockAndTintGetter waterTopCullWorld;
@@ -331,6 +341,9 @@ public final class BlockQuadEmitter {
         blockCount++;
         mutablePos.set(pos);
         tintValidMask = 0;
+        sharedSidesTested = 0;
+        sharedSides = 0;
+        setFacePush(null);
 
         // Vanilla derives model randomisation from the block position, in the
         // same ModelBlockRenderer.tesselateBlock this emitter replaces, and
@@ -436,9 +449,11 @@ public final class BlockQuadEmitter {
                 if ((sideDrawn & sideBit) == 0) {
                     continue;
                 }
+                setFacePush(meetsNeighbourFace(world, state, dir) ? dir : null);
                 for (int q = 0, quadCount = culledQuads.size(); q < quadCount; q++) {
                     stageBakedQuad(culledQuads.get(q), layerOverride, state, world, lx, ly, lz);
                 }
+                setFacePush(null);
             }
             List<BakedQuad> unculledQuads = part.getQuads(null);
             for (int q = 0, quadCount = unculledQuads.size(); q < quadCount; q++) {
@@ -455,9 +470,9 @@ public final class BlockQuadEmitter {
         for (int v = 0; v < 4; v++) {
             Vector3fc position = bq.position(v);
             long packedUv = bq.packedUV(v);
-            tempPositions[v * 3]     = position.x() + lx;
-            tempPositions[v * 3 + 1] = position.y() + ly;
-            tempPositions[v * 3 + 2] = position.z() + lz;
+            tempPositions[v * 3]     = position.x() + lx + facePushX;
+            tempPositions[v * 3 + 1] = position.y() + ly + facePushY;
+            tempPositions[v * 3 + 2] = position.z() + lz + facePushZ;
             tempUvs[v * 2]     = UVPair.unpackU(packedUv);
             tempUvs[v * 2 + 1] = UVPair.unpackV(packedUv);
         }
@@ -606,10 +621,11 @@ public final class BlockQuadEmitter {
             return;
         }
 
+        setFacePush(cull != null && meetsNeighbourFace(frapiWorld, frapiState, cull) ? cull : null);
         for (int v = 0; v < 4; v++) {
-            tempPositions[v * 3]     = quad.x(v) + frapiX;
-            tempPositions[v * 3 + 1] = quad.y(v) + frapiY;
-            tempPositions[v * 3 + 2] = quad.z(v) + frapiZ;
+            tempPositions[v * 3]     = quad.x(v) + frapiX + facePushX;
+            tempPositions[v * 3 + 1] = quad.y(v) + frapiY + facePushY;
+            tempPositions[v * 3 + 2] = quad.z(v) + frapiZ + facePushZ;
             tempUvs[v * 2]     = quad.u(v);
             tempUvs[v * 2 + 1] = quad.v(v);
         }
@@ -1047,10 +1063,65 @@ public final class BlockQuadEmitter {
     // --- Helpers ---
 
     private boolean shouldDrawBlockSide(BlockAndTintGetter world, BlockState state, Direction side) {
-        int neighborX = mutablePos.getX() + side.getStepX();
-        int neighborY = mutablePos.getY() + side.getStepY();
-        int neighborZ = mutablePos.getZ() + side.getStepZ();
-        BlockState neighbor = getCachedBlockState(world, neighborX, neighborY, neighborZ);
+        return shouldRenderFace(state, neighbourState(world, side), side);
+    }
+
+    private BlockState neighbourState(BlockAndTintGetter world, Direction side) {
+        return getCachedBlockState(world,
+                mutablePos.getX() + side.getStepX(),
+                mutablePos.getY() + side.getStepY(),
+                mutablePos.getZ() + side.getStepZ());
+    }
+
+    /**
+     * Whether the current block's face on {@code side} is see-through and lies on a face
+     * its neighbour draws too, so the two share a plane.
+     *
+     * <p>Vanilla never sees such a pair fight: it culls back faces, so from either side
+     * only the face toward the viewer is drawn. Remix draws terrain double-sided, and
+     * looking through leaves or glass at a slab the see-through block's far face lies
+     * exactly on the slab's side. When a ray meets a cut-out texel the runtime restarts
+     * it a little beyond the surface, an offset that grows with the world position, so a
+     * ray that reached the leaf's texel first carries straight past the slab and the side
+     * shows as a hole, depending on the view. Moving the see-through face
+     * {@link #SHARED_FACE_PUSH} into the neighbour puts the neighbour's face first from
+     * this side, as vanilla shows it, and leaves the see-through face in front of anyone
+     * looking from the neighbour's side. When both blocks are see-through each face moves
+     * into the other, so from either side the far block's face is the one met first.
+     */
+    private boolean meetsNeighbourFace(BlockAndTintGetter world, BlockState state, Direction side) {
+        int sideBit = 1 << side.ordinal();
+        if ((sharedSidesTested & sideBit) == 0) {
+            sharedSidesTested |= sideBit;
+            if (!state.canOcclude() && meetsNeighbourFace(state, neighbourState(world, side), side)) {
+                sharedSides |= sideBit;
+            }
+        }
+        return (sharedSides & sideBit) != 0;
+    }
+
+    /**
+     * Whether a drawn face of see-through {@code state} on {@code side} meets a face
+     * {@code neighbour} draws. Cheap without a cache: {@code state} does not occlude, so
+     * vanilla's test returns before it compares shapes.
+     */
+    static boolean meetsNeighbourFace(BlockState state, BlockState neighbour, Direction side) {
+        return !state.canOcclude()
+                && getRenderTypeCached(neighbour) == RenderShape.MODEL
+                && Block.shouldRenderFace(neighbour, state, side.getOpposite());
+    }
+
+    private void setFacePush(@Nullable Direction side) {
+        if (side == null) {
+            facePushX = facePushY = facePushZ = 0f;
+        } else {
+            facePushX = side.getStepX() * SHARED_FACE_PUSH;
+            facePushY = side.getStepY() * SHARED_FACE_PUSH;
+            facePushZ = side.getStepZ() * SHARED_FACE_PUSH;
+        }
+    }
+
+    private boolean shouldRenderFace(BlockState state, BlockState neighbor, Direction side) {
         long key = ((long) Block.getId(state) << 35)
                 | ((long) Block.getId(neighbor) << 3)
                 | side.ordinal();

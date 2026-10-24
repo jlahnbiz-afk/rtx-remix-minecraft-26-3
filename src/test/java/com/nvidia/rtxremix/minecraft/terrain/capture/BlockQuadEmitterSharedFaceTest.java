@@ -1,0 +1,68 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package com.nvidia.rtxremix.minecraft.terrain.capture;
+
+import net.minecraft.SharedConstants;
+import net.minecraft.core.Direction;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.SlabType;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class BlockQuadEmitterSharedFaceTest {
+
+    static {
+        // Before the block fields below: the block registry refuses to load unbootstrapped.
+        try {
+            SharedConstants.getCurrentVersion();
+        } catch (IllegalStateException unset) {
+            SharedConstants.tryDetectVersion();
+        }
+        Bootstrap.bootStrap();
+    }
+
+    @AfterEach
+    void restoreCutoutLeaves() {
+        LeavesBlock.setCutoutLeaves(true);
+    }
+
+    private static final BlockState LEAVES = Blocks.OAK_LEAVES.defaultBlockState();
+    private static final BlockState GLASS = Blocks.GLASS.defaultBlockState();
+    private static final BlockState BOTTOM_SLAB =
+            Blocks.STONE_SLAB.defaultBlockState().setValue(SlabBlock.TYPE, SlabType.BOTTOM);
+
+    @Test
+    void leavesAndGlassMeetASlabSide() {
+        assertTrue(BlockQuadEmitter.meetsNeighbourFace(LEAVES, BOTTOM_SLAB, Direction.EAST));
+        assertTrue(BlockQuadEmitter.meetsNeighbourFace(GLASS, BOTTOM_SLAB, Direction.NORTH));
+    }
+
+    @Test
+    void touchingCutoutLeavesMeetEachOther() {
+        assertTrue(BlockQuadEmitter.meetsNeighbourFace(LEAVES, LEAVES, Direction.UP));
+    }
+
+    @Test
+    void fastLeavesCullTheFaceBetweenThem() {
+        LeavesBlock.setCutoutLeaves(false);
+        assertFalse(BlockQuadEmitter.meetsNeighbourFace(LEAVES, LEAVES, Direction.UP));
+    }
+
+    @Test
+    void nothingMovesWhereOnlyOneFaceIsDrawn() {
+        // Air draws nothing, and like glass hides the face between two of its kind.
+        assertFalse(BlockQuadEmitter.meetsNeighbourFace(LEAVES, Blocks.AIR.defaultBlockState(), Direction.WEST));
+        assertFalse(BlockQuadEmitter.meetsNeighbourFace(GLASS, GLASS, Direction.SOUTH));
+        // A slab occludes, so its own side never moves.
+        assertFalse(BlockQuadEmitter.meetsNeighbourFace(BOTTOM_SLAB, LEAVES, Direction.WEST));
+    }
+}
