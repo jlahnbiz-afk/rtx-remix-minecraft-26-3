@@ -160,7 +160,7 @@ $script:FABRIC_PROFILE_NAME  = 'NVIDIA RTX Remix for Minecraft'
 # Fallback Prism version used when all "latest" lookups fail (GitHub API
 # rate-limited AND Atom feed unreachable). Bump periodically as part of a
 # release; pinned because guessing at runtime would defeat the purpose.
-$script:PRISM_FALLBACK_VERSION = '9.1'
+$script:PRISM_FALLBACK_VERSION = '11.1.1'
 
 # Known-good SHA-256 hashes for Prism Launcher portable releases. Populated
 # so that, when the GitHub REST API is rate-limited AND the CDN-hosted
@@ -169,6 +169,8 @@ $script:PRISM_FALLBACK_VERSION = '9.1'
 # unverified bytes. Lookup key: "<version>|<arch-pattern>".
 #
 # Sources by era:
+#   11.1.1   : no .sha256 sidecar published; computed by downloading the
+#              .zip from the release and hashing it with SHA-256.
 #   10.0.0+  : GitHub REST API .digest field (populated by GitHub mid-2025
 #              onwards). Pulled via `gh api repos/PrismLauncher/
 #              PrismLauncher/releases`.
@@ -197,6 +199,10 @@ $script:PRISM_KNOWN_HASHES = @{
     '10.0.2|MSVC-arm64-Portable'  = '53341fda065d0bc43daa0240e084b9be0f5988fa0d50affefd8107fcb8bf51d4'
     '10.0.5|MSVC-Portable'        = '2ef7b0da51c270ba8065dcb1900288df331ec8fd6a3521a786c10c76c70fcc06'
     '10.0.5|MSVC-arm64-Portable'  = 'd0f02a7eddc1db22aac5ebce3b43195b6670352205dcb93e64077553a359f279'
+
+    # 11.x (computed locally; the fallback version must have an entry)
+    '11.1.1|MSVC-Portable'        = 'ab35a770fb06d89d2ccc098079db5db329fb4e68f42b72babd8b095efde3d2d7'
+    '11.1.1|MSVC-arm64-Portable'  = 'f33b34a6f313fc46c1d5912256942d50216814577ad2ff9dfc28102de7208e53'
 
     # 11.x (GitHub API digest)
     '11.0.0|MSVC-Portable'        = 'a00bc7efb0a57800bf7dbca181657264edc91c4eecbb23d37214d5ccbcca7a0f'
