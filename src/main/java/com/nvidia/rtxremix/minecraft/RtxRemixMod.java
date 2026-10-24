@@ -63,7 +63,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.longs.LongSets;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityModelLayerRegistry;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
@@ -84,13 +84,12 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderers;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.storage.LevelResource;
-import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -188,12 +187,15 @@ public class RtxRemixMod implements ClientModInitializer {
             (key, value) -> renderer.getRemixApi().getConfigVariableResolved(key, value);
     /** Whether the last menu visibility read failed, so a run of failures logs once. */
     private static boolean remixMenuVisibilityReadFailed;
+    /** The Controls screen heading the mod's key bindings sit under. */
+    private static final KeyMapping.Category KEY_CATEGORY =
+            KeyMapping.Category.register(Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "rtxremix"));
     private KeyMapping toggleHeldLightsKey;
     private KeyMapping toggleRtxKey;
     private static final long CAMERA_TIME_STEP_TICKS = 10L;
     private static final long CAMERA_TIME_FAST_STEP_TICKS = 250L;
 
-    /** Returns the shared Minecraft-side input gate used by the GLFW callback mixins. */
+    /** Returns the shared Minecraft-side input gate used by the input callback mixins. */
     public static RemixInputGate getRemixInputGate() {
         return REMIX_INPUT_GATE;
     }
@@ -353,26 +355,26 @@ public class RtxRemixMod implements ClientModInitializer {
         // are synced and register in RtxRemixCommonMod instead.
         RapidFoamParticles.register();
 
-        // G is unbound in vanilla 1.21.1 and unclaimed elsewhere in this mod, so
-        // this is a real registered binding rather than a raw GLFW intercept: it
+        // G is unbound in vanilla 26.3 and unclaimed elsewhere in this mod, so
+        // this is a real registered binding rather than a raw input intercept: it
         // shows up in Options -> Controls and players can rebind it.
-        toggleHeldLightsKey = KeyBindingHelper.registerKeyBinding(
+        toggleHeldLightsKey = KeyMappingHelper.registerKeyMapping(
             new KeyMapping(
                 "key.rtxremix.toggleHeldLights",
-                InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_G,
-                "category.rtxremix"
+                InputConstants.Type.KEYBOARD,
+                InputConstants.KEY_G,
+                KEY_CATEGORY
             )
         );
-        // F8 is unbound in vanilla 1.21.1 and sits away from the movement keys: a
+        // F8 is unbound in vanilla 26.3 and sits away from the movement keys: a
         // toggle that reloads the world renderer should not be a stray press away
         // while playing. Same registered-binding treatment as the held-lights key.
-        toggleRtxKey = KeyBindingHelper.registerKeyBinding(
+        toggleRtxKey = KeyMappingHelper.registerKeyMapping(
             new KeyMapping(
                 "key.rtxremix.toggleRtx",
-                InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_F8,
-                "category.rtxremix"
+                InputConstants.Type.KEYBOARD,
+                InputConstants.KEY_F8,
+                KEY_CATEGORY
             )
         );
 
@@ -557,8 +559,8 @@ public class RtxRemixMod implements ClientModInitializer {
         ResourceManagerHelper.get(PackType.CLIENT_RESOURCES)
                 .registerReloadListener(new SimpleSynchronousResourceReloadListener() {
                     @Override
-                    public ResourceLocation getFabricId() {
-                        return ResourceLocation.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "atlas_reload");
+                    public Identifier getFabricId() {
+                        return Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, "atlas_reload");
                     }
                     @Override
                     public void onResourceManagerReload(ResourceManager manager) {
@@ -2251,7 +2253,7 @@ public class RtxRemixMod implements ClientModInitializer {
     }
 
     public static boolean handleCameraTimeShortcut(int key, int action, int mods) {
-        if (action != GLFW.GLFW_PRESS && action != GLFW.GLFW_REPEAT) {
+        if (action != InputConstants.PRESS && action != InputConstants.REPEAT) {
             return false;
         }
 
@@ -2288,14 +2290,14 @@ public class RtxRemixMod implements ClientModInitializer {
 
     static int cameraTimeAdjustmentDirection(int key, int mods) {
         return switch (key) {
-            case GLFW.GLFW_KEY_EQUAL -> 1;
-            case GLFW.GLFW_KEY_MINUS -> -1;
+            case InputConstants.KEY_EQUALS -> 1;
+            case InputConstants.KEY_MINUS -> -1;
             default -> 0;
         };
     }
 
     static long cameraTimeAdjustmentStep(int mods) {
-        return (mods & GLFW.GLFW_MOD_CONTROL) != 0
+        return (mods & InputConstants.MOD_CONTROL) != 0
                 ? CAMERA_TIME_FAST_STEP_TICKS
                 : CAMERA_TIME_STEP_TICKS;
     }

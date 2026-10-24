@@ -4,7 +4,7 @@
  */
 package com.nvidia.rtxremix.minecraft.input;
 
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -83,8 +83,8 @@ public final class RemixInputGate {
 
     /** Decides whether Minecraft may handle a key event. */
     public KeyDecision onKey(int key, int action, boolean altDown, boolean controlDown) {
-        boolean altX = action == GLFW.GLFW_PRESS
-                && key == GLFW.GLFW_KEY_X
+        boolean altX = action == InputConstants.PRESS
+                && key == InputConstants.KEY_X
                 && altDown
                 && !controlDown;
         if (captureSessionOpen) {

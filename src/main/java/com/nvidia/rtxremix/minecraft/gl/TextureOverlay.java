@@ -4,116 +4,125 @@
  */
 package com.nvidia.rtxremix.minecraft.gl;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferBuilder;
-import com.mojang.blaze3d.vertex.BufferUploader;
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.Tesselator;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.VertexSorting;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import com.mojang.renderpearl.backend.opengl.GlTexture;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.GameRenderer;
-import org.joml.Matrix4f;
+import org.lwjgl.opengl.GL45C;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Draws the Remix output texture as a full-screen, fully opaque quad on
- * Minecraft's main framebuffer, after the world and first-person model have
- * been submitted and before the screen overlays and HUD.
+ * Copies the Remix output texture over Minecraft's main render target, fully
+ * opaque, after the world and first-person model have been submitted and
+ * before the screen overlays and HUD.
  *
- * <p>Render thread only. It goes through {@code RenderSystem} and
- * {@code Tessellator} rather than raw GL so the surrounding vanilla render
- * state stays valid.
+ * <p>Render thread only. Minecraft runs on its OpenGL backend whenever the mod
+ * is active, so the copy is a framebuffer blit on the backend's own context.
+ * It binds no framebuffer and only switches off the scissor test through the
+ * backend's state cache, so the surrounding render state stays valid.
  */
 public class TextureOverlay {
-    
+
     private static final Logger LOGGER = LoggerFactory.getLogger(TextureOverlay.class);
-    
+
     private final Minecraft client;
+
+    /**
+     * Framebuffers reading the Remix texture and writing the main target's color
+     * texture. Both textures are attached again every frame: either is recreated
+     * on a resize, and GL may hand a deleted texture's name to its replacement.
+     */
+    private int sourceFbo;
+    private int targetFbo;
     
     public TextureOverlay() {
         this.client = Minecraft.getInstance();
         LOGGER.info("TextureOverlay initialized");
     }
-    
+
     /**
      * Renders a texture as a full-screen overlay.
-     * 
+     *
      * @param textureId The GL texture ID to render as full-screen overlay
      */
     public void render(int textureId) {
         if (textureId <= 0) {
             return;
         }
-        
+
         if (client == null || client.getWindow() == null) {
             return;
         }
-        
+
         try {
             renderTextureOverlay(textureId);
         } catch (Exception e) {
             LOGGER.error("Error rendering texture overlay", e);
         }
     }
-    
-    private void renderTextureOverlay(int texId) {
-        int width = client.getWindow().getGuiScaledWidth();
-        int height = client.getWindow().getGuiScaledHeight();
 
-        if (client.getMainRenderTarget() != null) {
-            client.getMainRenderTarget().bindWrite(true);
+    private void renderTextureOverlay(int texId) {
+        RenderTarget mainTarget = client.gameRenderer.mainRenderTarget();
+        GpuTexture color = mainTarget.getColorTexture();
+        if (!(color instanceof GlTexture glColor)) {
+            return;
         }
 
-        Matrix4f savedProjection = RenderSystem.getProjectionMatrix();
+        bindSource(texId);
+        bindTarget(glColor.glId());
+        int sourceWidth = GL45C.glGetTextureLevelParameteri(texId, 0, GL45C.GL_TEXTURE_WIDTH);
+        int sourceHeight = GL45C.glGetTextureLevelParameteri(texId, 0, GL45C.GL_TEXTURE_HEIGHT);
 
         // Opaque: the Remix image replaces vanilla's output rather than blending
-        // with it, and it neither tests nor writes depth.
-        RenderSystem.disableDepthTest();
-        RenderSystem.depthMask(false);
-        RenderSystem.disableBlend();
+        // with it, and it neither tests nor writes depth. The destination rows
+        // run top to bottom so the image lands upright: the interop blit already
+        // corrects the Vulkan image's orientation for top-left texture origin.
+        GlStateManager._disableScissorTest();
+        GL45C.glBlitNamedFramebuffer(
+                sourceFbo,
+                targetFbo,
+                0,
+                0,
+                sourceWidth,
+                sourceHeight,
+                0,
+                mainTarget.height,
+                mainTarget.width,
+                0,
+                GL45C.GL_COLOR_BUFFER_BIT,
+                GL45C.GL_LINEAR);
+    }
 
-        Matrix4f projMatrix = new Matrix4f().setOrtho(
-            0.0f, (float) width, (float) height, 0.0f, -1000.0f, 1000.0f
-        );
-        RenderSystem.setProjectionMatrix(projMatrix, VertexSorting.ORTHOGRAPHIC_Z);
+    private void bindSource(int texId) {
+        if (sourceFbo == 0) {
+            sourceFbo = GL45C.glCreateFramebuffers();
+            GL45C.glNamedFramebufferReadBuffer(sourceFbo, GL45C.GL_COLOR_ATTACHMENT0);
+        }
+        GL45C.glNamedFramebufferTexture(sourceFbo, GL45C.GL_COLOR_ATTACHMENT0, texId, 0);
+    }
 
-        RenderSystem.getModelViewStack().pushMatrix();
-        RenderSystem.getModelViewStack().identity();
-        RenderSystem.applyModelViewMatrix();
-
-        RenderSystem.setShader(GameRenderer::getPositionTexShader);
-        RenderSystem.setShaderTexture(0, texId);
-        RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
-
-        // Standard GL UVs, with (0,0) at the top left: the interop blit already
-        // corrects the Vulkan image's orientation.
-        Matrix4f identity = new Matrix4f();
-        BufferBuilder bufferBuilder = Tesselator.getInstance()
-            .begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
-
-        bufferBuilder.addVertex(identity, 0,     0,      0).setUv(0.0f, 0.0f);
-        bufferBuilder.addVertex(identity, 0,     height, 0).setUv(0.0f, 1.0f);
-        bufferBuilder.addVertex(identity, width, height, 0).setUv(1.0f, 1.0f);
-        bufferBuilder.addVertex(identity, width, 0,      0).setUv(1.0f, 0.0f);
-
-        BufferUploader.drawWithShader(bufferBuilder.buildOrThrow());
-
-        RenderSystem.getModelViewStack().popMatrix();
-        RenderSystem.applyModelViewMatrix();
-        RenderSystem.setProjectionMatrix(savedProjection, VertexSorting.ORTHOGRAPHIC_Z);
-
-        RenderSystem.depthMask(true);
-        RenderSystem.enableDepthTest();
-        // Blend is left disabled; the HUD enables it when it needs it.
-        RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
+    private void bindTarget(int texId) {
+        if (targetFbo == 0) {
+            targetFbo = GL45C.glCreateFramebuffers();
+            GL45C.glNamedFramebufferDrawBuffer(targetFbo, GL45C.GL_COLOR_ATTACHMENT0);
+        }
+        GL45C.glNamedFramebufferTexture(targetFbo, GL45C.GL_COLOR_ATTACHMENT0, texId, 0);
     }
     
     /**
      * Cleans up resources.
      */
     public void shutdown() {
+        if (sourceFbo != 0) {
+            GL45C.glDeleteFramebuffers(sourceFbo);
+            sourceFbo = 0;
+        }
+        if (targetFbo != 0) {
+            GL45C.glDeleteFramebuffers(targetFbo);
+            targetFbo = 0;
+        }
         LOGGER.info("TextureOverlay shutdown");
     }
 }

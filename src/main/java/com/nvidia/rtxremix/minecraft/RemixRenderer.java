@@ -61,9 +61,10 @@ import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.material.FogType;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFWNativeWin32;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GLCapabilities;
+import org.lwjgl.sdl.SDLProperties;
+import org.lwjgl.sdl.SDLVideo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -227,9 +228,9 @@ public class RemixRenderer {
             lastCameraMediumHandle = Long.MIN_VALUE;
 
             Minecraft client = Minecraft.getInstance();
-            long glfwHandle = client.getWindow().getWindow();
+            long sdlHandle = client.getWindow().handle();
             
-            windowHandle = getHwndFromGlfw(glfwHandle);
+            windowHandle = getHwndFromSdl(sdlHandle);
             
             if (windowHandle == 0) {
                 throw new RuntimeException("Failed to get native window handle");
@@ -273,14 +274,14 @@ public class RemixRenderer {
             // RTXREMIX_WINDOW_POS="x,y" moves the window before startup() so the
             // swapchain is created on the monitor that will display it (benchmarks
             // use this to target a specific monitor, e.g. a 4K panel at a negative
-            // desktop coordinate). Must run on the render thread, which owns GLFW.
+            // desktop coordinate). Must run on the render thread, which owns the window.
             String windowPos = System.getenv("RTXREMIX_WINDOW_POS");
             if (windowPos != null && !windowPos.isBlank()) {
                 String[] parts = windowPos.split(",");
                 try {
                     int x = Integer.parseInt(parts[0].trim());
                     int y = Integer.parseInt(parts[1].trim());
-                    org.lwjgl.glfw.GLFW.glfwSetWindowPos(glfwHandle, x, y);
+                    SDLVideo.SDL_SetWindowPosition(sdlHandle, x, y);
                     LOGGER.info("RTXREMIX_WINDOW_POS: moved window to ({}, {})", x, y);
                 } catch (RuntimeException e) {
                     LOGGER.warn("RTXREMIX_WINDOW_POS: could not apply '{}': {}", windowPos, e.getMessage());
@@ -496,10 +497,15 @@ public class RemixRenderer {
     }
     
     /**
-     * Gets the Win32 HWND from a GLFW window handle.
+     * Gets the Win32 HWND from an SDL window handle, or 0 where SDL has none.
      */
-    private long getHwndFromGlfw(long glfwHandle) {
-        return GLFWNativeWin32.glfwGetWin32Window(glfwHandle);
+    private long getHwndFromSdl(long sdlHandle) {
+        int properties = SDLVideo.SDL_GetWindowProperties(sdlHandle);
+        if (properties == 0) {
+            return 0;
+        }
+        return SDLProperties.SDL_GetPointerProperty(
+                properties, SDLVideo.SDL_PROP_WINDOW_WIN32_HWND_POINTER, 0L);
     }
     
     /**
@@ -1323,7 +1329,7 @@ public class RemixRenderer {
     
     /**
      * Presents the frame through Remix, which owns the swapchain for as long as the
-     * renderer is initialized: this method replaces the GLFW buffer swap, so returning
+     * renderer is initialized: this method replaces the SDL buffer swap, so returning
      * without calling present leaves the window frozen on the last presented image.
      * A failed GL-to-Remix copy therefore still presents, and a failure is logged once
      * per run rather than once per frame.
@@ -1571,7 +1577,7 @@ public class RemixRenderer {
     }
 
     /**
-     * Completes native runtime shutdown after Minecraft has destroyed its GLFW window.
+     * Completes native runtime shutdown after Minecraft has destroyed its SDL window.
      */
     public void shutdownNativeRuntime() {
         shutdownRemixApi();
