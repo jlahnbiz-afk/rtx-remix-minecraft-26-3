@@ -67,8 +67,8 @@ mutation of a retained instance must be followed immediately by a submit, or
 the change never reaches the scene.
 
 **A mixin that cancels vanilla work inherits its side effects.** Preserve the
-net GL, fog, lightmap and framebuffer state the caller expects, not only the
-entry calls. Never cancel `WorldRenderer.render()` itself: that traversal
+net render-pass and render-state changes the caller expects, not only the
+entry calls. Never cancel `LevelRenderer.render()` itself: that traversal
 hosts Remix's frame. See [Cancelling Vanilla Render Work](#cancelling-vanilla-render-work).
 
 **Only mixins live in the mixin package.** Mixin reserves that package, and a
@@ -336,9 +336,10 @@ local runtime. Keep the shipped `packaging/rtx.conf` matched to the runtime too.
 `tools\rtx.bat launch` rebuilds and installs each revision, and refuses to start
 while a client from the checkout is still running.
 
-F1 hides the first-person hand as well as the HUD. Vanilla skips
-`HeldItemRenderer.renderItem` when the HUD is hidden, and Remix captures from
-that call. Do not use F1 for a hand or held-item comparison. To avoid chat text,
+F1 hides the first-person hand as well as the HUD. Vanilla's
+`GameRenderer.renderItemInHand` returns when the HUD is hidden, and Remix
+captures from the `FirstPersonHandsAndItemsRenderer.submitHandsWithItems` call
+inside it. Do not use F1 for a hand or held-item comparison. To avoid chat text,
 wait eleven seconds after the last command, beyond its ten-second fade.
 
 [Remix debug views](docs/GETTING_STARTED.md#viewing-a-remix-debug-view) separate

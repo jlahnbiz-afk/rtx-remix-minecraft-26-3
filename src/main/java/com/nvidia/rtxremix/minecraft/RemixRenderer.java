@@ -781,7 +781,7 @@ public class RemixRenderer {
             // RTX disabled: hand all rendering back to vanilla's GL path. Skip every
             // scene-submission step below (particle task, camera, lights, chunks,
             // entities, block entities, sky, atlas flush, Submit). The present path
-            // (RenderSystemMixin -> presentFrameVk -> blitGlToRemix) still runs
+            // (GlSurfaceMixin -> presentFrameVk -> blitGlToRemix) still runs
             // unconditionally and composites vanilla's GL frame, exactly like the
             // no-world case above. The finally block closes the frame (gc, endFrame,
             // benchmark). VK<->GL semaphore signaling lives in the present path and is

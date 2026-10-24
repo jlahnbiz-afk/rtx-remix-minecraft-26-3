@@ -9,7 +9,6 @@ import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.texture.AtlasAnimationForwarder;
 import com.nvidia.rtxremix.minecraft.terrain.WorldRendererTerrainAccess;
 import com.nvidia.rtxremix.minecraft.terrain.SkyLightSurfaceScanPolicy;
-import com.nvidia.rtxremix.minecraft.terrain.NeighbourReflagFilter;
 import com.nvidia.rtxremix.minecraft.terrain.LocalChunkBatchPacing;
 import com.nvidia.rtxremix.minecraft.terrain.ClientLightSnapshots;
 import com.nvidia.rtxremix.minecraft.terrain.ClientLightSnapshotPolicy;
@@ -341,7 +340,6 @@ public class RtxRemixMod implements ClientModInitializer {
 
         NativeExtractor.extractIfNeeded();
         TracyGCListener.install();
-        LOGGER.info(NeighbourReflagFilter.effectiveStateLine());
         LOGGER.info(ClientLightSnapshotPolicy.effectiveStateLine());
         LOGGER.info(LocalChunkBatchPacing.effectiveStateLine());
         LOGGER.info(SkyLightSurfaceScanPolicy.effectiveStateLine());

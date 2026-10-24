@@ -461,8 +461,7 @@ public class ChunkManager {
 
     private int cntCap = -1, cntLightsCulled, cntLightsDrawn, cntLightsBeyondReach, cntReachable, cntWorkerMem, cntPooledDirectMB,
             cntBucketGrows, cntBucketGrowKB, cntPendingBuilds, cntPendingMeshMB, cntCaptureQueue,
-            cntCaptureQueueMB, cntCaptureBackpressure, cntCaptureEvicted, cntLightRebuildsSkipped,
-            cntNeighbourReflagsDropped, cntNeighbourReflagsKept, cntIncompleteFirstBuilds, cntPacedChunks,
+            cntCaptureQueueMB, cntCaptureBackpressure, cntCaptureEvicted, cntLightRebuildsSkipped, cntPacedChunks,
             cntPacedBacklog, cntChunkApplyUs, cntPacedUnloads, cntPacedUnloadBacklog, cntChunkUnloadUs,
             cntSurfaceScansSeeded, cntReadyMeshes, cntMeshRetireQueue,
             cntMeshRetireMB, cntLightOpsPending, cntLightTasks,
@@ -651,9 +650,6 @@ public class ChunkManager {
                 cntCaptureBackpressure = timer.registerCounter("Chunk.CaptureBlocked");
                 cntCaptureEvicted = timer.registerCounter("Chunk.CaptureEvicted");
                 cntLightRebuildsSkipped = timer.registerCounter("Chunk.LightRebuildsSkipped");
-                cntNeighbourReflagsDropped = timer.registerCounter("Chunk.NeighbourReflagsDropped");
-                cntNeighbourReflagsKept = timer.registerCounter("Chunk.NeighbourReflagsKept");
-                cntIncompleteFirstBuilds = timer.registerCounter("Chunk.IncompleteFirstBuilds");
                 cntPacedChunks = timer.registerCounter("Chunk.PacedChunks");
                 cntPacedBacklog = timer.registerCounter("Chunk.PacedBacklog");
                 cntChunkApplyUs = timer.registerCounter("Chunk.ApplyUsPerChunk");
@@ -709,9 +705,6 @@ public class ChunkManager {
                 timer.count(cntCaptureEvicted, BlockDataQueue.drainBackpressureEvictions());
                 reflagEvictedSections();
                 timer.count(cntLightRebuildsSkipped, SkippedSectionRebuilds.drainLightOnly());
-                timer.count(cntNeighbourReflagsDropped, SkippedSectionRebuilds.drainNeighbourInSnapshot());
-                timer.count(cntNeighbourReflagsKept, NeighbourReflagFilter.drainKept());
-                timer.count(cntIncompleteFirstBuilds, NeighbourReflagFilter.drainIncompleteFirstBuilds());
                 timer.count(cntPacedChunks, LocalChunkBatchPacing.drainPacedChunks());
                 timer.count(cntPacedBacklog, LocalChunkBatchPacing.pacedBacklog());
                 timer.count(cntChunkApplyUs, LocalChunkBatchPacing.applyMicrosPerChunk());

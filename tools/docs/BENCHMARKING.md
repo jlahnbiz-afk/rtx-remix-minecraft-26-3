@@ -84,7 +84,7 @@ One measured run, repeated `runs` times:
    60 Hz index (`round(i * 1000 / 60)` ms, clamped to the path duration),
    captures per-frame timings and counters, and takes the scheduled screenshots.
    The interactive playback clocks are not involved. The frame duration covers
-   the whole `MinecraftClient.render()` span, recorded as
+   the whole `MinecraftClient.render` span around `Minecraft.runTick`, recorded as
    `metadata.frameTimeSource`; see
    [Reading frame metrics, sections and zones](#reading-frame-metrics-sections-and-zones).
 7. **Report.** It writes `benchmark.json` into `<gameDir>/benchmark/results/`, then
@@ -775,7 +775,8 @@ changes the workload and does not turn the result into a presented-FPS counter.
 ### Reading Frame Metrics, Sections And Zones
 
 `MinecraftClientMixin` timestamps the entry and return of
-`MinecraftClient.render`; `BenchmarkController` records that duration as
+`Minecraft.runTick`, the `MinecraftClient.render` span; `BenchmarkController`
+records that duration as
 `perFrame` in nanoseconds and `metadata.frameTimeSource`. It includes ticks,
 client tasks, vanilla rendering, capture/submit, blit, and present. Instrumented
 sections cover only subsets and can overlap or include worker time; do not add

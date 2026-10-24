@@ -135,8 +135,8 @@ public final class EntityRenderContext {
      * {@code BlockTextureManager} layer type, or {@link #NO_BLOCK_ITEM}. Ice and
      * stained glass are {@code L_TRANS}, clear glass {@code L_GLASS}.
      *
-     * <p>Set by {@code ItemRendererMixin} for the duration of one
-     * {@code ItemRenderer.renderItem} call and sampled by
+     * <p>Set by {@code ItemStackRenderStateMixin} for the duration of one
+     * {@code ItemStackRenderState.submit} call and sampled by
      * {@link RemixCapturingConsumer} as each part opens, so the answer travels
      * with the geometry that item produced.
      */

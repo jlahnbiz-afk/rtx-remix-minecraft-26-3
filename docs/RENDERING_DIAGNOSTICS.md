@@ -22,7 +22,7 @@ must release the previous session before acquiring the next one, as the zone
 registry clear and `ConfLayerDriver.onWorldJoin` do.
 
 Schedule transition work through the client executor and re-check the session
-when it runs. A flag drained from `WorldRenderEvents` or the submit hook will
+when it runs. A flag drained from `LevelRenderEvents` or the submit hook will
 not drain while the world is null. It can instead clear native resources in
 the first frame of the next world, during their reinitialization.
 
@@ -31,8 +31,8 @@ the first frame of the next world, during their reinitialization.
 `RtxRemixMod.rebuildLoadedTerrain()` owns the full recapture sequence:
 
 1. Clear the Remix terrain through `ChunkManager.clear()`.
-2. Snapshot `builtSections(client)` before `WorldRenderer.reload()` forgets
-   the old section slots, then reload vanilla terrain.
+2. Snapshot `builtSections(client)` before `LevelExtractor.allChanged()`
+   forgets the old section slots, then reload vanilla terrain.
 3. Call `recaptureTerrainForRemix(client, built)` to explicitly queue that set.
 
 The RTX toggle and material/texture reload paths preserve the same contract.

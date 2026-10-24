@@ -89,7 +89,7 @@ public final class RtxSettingsScreen extends Screen {
     /**
      * Resets every setting, then reopens this page as a new screen instance.
      *
-     * <p>A refreshed page must be a fresh screen, never {@code clearAndInit()}
+     * <p>A refreshed page must be a fresh screen, never {@code rebuildWidgets()}
      * on this one. The {@code layout} field is built once, in its initializer,
      * and is never cleared, so re-running {@code init()} appends a second
      * header, body, and footer to the same layout. The same rule holds for the

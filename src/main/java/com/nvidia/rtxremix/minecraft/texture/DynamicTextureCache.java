@@ -21,17 +21,11 @@ import net.minecraft.resources.Identifier;
  * Pixel cache for dynamic textures (maps, player skins, etc.) that are not
  * accessible through the resource manager.
  *
- * <p>Textures are captured via two mixin paths:
- * <ul>
- *   <li>{@code NativeImageBackedTextureMixin}, for {@code NativeImageBackedTexture}
- *       instances (capes, etc.)</li>
- *   <li>{@code PlayerSkinTextureMixin}, for {@code PlayerSkinTexture} instances
- *       (player skins downloaded from Mojang CDN)</li>
- * </ul>
- *
- * <p>In both cases, {@code TextureManagerMixin} intercepts {@code registerTexture()}
- * to record the texture-to-identifier mapping in {@link #TEXTURE_IDS}, and the type-specific
- * mixin captures pixel data at upload time via {@link #captureFromUpload}.
+ * <p>Every such texture is a {@code DynamicTexture}, player skins downloaded from the
+ * Mojang CDN included: {@code TextureManagerMixin} intercepts {@code register()} to record
+ * the texture-to-identifier mapping in {@link #TEXTURE_IDS}, and
+ * {@code NativeImageBackedTextureMixin} captures pixel data at upload time via
+ * {@link #captureFromUpload}.
  *
  * <p>Font glyph pages are served here too but never snapshotted: Minecraft assembles a
  * page on the GPU one glyph at a time and {@link GlyphPageMirror} follows along, so
@@ -45,7 +39,7 @@ import net.minecraft.resources.Identifier;
  * whole client session and uploads it exactly once, so a snapshot dropped for any reason
  * other than its texture's release would never be captured again and the player would
  * render with the default skin until the game restarts. {@link #TEXTURE_IDS} holds its
- * keys weakly. Image-backed textures also count as released once their image is null:
+ * keys weakly. Image-backed textures also count as released once their image is closed:
  * vanilla can close a map texture without removing it from the texture manager.
  *
  * <p>Versions are monotonic for the life of the process. Consumers keep the version they
@@ -69,9 +63,8 @@ public final class DynamicTextureCache {
             Collections.synchronizedMap(new HashMap<>());
 
     /**
-     * Maps a texture object to its identifier so that upload-time mixins
-     * ({@code NativeImageBackedTextureMixin}, {@code PlayerSkinTextureMixin})
-     * can look up the id when {@code upload()} fires.  Uses identity semantics
+     * Maps a texture object to its identifier so that the upload-time mixin
+     * ({@code NativeImageBackedTextureMixin}) can look up the id when {@code upload()} fires.  Uses identity semantics
      * since {@code AbstractTexture} does not override {@code equals}/{@code hashCode}.
      */
     private static final Map<AbstractTexture, Identifier> TEXTURE_IDS =
@@ -103,7 +96,7 @@ public final class DynamicTextureCache {
 
     /**
      * Captures pixel data at upload time, where {@code image} is guaranteed non-null.
-     * Called from {@code NativeImageBackedTextureMixin} and {@code PlayerSkinTextureMixin}.
+     * Called from {@code NativeImageBackedTextureMixin}.
      *
      * @return true if the texture was registered and pixels were stored
      */

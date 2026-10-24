@@ -183,7 +183,9 @@ vanilla profiler mirrors qualify). Spans that cross existing zones, such as the
 Fabric `WorldRender.vanilla.*` events, stay JFR-only and still show up in Tracy
 as plot lanes through `ProfileScope.plotOnClose(...)`. The enclosing
 `MinecraftClient.render` and `WorldRenderer.render` spans also stay JFR-only:
-each enclosing zone pushes every Java zone one level deeper against
+they wrap `Minecraft.runTick` and `LevelRenderer.render`, and keep the names of
+the 1.21.1 release so recordings from before and after the 26.3 port compare.
+Each enclosing zone pushes every Java zone one level deeper against
 `tracyJavaMaxDepth`, and the runtime's frame mark at Present already delimits the frame.
 Benchmark runs cap mirrored Java Tracy zones with
 `tools/src/rtx_tools/benchmark/config.json`'s `profiling.tracyJavaMaxDepth` value,
@@ -197,7 +199,7 @@ JFR phases intact).
 
 ### Client Task Events
 
-`MinecraftClient.render` drains the client executor in the
+`Minecraft.runTick` drains the client executor in the
 `MinecraftClient.render.runTasks` phase. `ProfileScope` emits one
 `minecraft.ClientTaskDrain` event with frame index, task/slow-task counts,
 drain and summed task time, initial/end/peak queue depth, and the slowest task's
@@ -209,7 +211,7 @@ Java phase enablement unless `-Drtxremix.profile.clientTasks=false` disables it.
 Task names identify runnable classes. A task event commits after execution, so
 its stack identifies the drain site, not the task body. Inspect `taskName`,
 then use `jfr_phase_hotspots --phase "MinecraftClient.render.runTasks"` for
-CPU/allocation composition. A `NetworkThreadUtils` lambda can be a packet
+CPU/allocation composition. A `PacketUtils` lambda can be a packet
 handler forwarded from the network thread; a long packet-heavy drain can
 precede section rebuild and capture work rather than coincide with it.
 
@@ -309,7 +311,7 @@ GPU or architecture does not apply to a JFR-only run.
 paid at that API call rather than sky computation. Check surrounding
 `Interop.VKToGL`, `Interop.GLToVK`, `Remix.Present`, and
 `MinecraftClient.render.swapBuffers` spans; moving a sync point can relabel
-the same wait without removing it. `RenderSystemMixin` defines the current
+the same wait without removing it. `GlSurfaceMixin` defines the current
 swap/present redirection. Turning the sky off also removes its dome light and
 changes GPU lighting work, so it is not a CPU-only control.
 
@@ -346,9 +348,11 @@ The selected runtime's `dxvk_imgui.cpp` and `dxvk_memory_tracker.cpp` are the
 authorities for those counters and controls. Growth in the heap readout with
 flat tracked Remix resources suggests allocations outside that profiler;
 correlate it with GL work rather than declaring the owner from one graph.
-`DynamicBufferUpload` documents a known GL buffer-orphaning mechanism and the
-reuse policy that prevents it. Growth that scales with draw calls/frame rate,
-especially with the debug chart open, warrants checking that path again.
+On 1.21.1 the mod replaced vanilla's GL buffer orphaning with a reuse policy
+(`DynamicBufferUpload`). Minecraft 26.3 uploads through renderpearl
+`GpuBuffer`s, which the mod leaves to vanilla, so growth that scales with draw
+calls or frame rate, especially with the debug chart open, points at those
+uploads.
 
 Java RSS growth is a separate question. Use `jfr_gc --heap --rss` and a
 controlled `jcmd <pid> GC.run` outside measured runs to compare the live set
