@@ -133,6 +133,11 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
   持ち主を状態に記録しています。
 - アイテムは `ItemStackRenderState` 経由になりました (`ItemModelResolverMixin`、
   `ItemStackRenderStateMixin`、`ItemLayerRenderStateMixin`)。
+- Fabric Renderer API (FRAPI) のメッシュ: 地形は `emitQuads` で取り込みます。
+  アイテムとブロックモデルは、Fabric が `SubmitNodeCollector` に足すメッシュ付きの
+  `submitItem` と `submitBlockModel` を `RemixSubmitCollector` で受け、メッシュの
+  各面を `QuadView.toBakedQuad` で vanilla と同じ形にして取り込みます (既定の実装は
+  メッシュを捨てます)。
 - 一人称は `FirstPersonHandsAndItemsRenderer.submitHandsWithItems` を
   `GameRenderer.renderItemInHand` 内で包んでいます。
 - 名札の文字は vanilla 側でキャッシュの問題が直ったので、名前用の Mixin
@@ -271,9 +276,7 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
 1. **アニメーションするスプライトの余白**: 水や溶岩などは毎フレーム本体だけを
    差し替えるので、余白は最初のフレームの端の画素のままです。遠くで縁の色が
    わずかにずれる程度で、黒い線にはなりません。
-2. **Fabric Renderer API のメッシュ**: FRAPI のメッシュを持つアイテムやブロックは
-   vanilla の経路で提出されたものだけを取り込みます。
-3. **性能面で未移植のもの** (正しさには影響しない):
+2. **性能面で未移植のもの** (正しさには影響しない):
    - 可視性ウォークの割り当てなし版と粗い視錐台インデックス
      (`-Drtxremix.vanillaVisibilityWalk`、`-Drtxremix.logVisibleSet` も消えた)。
    - チャンク読み込み時の近傍の再ビルド抑制 (`NeighbourReflagFilter`)。26.3 では

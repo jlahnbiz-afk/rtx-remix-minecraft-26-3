@@ -8,6 +8,10 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.QuadInstance;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import java.util.List;
+import java.util.function.Function;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.Mesh;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.MeshView;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadView;
 import net.fabricmc.fabric.api.client.rendering.v1.SubmitRenderPhase;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -167,6 +171,62 @@ public final class RemixSubmitCollector implements SubmitNodeCollector {
 
     private static int tintLayer(int[] layers, int layer) {
         return layer >= 0 && layer < layers.length ? layers[layer] : -1;
+    }
+
+    // ---- Fabric renderer API meshes ----
+    //
+    // Fabric adds these overloads to the collector and defaults them to the vanilla submit,
+    // which drops the mesh. Each mesh quad becomes the baked quad Fabric itself would make of
+    // it, so it reaches the capture the way a vanilla quad does.
+
+    @Override
+    public void submitItem(PoseStack poseStack, ItemDisplayContext displayContext, int lightCoords,
+                           int overlayCoords, int outlineColor, int[] tintLayers, ItemQuads quads,
+                           MeshView mesh, ItemStackRenderState.FoilType foilType) {
+        submitItem(poseStack, displayContext, lightCoords, overlayCoords, outlineColor, tintLayers, quads, foilType);
+        PoseStack.Pose pose = poseStack.last();
+        mesh.forEach(quad -> putMeshQuad(quad, pose, tintLayers, provider.getBuffer(quad.itemRenderType())));
+    }
+
+    @Override
+    public void submitBlockModel(PoseStack poseStack, Function<ChunkSectionLayer, RenderType> renderTypeFunction,
+                                 boolean translucent, List<BlockStateModelPart> parts, @Nullable Mesh mesh,
+                                 int[] tintLayers, int lightCoords, int overlayCoords, int outlineColor) {
+        PoseStack.Pose pose = poseStack.last();
+        quadInstance.setLightCoords(lightCoords);
+        quadInstance.setOverlayCoords(overlayCoords);
+        for (BlockStateModelPart part : parts) {
+            for (Direction direction : DIRECTIONS) {
+                putLayeredPartQuads(part.getQuads(direction), pose, tintLayers, renderTypeFunction);
+            }
+            putLayeredPartQuads(part.getQuads(null), pose, tintLayers, renderTypeFunction);
+        }
+        if (mesh != null) {
+            mesh.forEach(quad -> putMeshQuad(quad, pose, tintLayers,
+                    provider.getBuffer(renderTypeFunction.apply(quad.chunkLayer()))));
+        }
+    }
+
+    private void putLayeredPartQuads(List<BakedQuad> quads, PoseStack.Pose pose, int[] tintLayers,
+                                     Function<ChunkSectionLayer, RenderType> renderTypeFunction) {
+        for (BakedQuad quad : quads) {
+            int tintIndex = quad.materialInfo().tintIndex();
+            quadInstance.setColor(tintIndex != -1 ? tintLayer(tintLayers, tintIndex) : -1);
+            provider.getBuffer(renderTypeFunction.apply(quad.materialInfo().layer()))
+                    .putBakedQuad(pose, quad, quadInstance);
+        }
+    }
+
+    private void putMeshQuad(QuadView quad, PoseStack.Pose pose, int[] tintLayers, VertexConsumer buffer) {
+        Minecraft client = Minecraft.getInstance();
+        if (!(client.getTextureManager().getTexture(quad.atlas().getTextureLocation()) instanceof TextureAtlas atlas)) {
+            return;
+        }
+        TextureAtlasSprite sprite = atlas.spriteFinder().find(quad);
+        // A baked quad has no vertex colour, so the quad's own colour rides on the tint.
+        int tint = quad.tintIndex() != -1 ? tintLayer(tintLayers, quad.tintIndex()) : -1;
+        quadInstance.setColor(ARGB.multiply(tint, quad.color(0)));
+        buffer.putBakedQuad(pose, quad.toBakedQuad(sprite), quadInstance);
     }
 
     @Override
