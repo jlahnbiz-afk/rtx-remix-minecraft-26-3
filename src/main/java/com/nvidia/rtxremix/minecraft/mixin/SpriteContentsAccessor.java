@@ -6,7 +6,6 @@ package com.nvidia.rtxremix.minecraft.mixin;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.renderer.texture.SpriteContents;
-import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
@@ -14,7 +13,4 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface SpriteContentsAccessor {
     @Accessor("originalImage")
     NativeImage getImage();
-
-    @Accessor("animatedTexture")
-    @Nullable SpriteContents.AnimatedTexture getAnimation();
 }

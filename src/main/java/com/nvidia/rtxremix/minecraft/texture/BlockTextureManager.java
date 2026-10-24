@@ -133,8 +133,6 @@ public class BlockTextureManager {
         /** Whether any pixel of the sprite's {@code _s} alpha channel is below 255. */
         public final boolean hasPerPixelEmissive;
         public final boolean hasSss;
-        public final int[] frameIndices;
-        public final int[] frameTimes;
         public final int frameColumns;
 
         AnimatedSpriteLabPBR(byte[] aoTable, int aoW, int aoH,
@@ -142,7 +140,7 @@ public class BlockTextureManager {
                              byte[] sMetallicTable, byte[] sSssTable,
                              int sW, int sH,
                              boolean hasPerPixelEmissive, boolean hasSss,
-                             int[] frameIndices, int[] frameTimes, int frameColumns) {
+                             int frameColumns) {
             this.aoTable = aoTable; this.aoW = aoW; this.aoH = aoH;
             this.sAlphaTable = sAlphaTable;
             this.sRoughnessTable = sRoughnessTable;
@@ -151,8 +149,6 @@ public class BlockTextureManager {
             this.sW = sW; this.sH = sH;
             this.hasPerPixelEmissive = hasPerPixelEmissive;
             this.hasSss = hasSss;
-            this.frameIndices = frameIndices;
-            this.frameTimes = frameTimes;
             this.frameColumns = frameColumns;
         }
     }
@@ -172,7 +168,7 @@ public class BlockTextureManager {
         SpriteEntry(int i, Identifier id, TextureAtlasSprite s) {
             this.index = i; this.id = id;
             u0 = s.getU0(); v0 = s.getV0(); u1 = s.getU1(); v1 = s.getV1();
-            pixX = s.getX(); pixY = s.getY();
+            pixX = AtlasSprites.contentX(s); pixY = AtlasSprites.contentY(s);
             SpriteContents contents = s.contents();
             pixW = contents.width(); pixH = contents.height();
             transparentPixels = scanTransparency(contents, pixW, pixH);
@@ -359,8 +355,7 @@ public class BlockTextureManager {
 
         for (var e : map.entrySet()) {
             SpriteContents contents = e.getValue().contents();
-            SpriteContents.AnimatedTexture animation = ((SpriteContentsAccessor) contents).getAnimation();
-            if (animation == null) continue;
+            if (!contents.isAnimated()) continue;
 
             NativeImage nI = labPBRVariants.loadVariant(e.getKey(), "_n");
             NativeImage sI = labPBRVariants.loadVariant(e.getKey(), "_s");
@@ -379,21 +374,13 @@ public class BlockTextureManager {
                 int sH             = (sI != null) ? sI.getHeight()                       : 0;
                 boolean hasPerPixelEmissive = sI != null && LabPBRConverter.hasEmissiveData(sI);
                 boolean hasSss = sI != null && LabPBRConverter.hasSSSData(sI);
-                List<SpriteContents.FrameInfo> frames = animation.frames;
-                int[] frameIndices = new int[frames.size()];
-                int[] frameTimes = new int[frames.size()];
-                for (int i = 0; i < frames.size(); i++) {
-                    SpriteContents.FrameInfo frame = frames.get(i);
-                    frameIndices[i] = frame.index;
-                    frameTimes[i] = frame.time;
-                }
                 int variantW = (sI != null) ? sW : aoW;
                 int frameColumns = Math.max(1, variantW / Math.max(1, contents.width()));
                 result.put(e.getKey().toString(),
                     new AnimatedSpriteLabPBR(aoTable, aoW, aoH,
                                              sAlphaTable, sRoughnessTable, sMetallicTable, sSssTable,
                                              sW, sH, hasPerPixelEmissive, hasSss,
-                                             frameIndices, frameTimes, frameColumns));
+                                             frameColumns));
             } finally {
                 if (nI != null) nI.close();
                 if (sI != null) sI.close();
@@ -1031,7 +1018,7 @@ public class BlockTextureManager {
         for (TextureAtlasSprite sprite : acc.getSprites().values()) {
             NativeImage img = ((SpriteContentsAccessor) sprite.contents()).getImage();
             if (img == null) continue;
-            int sx = sprite.getX(), sy = sprite.getY();
+            int sx = AtlasSprites.contentX(sprite), sy = AtlasSprites.contentY(sprite);
             int sw = sprite.contents().width(), sh = sprite.contents().height();
             for (int y = 0; y < sh; y++)
                 for (int x = 0; x < sw; x++) {

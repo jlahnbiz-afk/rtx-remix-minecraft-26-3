@@ -5,6 +5,7 @@
 package com.nvidia.rtxremix.minecraft.texture;
 
 import java.nio.ByteBuffer;
+import org.lwjgl.system.MemoryUtil;
 
 /**
  * CPU copy of one font glyph-atlas page.
@@ -45,6 +46,10 @@ public final class GlyphPageMirror {
      */
     private static long nextVersion = 1L;
     private static GlyphPageMirror uploadTarget;
+    private static Object stagingBuffer;
+    private static long stagingPixels;
+    private static int stagingWidth;
+    private static int stagingChannels;
 
     private final boolean intensity;
     private final byte[] data = new byte[PAGE_SIZE * PAGE_SIZE * CHANNELS];
@@ -118,6 +123,43 @@ public final class GlyphPageMirror {
 
     public static void endUpload() {
         uploadTarget = null;
+        stagingBuffer = null;
+        stagingPixels = 0L;
+    }
+
+    /**
+     * Records the CPU image behind the GPU staging buffer a bitmap glyph is about to
+     * copy from, so {@link #blitFromStaging} can read the same window. Bitmap fonts
+     * stage their whole sheet once and copy each glyph out of it on the GPU, so the
+     * copy itself carries no CPU pixels. Ignored outside a glyph upload.
+     */
+    public static void recordStaging(Object buffer, long pixels, int width, int channels) {
+        if (uploadTarget == null) {
+            return;
+        }
+        stagingBuffer = buffer;
+        stagingPixels = pixels;
+        stagingWidth = width;
+        stagingChannels = channels;
+    }
+
+    /**
+     * Mirrors a buffer-to-texture glyph copy whose source is the staging buffer
+     * {@link #recordStaging} last saw; any other copy is ignored.
+     */
+    public static void blitFromStaging(Object buffer, int srcX, int srcY, int dstX, int dstY,
+                                       int width, int height) {
+        GlyphPageMirror page = uploadTarget;
+        if (page == null || buffer != stagingBuffer || stagingPixels == 0L || width <= 0 || height <= 0) {
+            return;
+        }
+        int rowPitch = stagingWidth * stagingChannels;
+        long first = stagingPixels + (long) srcY * rowPitch + (long) srcX * stagingChannels;
+        // The window's rows stride the whole sheet; the buffer spans only the bytes the
+        // window touches, from its first pixel to the end of its last row.
+        int span = (height - 1) * rowPitch + width * stagingChannels;
+        page.blit(dstX, dstY, width, height, stagingChannels,
+                MemoryUtil.memByteBuffer(first, span), rowPitch);
     }
 
     /** The page a glyph is being uploaded into, or null outside a glyph upload. */

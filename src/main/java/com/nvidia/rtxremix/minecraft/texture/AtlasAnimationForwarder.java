@@ -9,6 +9,8 @@ import com.nvidia.rtxremix.TextureBatchEntry;
 import com.nvidia.rtxremix.TextureFormat;
 import com.nvidia.rtxremix.TexturePatch;
 import com.nvidia.rtxremix.TexturePatchInfo;
+import com.mojang.blaze3d.platform.NativeImage;
+import com.nvidia.rtxremix.minecraft.mixin.SpriteContentsAccessor;
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
 import org.lwjgl.system.MemoryUtil;
 import org.slf4j.Logger;
@@ -16,15 +18,21 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import net.minecraft.client.renderer.texture.SpriteContents;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.resources.Identifier;
 
 /**
- * Collects animated sprite upload patches each tick and flushes them to Remix
- * in a single batched call before present.
+ * Collects animated sprite frames each tick and flushes them to Remix in a
+ * single batched call before present.
+ *
+ * <p>Vanilla animates atlas sprites on the GPU, so nothing is uploaded from
+ * the CPU to observe; {@code SpriteAtlasTextureMixin} reads each animation's
+ * state after its tick and the patch is rebuilt here from the sprite's frame
+ * strip, blending interpolated animations as vanilla's shader does.
  *
  * <p>LabPBR-aware: sprites that have {@code _n} / {@code _s} siblings are
  * re-processed on every animation frame so AO (from {@code _n.b}) and the
@@ -50,7 +58,6 @@ public final class AtlasAnimationForwarder {
 
     private static Thread expectedThread;
     private static final List<PatchRecord> pendingPatches = new ArrayList<>();
-    private static final Map<Identifier, AnimationPlayback> animationStates = new HashMap<>();
     private static Map<String, BlockTextureManager.AnimatedSpriteLabPBR> labPBRMap;
     private static Set<Identifier> blockAtlasSpriteIds;
     private static final ThreadLocal<Identifier> currentAtlasId = new ThreadLocal<>();
@@ -67,16 +74,15 @@ public final class AtlasAnimationForwarder {
         final Identifier id;
         final int dstX;
         final int dstY;
-        final int srcX;
-        final int srcY;
         final int width;
         final int height;
         final int srcImageWidth;
         final int srcImageHeight;
         /**
-         * Raw pointer into the owning NativeImage's mip-0 backing memory.
-         * Read-only and valid only until flush() is called on the same
-         * render-thread frame that produced this record:
+         * Raw pointer to the first texel of the sprite's frame strip, the
+         * owning SpriteContents' original image. Read-only and valid only
+         * until flush() is called on the same render-thread frame that
+         * produced this record:
          *   1. The owning SpriteContents must not be closed (atlas rebuild
          *      or world unload invalidates).
          *   2. The block atlas must not be re-stitched between capture
@@ -87,28 +93,31 @@ public final class AtlasAnimationForwarder {
          *      thread breaks this contract and requires copying bytes
          *      at capture time.
          */
-        final long pixelPtr;
-        final int rowPitch;
+        final long imagePtr;
+        final int frameRowSize;
+        final int currentFrame;
+        final int nextFrame;
+        final float nextBlend;
 
-        PatchRecord(Identifier id, int dstX, int dstY, int srcX, int srcY,
-                    int width, int height, int srcImageWidth, int srcImageHeight,
-                    long pixelPtr, int rowPitch) {
+        PatchRecord(Identifier id, int dstX, int dstY, int width, int height,
+                    int srcImageWidth, int srcImageHeight, long imagePtr, int frameRowSize,
+                    int currentFrame, int nextFrame, float nextBlend) {
             this.id = id;
             this.dstX = dstX;
             this.dstY = dstY;
-            this.srcX = srcX;
-            this.srcY = srcY;
             this.width = width;
             this.height = height;
             this.srcImageWidth = srcImageWidth;
             this.srcImageHeight = srcImageHeight;
-            this.pixelPtr = pixelPtr;
-            this.rowPitch = rowPitch;
+            this.imagePtr = imagePtr;
+            this.frameRowSize = frameRowSize;
+            this.currentFrame = currentFrame;
+            this.nextFrame = nextFrame;
+            this.nextBlend = nextBlend;
         }
 
-        boolean isInterpolatedUpload() {
-            return srcX == 0 && srcY == 0 &&
-                   srcImageWidth == width && srcImageHeight == height;
+        boolean blends() {
+            return nextBlend > 0.0f && nextFrame != currentFrame;
         }
     }
 
@@ -134,19 +143,12 @@ public final class AtlasAnimationForwarder {
         }
     }
 
-    private static final class AnimationPlayback {
-        int sequenceIndex;
-        int interpolationTick;
-        boolean initialized;
-    }
-
     public static void init(
             Map<String, BlockTextureManager.AnimatedSpriteLabPBR> labPBR,
             Set<Identifier> blockAtlasSprites) {
         labPBRMap = labPBR;
         blockAtlasSpriteIds = Set.copyOf(blockAtlasSprites);
         pendingPatches.clear();
-        animationStates.clear();
         expectedThread = null;
         // Flip active on LAST so any addPatch probe that races initialization
         // sees a fully constructed forwarder (or no forwarder at all).
@@ -155,10 +157,25 @@ public final class AtlasAnimationForwarder {
                     labPBR.size(), blockAtlasSpriteIds.size());
     }
 
+    /**
+     * Queues one animated sprite's frame for this tick's flush.
+     *
+     * <p>26.3 animates atlas sprites on the GPU, so the frame is described
+     * rather than uploaded: the sprite's frame strip, the frame shown, and for
+     * an interpolated animation the next frame and how far toward it the
+     * vanilla shader blends.
+     *
+     * @param imagePtr      first texel of the sprite's mip-0 frame strip
+     * @param frameRowSize  frames per row of the strip
+     * @param currentFrame  strip index of the frame shown
+     * @param nextFrame     strip index blended toward, or {@code currentFrame}
+     * @param nextBlend     weight of {@code nextFrame}, in [0, 1)
+     */
     public static void addPatch(Identifier spriteId, int dstX, int dstY,
-                                int srcX, int srcY, int width, int height,
+                                int width, int height,
                                 int srcImageWidth, int srcImageHeight,
-                                long pixelPtr, int rowPitch) {
+                                long imagePtr, int frameRowSize,
+                                int currentFrame, int nextFrame, float nextBlend) {
         // Drop patches when the forwarder is not active (SDK missing, RTX
         // disabled, or post-shutdown/reload). Prevents an unbounded queue
         // when SpriteContents.upload still fires but we'll never flush.
@@ -186,77 +203,78 @@ public final class AtlasAnimationForwarder {
             return;
         }
 
-        pendingPatches.add(new PatchRecord(spriteId, dstX, dstY, srcX, srcY,
-                                           width, height, srcImageWidth, srcImageHeight,
-                                           pixelPtr, rowPitch));
+        pendingPatches.add(new PatchRecord(spriteId, dstX, dstY, width, height,
+                                           srcImageWidth, srcImageHeight, imagePtr, frameRowSize,
+                                           currentFrame, nextFrame, nextBlend));
+    }
+
+    /**
+     * Queues the frame a GPU-animated sprite shows after this tick, if vanilla
+     * redraws it: every tick for an interpolated animation, otherwise only when
+     * the shown frame changed.
+     */
+    public static void addAnimatedSprite(TextureAtlasSprite sprite, SpriteContents.AnimationState state) {
+        if (!active || !state.needsToDraw()) {
+            return;
+        }
+        SpriteContents contents = sprite.contents();
+        SpriteContents.AnimatedTexture animation = state.animationInfo;
+        List<SpriteContents.FrameInfo> frames = animation.frames;
+        SpriteContents.FrameInfo current = frames.get(state.frame);
+        int nextFrame = current.index();
+        float nextBlend = 0.0f;
+        if (animation.interpolateFrames) {
+            nextFrame = frames.get((state.frame + 1) % frames.size()).index();
+            nextBlend = (float) state.subFrame / current.time();
+        }
+        NativeImage image = ((SpriteContentsAccessor) contents).getImage();
+        addPatch(contents.name(), AtlasSprites.contentX(sprite), AtlasSprites.contentY(sprite),
+                contents.width(), contents.height(), image.getWidth(), image.getHeight(),
+                image.getPointer(), animation.frameRowSize, current.index(), nextFrame, nextBlend);
     }
 
     private static FrameSampling resolveLabPBRFrameSampling(
             PatchRecord p, BlockTextureManager.AnimatedSpriteLabPBR pbr) {
-        if (pbr == null || pbr.frameIndices.length == 0) {
-            FrameOrigin origin = new FrameOrigin(p.srcX, p.srcY);
-            return new FrameSampling(origin, origin, 0.0f);
+        // LabPBR sidecars lay their frames out in their own strip, which can
+        // be narrower or wider than the albedo strip.
+        int columns = pbr != null ? pbr.frameColumns : p.frameRowSize;
+        FrameOrigin current = frameOrigin(p.currentFrame, columns, p.width, p.height);
+        if (!p.blends()) {
+            return new FrameSampling(current, current, 0.0f);
         }
-
-        AnimationPlayback playback = animationStates.computeIfAbsent(p.id, ignored -> new AnimationPlayback());
-
-        if (p.isInterpolatedUpload()) {
-            if (!playback.initialized) {
-                playback.sequenceIndex = 0;
-                playback.interpolationTick = 0;
-                playback.initialized = true;
-            }
-
-            int currentSequenceIndex = playback.sequenceIndex;
-            int nextSequenceIndex = (currentSequenceIndex + 1) % pbr.frameIndices.length;
-            int frameTime = Math.max(1, pbr.frameTimes[currentSequenceIndex]);
-            int interpolationTick = Math.min(frameTime - 1, playback.interpolationTick + 1);
-            playback.interpolationTick = interpolationTick;
-
-            FrameOrigin current = frameOriginFromFrameIndex(
-                pbr.frameIndices[currentSequenceIndex], pbr.frameColumns, p.width, p.height);
-            FrameOrigin next = frameOriginFromFrameIndex(
-                pbr.frameIndices[nextSequenceIndex], pbr.frameColumns, p.width, p.height);
-            float nextBlend = frameTime > 1 ? (float) interpolationTick / (float) frameTime : 0.0f;
-            return new FrameSampling(current, next, nextBlend);
-        }
-
-        int frameIndex = frameIndexFromOrigin(p);
-        int expectedNext = playback.initialized
-            ? (playback.sequenceIndex + 1) % pbr.frameIndices.length
-            : -1;
-        playback.sequenceIndex = findSequenceIndex(pbr.frameIndices, frameIndex, expectedNext);
-        playback.interpolationTick = 0;
-        playback.initialized = true;
-
-        FrameOrigin origin = new FrameOrigin(p.srcX, p.srcY);
-        return new FrameSampling(origin, origin, 0.0f);
+        FrameOrigin next = frameOrigin(p.nextFrame, columns, p.width, p.height);
+        return new FrameSampling(current, next, p.nextBlend);
     }
 
-    private static int frameIndexFromOrigin(PatchRecord p) {
-        int columns = Math.max(1, p.srcImageWidth / Math.max(1, p.width));
-        return (p.srcY / Math.max(1, p.height)) * columns + (p.srcX / Math.max(1, p.width));
-    }
-
-    private static FrameOrigin frameOriginFromFrameIndex(int frameIndex, int frameColumns, int width, int height) {
+    private static FrameOrigin frameOrigin(int frameIndex, int frameColumns, int width, int height) {
         int columns = Math.max(1, frameColumns);
         int x = (frameIndex % columns) * width;
         int y = (frameIndex / columns) * height;
         return new FrameOrigin(x, y);
     }
 
-    private static int findSequenceIndex(int[] frameIndices, int frameIndex, int expectedNext) {
-        if (expectedNext >= 0 && expectedNext < frameIndices.length && frameIndices[expectedNext] == frameIndex) {
-            return expectedNext;
-        }
-
-        for (int i = 0; i < frameIndices.length; i++) {
-            if (frameIndices[i] == frameIndex) {
-                return i;
+    /**
+     * Writes vanilla's interpolated frame into {@code dst}: colour blends
+     * linearly toward the next frame while alpha stays the current frame's,
+     * as the 1.21.1 CPU interpolation did.
+     */
+    private static void blendFrames(ByteBuffer dst, PatchRecord p, FrameOrigin current, FrameOrigin next) {
+        int rowPitch = p.srcImageWidth * 4;
+        float w = p.nextBlend;
+        float iw = 1.0f - w;
+        int o = 0;
+        for (int y = 0; y < p.height; y++) {
+            long cur = p.imagePtr + (long) (current.y + y) * rowPitch + (long) current.x * 4;
+            long nxt = p.imagePtr + (long) (next.y + y) * rowPitch + (long) next.x * 4;
+            for (int x = 0; x < p.width; x++, cur += 4, nxt += 4, o += 4) {
+                for (int c = 0; c < 3; c++) {
+                    int a = MemoryUtil.memGetByte(cur + c) & 0xFF;
+                    int b = MemoryUtil.memGetByte(nxt + c) & 0xFF;
+                    dst.put(o + c, (byte) (int) (iw * a + w * b));
+                }
+                dst.put(o + 3, MemoryUtil.memGetByte(cur + 3));
             }
         }
-
-        return 0;
     }
 
     /**
@@ -296,21 +314,34 @@ public final class AtlasAnimationForwarder {
                 final int patchBytes = p.width * p.height * 4;
                 final int patchRowBytes = p.width * 4;
                 ensureScratch(patchBytes);
-                ByteBuffer srcBuf = MemoryUtil.memByteBuffer(p.pixelPtr, p.rowPitch * p.height);
+                FrameOrigin albedoCurrent = frameOrigin(p.currentFrame, p.frameRowSize, p.width, p.height);
+                ByteBuffer srcBuf;
+                int srcRowPitch;
+                if (p.blends()) {
+                    srcBuf = DirectBufferPool.acquire(patchBytes);
+                    ownedBuffers.add(srcBuf);
+                    blendFrames(srcBuf, p, albedoCurrent,
+                            frameOrigin(p.nextFrame, p.frameRowSize, p.width, p.height));
+                    srcRowPitch = patchRowBytes;
+                } else {
+                    srcRowPitch = p.srcImageWidth * 4;
+                    long first = p.imagePtr + (long) albedoCurrent.y * srcRowPitch + (long) albedoCurrent.x * 4;
+                    srcBuf = MemoryUtil.memByteBuffer(first, srcRowPitch * (p.height - 1) + patchRowBytes);
+                }
                 FrameSampling labPbrSampling = resolveLabPBRFrameSampling(p, pbr);
 
                 // --- Albedo patch ---
                 if (pbr != null && pbr.aoTable != null) {
                     LabPBRConverter.applyAOToPatch(
                         scratch, patchRowBytes,
-                        srcBuf, p.rowPitch,
+                        srcBuf, srcRowPitch,
                         pbr.aoTable, pbr.aoW, pbr.aoH,
                         labPbrSampling.current.x, labPbrSampling.current.y,
                         p.width, p.height);
                 } else {
                     LabPBRConverter.copyAlbedoPatch(
                         scratch, patchRowBytes,
-                        srcBuf, p.rowPitch,
+                        srcBuf, srcRowPitch,
                         p.width, p.height);
                 }
                 ByteBuffer albedoDst = DirectBufferPool.acquire(patchBytes);
@@ -385,7 +416,7 @@ public final class AtlasAnimationForwarder {
                 if (hasLabPBREmissive) {
                     LabPBRConverter.buildEmissivePatch(
                         scratch, patchRowBytes,
-                        srcBuf, p.rowPitch,
+                        srcBuf, srcRowPitch,
                         pbr.sAlphaTable, pbr.sW, pbr.sH,
                         labPbrSampling.current.x, labPbrSampling.current.y,
                         labPbrSampling.next.x, labPbrSampling.next.y,
@@ -396,7 +427,7 @@ public final class AtlasAnimationForwarder {
                     // The mask is over the sprite's own UV space, which every animation frame shares.
                     LabPBRConverter.buildEmissiveMaskPatch(
                         scratch, patchRowBytes,
-                        srcBuf, p.rowPitch,
+                        srcBuf, srcRowPitch,
                         p.width, p.height, builtinMask);
                 }
 
@@ -473,7 +504,6 @@ public final class AtlasAnimationForwarder {
         pendingPatches.clear();
         labPBRMap = null;
         blockAtlasSpriteIds = null;
-        animationStates.clear();
         expectedThread = null;
         currentAtlasId.remove();
         LOGGER.info("AtlasAnimationForwarder cleared");
@@ -496,7 +526,6 @@ public final class AtlasAnimationForwarder {
     public static void pause() {
         active = false;
         pendingPatches.clear();
-        animationStates.clear();
     }
 
     public static void resume() {

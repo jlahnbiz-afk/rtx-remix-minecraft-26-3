@@ -41,13 +41,15 @@ accessible field net/minecraft/client/renderer/RenderStateShard RENDERTYPE_TEXT_
 accessible field net/minecraft/client/renderer/RenderType$CompositeState depthTestState Lnet/minecraft/client/renderer/RenderStateShard$DepthTestStateShard;
 accessible field net/minecraft/client/renderer/RenderStateShard NO_DEPTH_TEST Lnet/minecraft/client/renderer/RenderStateShard$DepthTestStateShard;
 
-# SpriteContents animation data for flipbook texture extraction
+# SpriteContents animation state, read to forward GPU-animated sprites to Remix
 accessible class net/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture
 accessible class net/minecraft/client/renderer/texture/SpriteContents$FrameInfo
-accessible field net/minecraft/client/renderer/texture/SpriteContents animatedTexture Lnet/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture;
 accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture frames Ljava/util/List;
-accessible field net/minecraft/client/renderer/texture/SpriteContents$FrameInfo index I
-accessible field net/minecraft/client/renderer/texture/SpriteContents$FrameInfo time I
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture frameRowSize I
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture interpolateFrames Z
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState frame I
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState subFrame I
+accessible field net/minecraft/client/renderer/texture/SpriteContents$AnimationState animationInfo Lnet/minecraft/client/renderer/texture/SpriteContents$AnimatedTexture;
 
 # Integrated-server light snapshot published as an overlay view (LightStorageMixin)
 accessible field net/minecraft/world/level/lighting/DataLayerStorageMap map Lit/unimi/dsi/fastutil/longs/Long2ObjectOpenHashMap;
@@ -61,3 +63,4 @@ accessible field net/minecraft/world/level/chunk/PalettedContainer data Lnet/min
 
 # Packed ABGR pixel reads, which the texture conversions are written against
 accessible method com/mojang/blaze3d/platform/NativeImage getPixelABGR (II)I
+accessible field net/minecraft/client/renderer/texture/TextureAtlasSprite padding I

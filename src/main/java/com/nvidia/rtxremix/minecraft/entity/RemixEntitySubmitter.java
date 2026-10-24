@@ -5,6 +5,7 @@
 package com.nvidia.rtxremix.minecraft.entity;
 
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
+import com.nvidia.rtxremix.minecraft.texture.AtlasSprites;
 import com.nvidia.rtxremix.minecraft.texture.ParticleAtlasManager;
 import com.nvidia.rtxremix.minecraft.texture.LabPBRConverter;
 import com.nvidia.rtxremix.minecraft.texture.DynamicTextureCache;
@@ -2318,8 +2319,8 @@ public class RemixEntitySubmitter {
             for (Map.Entry<Identifier, TextureAtlasSprite> entry : sprites.entrySet()) {
                 Identifier spriteId = entry.getKey();
                 TextureAtlasSprite sprite = entry.getValue();
-                int x = sprite.getX();
-                int y = sprite.getY();
+                int x = AtlasSprites.contentX(sprite);
+                int y = AtlasSprites.contentY(sprite);
                 int spriteW = sprite.contents().width();
                 int spriteH = sprite.contents().height();
                 NativeImage nImg = loadVariant(rm, spriteId, "_n");

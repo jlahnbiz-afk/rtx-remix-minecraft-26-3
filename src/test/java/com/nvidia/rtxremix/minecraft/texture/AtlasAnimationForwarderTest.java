@@ -31,10 +31,10 @@ class AtlasAnimationForwarderTest {
         AtlasAnimationForwarder.beginAtlasUpload(BlockTextureManager.BLOCK_ATLAS_ID);
 
         try {
-            AtlasAnimationForwarder.addPatch(guiSprite, 1, 2, 0, 0, 4, 4, 4, 4, 0L, 16);
+            AtlasAnimationForwarder.addPatch(guiSprite, 1, 2, 4, 4, 4, 4, 0L, 1, 0, 0, 0.0f);
             assertEquals(0, pendingPatchCount());
 
-            AtlasAnimationForwarder.addPatch(blockSprite, 1, 2, 0, 0, 4, 4, 4, 4, 0L, 16);
+            AtlasAnimationForwarder.addPatch(blockSprite, 1, 2, 4, 4, 4, 4, 0L, 1, 0, 0, 0.0f);
             assertEquals(1, pendingPatchCount());
         } finally {
             AtlasAnimationForwarder.endAtlasUpload();
@@ -50,7 +50,7 @@ class AtlasAnimationForwarderTest {
         AtlasAnimationForwarder.beginAtlasUpload(particleAtlas);
 
         try {
-            AtlasAnimationForwarder.addPatch(blockSprite, 1, 2, 0, 0, 4, 4, 4, 4, 0L, 16);
+            AtlasAnimationForwarder.addPatch(blockSprite, 1, 2, 4, 4, 4, 4, 0L, 1, 0, 0, 0.0f);
             assertEquals(0, pendingPatchCount());
         } finally {
             AtlasAnimationForwarder.endAtlasUpload();

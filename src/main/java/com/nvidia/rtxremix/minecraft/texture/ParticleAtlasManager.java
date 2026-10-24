@@ -115,7 +115,7 @@ public class ParticleAtlasManager {
             for (var entry : sprites.entrySet()) {
                 Identifier spriteId = entry.getKey();
                 TextureAtlasSprite sprite = entry.getValue();
-                int pixX = sprite.getX(), pixY = sprite.getY();
+                int pixX = AtlasSprites.contentX(sprite), pixY = AtlasSprites.contentY(sprite);
                 int pixW = sprite.contents().width();
                 int pixH = sprite.contents().height();
 
