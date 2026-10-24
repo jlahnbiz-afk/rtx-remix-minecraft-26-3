@@ -25,6 +25,7 @@ import com.nvidia.rtxremix.minecraft.entity.RemixFirstPersonPass;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.slf4j.Logger;
@@ -41,7 +42,9 @@ import java.util.Set;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.renderer.DimensionSpecialEffects;
+import com.nvidia.rtxremix.minecraft.sky.SkyFrame;
+import net.minecraft.client.renderer.state.level.SkyRenderState;
+import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
@@ -621,7 +624,7 @@ public class LightManager {
 
         Transformation transform =
                 renderState.transformation().get(display.calculateInterpolationProgress(tickDelta));
-        Matrix4f matrix = transform.getMatrix();
+        Matrix4fc matrix = transform.getMatrix();
 
         // Matches DisplayEntityRenderer.getBillboardRotation for BillboardMode.FIXED.
         float yaw = Mth.rotLerp(tickDelta, display.yRotO, display.getYRot());
@@ -1034,11 +1037,12 @@ public class LightManager {
     // ================================================================
 
     private void updateSkyLight(ClientLevel world) {
-        // Only a NORMAL sky has a sun and a moon. The End and the Nether pin their time, so
+        // Only an Overworld sky has a sun and a moon. The End and the Nether pin their time, so
         // evaluating them would light a permanent noon or midnight that vanilla never draws.
-        skyLightState = world.effects().skyType() == DimensionSpecialEffects.SkyType.NORMAL
+        SkyRenderState sky = SkyFrame.sky();
+        skyLightState = sky.skybox == DimensionType.Skybox.OVERWORLD
                 ? evaluateSkyLightState(
-                        world.getTimeOfDay(0f),
+                        SkyFrame.timeOfDay(sky),
                         world.getRainLevel(0.0f),
                         world.getThunderLevel(0.0f))
                 : SkyLightState.empty();

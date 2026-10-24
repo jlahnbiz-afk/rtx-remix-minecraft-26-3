@@ -53,6 +53,7 @@
         "NativeImageBackedTextureMixin",
         "PackedIntegerArrayMixin",
         "ParticleAccessor",
+        "ParticleGroupAccessor",
         "ParticleManagerAccessor",
         "ParticleManagerMixin",
         "ParticleResourcesAccessor",

@@ -4,6 +4,11 @@
  */
 package com.nvidia.rtxremix.minecraft.sky;
 
+import net.minecraft.util.Mth;
+import java.util.Arrays;
+import org.joml.Vector3f;
+import org.joml.Matrix3f;
+import net.minecraft.util.RandomSource;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.nvidia.rtxremix.HardcodedVertex;
 import com.nvidia.rtxremix.InstanceCategoryBit;
@@ -46,7 +51,7 @@ import java.nio.ByteOrder;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.renderer.DimensionSpecialEffects;
+import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.phys.Vec3;
 
@@ -225,7 +230,7 @@ public class SkyRenderer {
         }
 
         RemixAPI api = renderer.getRemixApi();
-        float[] fixedRadiance = fixedSkyRadiance(world.effects().skyType());
+        float[] fixedRadiance = fixedSkyRadiance(SkyFrame.sky().skybox);
         if (fixedRadiance == null) {
             renderAtmosphericSky(api, world, cameraPos, tickDelta);
         } else {
@@ -236,11 +241,11 @@ public class SkyRenderer {
     /**
      * Maps a sky type to the constant radiance its dome and ambient rect publish.
      *
-     * @return the constant, or null for a NORMAL sky, whose dome is the time-driven atmosphere
+     * @return the constant, or null for an Overworld sky, whose dome is the time-driven atmosphere
      */
-    static float[] fixedSkyRadiance(DimensionSpecialEffects.SkyType skyType) {
-        return switch (skyType) {
-            case NORMAL -> null;
+    static float[] fixedSkyRadiance(DimensionType.Skybox skybox) {
+        return switch (skybox) {
+            case OVERWORLD -> null;
             case END -> END_SKY_RADIANCE;
             case NONE -> SKYLESS_SKY_RADIANCE;
         };
@@ -256,7 +261,7 @@ public class SkyRenderer {
         float[] sunDirection;
         WeatherDomeState weather;
         try (ProfileScope ignored = ProfileScope.begin("Sky.Prepare")) {
-            skyAngle = world.getTimeOfDay(tickDelta);
+            skyAngle = SkyFrame.timeOfDay(SkyFrame.sky());
             ConfLayerDriver confLayers = renderer.getConfLayerDriver();
             ConfLayerDriver.WeatherStrengths weatherStrengths =
                     confLayers != null && confLayers.isActive()
@@ -587,7 +592,7 @@ public class SkyRenderer {
 
         float weatherVisibility = Math.max(
                 minimumCelestialWeatherVisibility, 1.0f - clamp01(weatherOpacity));
-        float starsOpacity = starOpacity(world.getStarBrightness(tickDelta)) * weatherVisibility;
+        float starsOpacity = starOpacity(SkyFrame.sky().starBrightness) * weatherVisibility;
         if (starsOpacity > 0.0f) {
             updateStarOpacity(starsOpacity);
             updateStarTransform(starTransform, cameraPos, skyAngle);
@@ -607,7 +612,7 @@ public class SkyRenderer {
         }
 
         if (moonOpacity > 0.0f) {
-            int moonPhase = world.getMoonPhase() & 7;
+            int moonPhase = SkyFrame.sky().moonPhase.index() & 7;
             updateCelestialTransform(
                     moonTransform,
                     cameraPos,
@@ -823,12 +828,45 @@ public class SkyRenderer {
         return RemixMeshStore.get().create(new RemixMesh(new RemixMeshSurface[]{surface}));
     }
 
-    private static float[] getVanillaStarVertices() {
-        var worldRenderer = Minecraft.getInstance().levelRenderer;
-        if (!(worldRenderer instanceof WorldRendererStarAccess starAccess)) {
-            throw new IllegalStateException("WorldRenderer star capture is unavailable");
+    /**
+     * Vanilla's star field, rebuilt on the CPU: 26.3 builds it straight
+     * into a GPU buffer, so the positions are regenerated here from the same seed and
+     * the same steps as {@code SkyRenderer.buildStars}, four corners per star quad.
+     */
+    static float[] getVanillaStarVertices() {
+        RandomSource random = RandomSource.createThreadLocalInstance(10842L);
+        float[] positions = new float[1500 * 4 * 3];
+        int count = 0;
+        Vector3f corner = new Vector3f();
+        Matrix3f rotation = new Matrix3f();
+        for (int i = 0; i < 1500; i++) {
+            float x = random.nextFloat() * 2.0f - 1.0f;
+            float y = random.nextFloat() * 2.0f - 1.0f;
+            float z = random.nextFloat() * 2.0f - 1.0f;
+            float starSize = 0.15f + random.nextFloat() * 0.1f;
+            float lengthSq = Mth.lengthSquared(x, y, z);
+            if (lengthSq <= 0.010000001f || lengthSq >= 1.0f) {
+                continue;
+            }
+            Vector3f starCenter = new Vector3f(x, y, z).normalize(100.0f);
+            float zRot = (float) (random.nextDouble() * (float) Math.PI * 2.0);
+            rotation.identity().rotateTowards(new Vector3f(starCenter).negate(), new Vector3f(0.0f, 1.0f, 0.0f))
+                    .rotateZ(-zRot);
+            count = putStarCorner(positions, count, corner.set(starSize, -starSize, 0.0f), rotation, starCenter);
+            count = putStarCorner(positions, count, corner.set(starSize, starSize, 0.0f), rotation, starCenter);
+            count = putStarCorner(positions, count, corner.set(-starSize, starSize, 0.0f), rotation, starCenter);
+            count = putStarCorner(positions, count, corner.set(-starSize, -starSize, 0.0f), rotation, starCenter);
         }
-        return starAccess.rtxremix$copyStarVertices();
+        return Arrays.copyOf(positions, count);
+    }
+
+    private static int putStarCorner(float[] positions, int offset, Vector3f corner, Matrix3f rotation,
+                                     Vector3f center) {
+        corner.mul(rotation).add(center);
+        positions[offset] = corner.x;
+        positions[offset + 1] = corner.y;
+        positions[offset + 2] = corner.z;
+        return offset + 3;
     }
 
     private void drawCelestialMesh(RemixAPI api, RemixMesh mesh, Transform transform) {

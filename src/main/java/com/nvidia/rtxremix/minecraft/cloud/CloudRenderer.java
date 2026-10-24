@@ -4,6 +4,8 @@
  */
 package com.nvidia.rtxremix.minecraft.cloud;
 
+import com.nvidia.rtxremix.minecraft.sky.SkyFrame;
+import net.minecraft.util.ARGB;
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
 import com.nvidia.rtxremix.minecraft.asset.RemixMeshSurface;
@@ -126,8 +128,12 @@ public final class CloudRenderer {
         }
 
         Minecraft client = Minecraft.getInstance();
-        float cloudHeight = world.effects().getCloudHeight();
-        if (client.options.getCloudsType() == CloudStatus.OFF
+        // A dimension without clouds has a transparent cloud colour, and vanilla
+        // leaves the height unset for it.
+        int cloudArgb = SkyFrame.level().cloudColor;
+        float cloudHeight = SkyFrame.level().cloudHeight;
+        if (client.options.getCloudStatus() == CloudStatus.OFF
+                || ARGB.alpha(cloudArgb) == 0
                 || Float.isNaN(cloudHeight)) {
             releaseResources();
             return;
@@ -135,7 +141,7 @@ public final class CloudRenderer {
         if (!shouldSuppressVanillaClouds()) {
             return;
         }
-        updateCloudColor(world.getCloudColor(tickDelta));
+        updateCloudColor(cloudArgb);
 
         if (!proceduralClouds) {
             completedPaletteMeshes.clear();
@@ -515,8 +521,8 @@ public final class CloudRenderer {
         materialColor = cloudColor;
     }
 
-    private void updateCloudColor(Vec3 color) {
-        int packedColor = packCloudColor(color.x, color.y, color.z);
+    private void updateCloudColor(int argb) {
+        int packedColor = packCloudColor(ARGB.redFloat(argb), ARGB.greenFloat(argb), ARGB.blueFloat(argb));
         cloudColor = packedColor;
         if (material == null || material.isDeleted() || materialColor == packedColor) {
             return;

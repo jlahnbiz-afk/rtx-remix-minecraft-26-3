@@ -21,14 +21,17 @@ import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
 import com.nvidia.rtxremix.minecraft.RemixRenderer;
 import com.nvidia.rtxremix.minecraft.mixin.BillboardParticleAccessor;
 import com.nvidia.rtxremix.minecraft.mixin.ParticleAccessor;
+import com.nvidia.rtxremix.minecraft.mixin.ParticleGroupAccessor;
 import com.nvidia.rtxremix.minecraft.mixin.ParticleManagerAccessor;
 import com.nvidia.rtxremix.minecraft.mixin.SpriteBillboardParticleAccessor;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.particle.Particle;
+import net.minecraft.client.particle.ParticleGroup;
 import net.minecraft.client.particle.ParticleRenderType;
 import net.minecraft.client.particle.SingleQuadParticle;
-import net.minecraft.client.particle.TextureSheetParticle;
+import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,7 +42,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 
 /**
  * Per-frame particle renderer backed by growable dynamic meshes.
@@ -119,8 +121,11 @@ public class RemixParticleRenderer {
         }
 
         ParticleManagerAccessor pmAccess = (ParticleManagerAccessor) client.particleEngine;
-        Map<ParticleRenderType, Queue<Particle>> particleMap = pmAccess.getParticles();
-        if (particleMap == null || particleMap.isEmpty()) {
+        Map<ParticleRenderType, ParticleGroup<?>> groups = pmAccess.getParticles();
+        // Only single-quad particles are billboards Remix can draw; item pickups and
+        // elder guardians are whole models drawn by their own groups.
+        ParticleGroup<?> group = groups == null ? null : groups.get(ParticleRenderType.SINGLE_QUADS);
+        if (group == null || group.isEmpty()) {
             return finishPreparation(frame);
         }
 
@@ -128,68 +133,71 @@ public class RemixParticleRenderer {
         var camRot = client.gameRenderer.mainCamera().rotation();
         float qx = camRot.x, qy = camRot.y, qz = camRot.z, qw = camRot.w;
         ParticleBillboardBasis billboardBasis = ParticleBillboardBasis.fromCamera(qx, qy, qz, qw);
+        DynamicBucket terrainBucket = null;
+        DynamicBucket particleBucket = null;
+        boolean terrainResolved = false;
+        boolean particleResolved = false;
 
-        for (var entry : particleMap.entrySet()) {
-            ParticleRenderType sheet = entry.getKey();
-            Queue<Particle> queue = entry.getValue();
-            if (queue == null || queue.isEmpty()) continue;
-            if (sheet == ParticleRenderType.NO_RENDER || sheet == ParticleRenderType.CUSTOM) {
+        for (Particle particle : ((ParticleGroupAccessor) group).rtxremix$particles()) {
+            if (!(particle instanceof SingleQuadParticle)) continue;
+
+            ParticleAccessor pa = (ParticleAccessor) particle;
+            if (pa.getDead()) continue;
+
+            SpriteBillboardParticleAccessor quad = (SpriteBillboardParticleAccessor) particle;
+            // Each particle names the atlas it samples. Block-breaking and similar
+            // particles sample the block atlas, which terrain's cutout material covers;
+            // item particles sample the item atlas, which has no Remix material yet.
+            Identifier atlas = quad.rtxremix$getLayer().textureAtlasLocation();
+            DynamicBucket bucket;
+            if (TextureAtlas.LOCATION_BLOCKS.equals(atlas)) {
+                if (!terrainResolved) {
+                    terrainBucket = resolveBucket(true, blockTexMgr);
+                    terrainResolved = true;
+                }
+                bucket = terrainBucket;
+            } else if (TextureAtlas.LOCATION_PARTICLES.equals(atlas)) {
+                if (!particleResolved) {
+                    particleBucket = resolveBucket(false, blockTexMgr);
+                    particleResolved = true;
+                }
+                bucket = particleBucket;
+            } else {
                 continue;
             }
-
-            boolean isTerrain = sheet == ParticleRenderType.TERRAIN_SHEET;
-            RemixMaterial material = resolveMaterial(sheet, blockTexMgr);
-            if (material == null || !material.isAlive()) continue;
-
-            int categoryFlags = isTerrain ? 0 : InstanceCategoryBit.PARTICLE;
-            int blendKind = isTerrain ? BLEND_TERRAIN : BLEND_PARTICLE;
-            DynamicBucket bucket = getOrCreateBucket(
-                    new BucketKey(material.getHandle(), categoryFlags, blendKind),
-                    material, categoryFlags, blendKind);
             if (bucket == null) continue;
 
-            for (Particle particle : queue) {
-                if (!(particle instanceof SingleQuadParticle)) continue;
+            BillboardParticleAccessor billboard = (BillboardParticleAccessor) particle;
+            TextureAtlasSprite sprite = quad.getSprite();
+            if (sprite == null) continue;
+            float spriteMinU = sprite.getU0();
+            float spriteMinV = sprite.getV0();
+            float spriteMaxU = sprite.getU1();
+            float spriteMaxV = sprite.getV1();
+            int boundsMin = HardcodedVertex.packHalf2x16(
+                    Math.min(spriteMinU, spriteMaxU),
+                    Math.min(spriteMinV, spriteMaxV));
+            int boundsMax = HardcodedVertex.packHalf2x16(
+                    Math.max(spriteMinU, spriteMaxU),
+                    Math.max(spriteMinV, spriteMaxV));
 
-                ParticleAccessor pa = (ParticleAccessor) particle;
-                if (pa.getDead()) continue;
+            float u0 = billboard.invokeGetMinU();
+            float v0 = billboard.invokeGetMinV();
+            float u1 = billboard.invokeGetMaxU();
+            float v1 = billboard.invokeGetMaxV();
 
-                BillboardParticleAccessor billboard = (BillboardParticleAccessor) particle;
-                int boundsMin = 0;
-                int boundsMax = 0;
-                if (particle instanceof TextureSheetParticle) {
-                    TextureAtlasSprite sprite = ((SpriteBillboardParticleAccessor) particle).getSprite();
-                    if (sprite == null) continue;
-                    float spriteMinU = sprite.getU0();
-                    float spriteMinV = sprite.getV0();
-                    float spriteMaxU = sprite.getU1();
-                    float spriteMaxV = sprite.getV1();
-                    boundsMin = HardcodedVertex.packHalf2x16(
-                            Math.min(spriteMinU, spriteMaxU),
-                            Math.min(spriteMinV, spriteMaxV));
-                    boundsMax = HardcodedVertex.packHalf2x16(
-                            Math.max(spriteMinU, spriteMaxU),
-                            Math.max(spriteMinV, spriteMaxV));
-                }
+            int slot = bucket.assignSlot(particle, frame);
+            if (slot < 0) continue;
 
-                float u0 = billboard.invokeGetMinU();
-                float v0 = billboard.invokeGetMinV();
-                float u1 = billboard.invokeGetMaxU();
-                float v1 = billboard.invokeGetMaxV();
-
-                int slot = bucket.assignSlot(particle, frame);
-                if (slot < 0) continue;
-
-                // Alpha stays the particle's own; a held puff is drawn at a lower
-                // alpha, see HeldItemSmoke.OPACITY for why the two are not one value.
-                int color = ParticleTint.isSoot(particle)
-                        ? packColor(ParticleTint.SOOT_GREY, ParticleTint.SOOT_GREY, ParticleTint.SOOT_GREY, pa.getAlpha())
-                        : packColor(pa.getRed(), pa.getGreen(), pa.getBlue(), pa.getAlpha());
-                writeParticleQuad(bucket.vertexBuffer, slot, pa, billboard,
-                        tickDelta, billboardBasis, u0, v0, u1, v1, color, boundsMin, boundsMax);
-                bucket.dirty = true;
-                particlesThisFrame++;
-            }
+            // Alpha stays the particle's own; a held puff is drawn at a lower
+            // alpha, see HeldItemSmoke.OPACITY for why the two are not one value.
+            int color = ParticleTint.isSoot(particle)
+                    ? packColor(ParticleTint.SOOT_GREY, ParticleTint.SOOT_GREY, ParticleTint.SOOT_GREY, pa.getAlpha())
+                    : packColor(pa.getRed(), pa.getGreen(), pa.getBlue(), pa.getAlpha());
+            writeParticleQuad(bucket.vertexBuffer, slot, pa, billboard,
+                    tickDelta, billboardBasis, u0, v0, u1, v1, color, boundsMin, boundsMax);
+            bucket.dirty = true;
+            particlesThisFrame++;
         }
 
         return finishPreparation(frame);
@@ -302,8 +310,19 @@ public class RemixParticleRenderer {
         meshUpdatesThisFrame = 0;
     }
 
-    private RemixMaterial resolveMaterial(ParticleRenderType sheet, BlockTextureManager blockTexMgr) {
-        if (sheet == ParticleRenderType.TERRAIN_SHEET) {
+    /** The bucket for terrain-atlas or particle-atlas particles, or null without a live material. */
+    private DynamicBucket resolveBucket(boolean isTerrain, BlockTextureManager blockTexMgr) {
+        RemixMaterial material = resolveMaterial(isTerrain, blockTexMgr);
+        if (material == null || !material.isAlive()) return null;
+        int categoryFlags = isTerrain ? 0 : InstanceCategoryBit.PARTICLE;
+        int blendKind = isTerrain ? BLEND_TERRAIN : BLEND_PARTICLE;
+        return getOrCreateBucket(
+                new BucketKey(material.getHandle(), categoryFlags, blendKind),
+                material, categoryFlags, blendKind);
+    }
+
+    private RemixMaterial resolveMaterial(boolean isTerrain, BlockTextureManager blockTexMgr) {
+        if (isTerrain) {
             return blockTexMgr != null ? blockTexMgr.getAtlasMaterial(BlockTextureManager.L_CUTOUT) : null;
         }
         return atlasManager.getMaterial();
