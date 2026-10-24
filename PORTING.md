@@ -1,264 +1,314 @@
 # PORTING.md: Minecraft 26.3 (Fabric) 移植メモ
 
-このフォークで Minecraft 1.21.1 から 26.3 へ移植する作業の進捗メモです。
+このフォークで Minecraft 1.21.1 から 26.3 へ移植した作業の記録です。
 `CLAUDE.md` と `AGENTS.md` は上流 (NVIDIA) のファイルなので変更せず、移植に
-関する記録はすべてこのファイルに書きます。上流の `AGENTS.md` は計画やチェック
+関する記録はこのファイルにまとめています。上流の `AGENTS.md` は計画やチェック
 リストをリポジトリに置かないよう求めていますが、このファイルはフォークの判断で
-置いているものです。上流へ PR を送るときはこのファイルを含めないでください。
-
-記号: ✅ 完了 / 🚧 作業中 / ⛔ ブロック中 / ⬜ 未着手。
-「確度」の欄は、外部資料で確認できていない知識に基づく記述を区別するためのもの
-です (高 / 中 / 低)。確度が「高」以外の項目は、26.3 の jar とソースを手元で
-確認してから作業してください。
+置いています。上流へ PR を送るときはこのファイルを含めないでください。
 
 ## 現状 (2026-10-24)
 
-⛔ **ビルド環境がブロック中。** 作業用クラウド環境のネットワークポリシーで、
-以下のホストへの接続が 403 で拒否されています。Minecraft 本体、Fabric Loader、
-Loom、Fabric API のどれも取得できないため、コンパイル確認ができません。
+コードの移植は一通り終わり、Linux 上で確認できる範囲の検証は通っています。
+残っているのは、Windows 実機で RTX Remix ランタイムを載せて描画を目で確かめる
+ことと、下の「未移植・既知の差分」に挙げた項目です。
 
-- `maven.fabricmc.net` (Loom、Loader、Fabric API、マッピング)
-- `meta.fabricmc.net` (バージョン一覧)
-- `piston-meta.mojang.com`、`launchermeta.mojang.com` (バージョンマニフェスト)
-- `piston-data.mojang.com`、`libraries.minecraft.net` (クライアント jar、ライブラリ)
-
-コンパイルできない状態で 76,000 行のコードを推測で書き換えると、壊れたコードが
-積み上がるだけなので、ソースコードにはまだ手を入れていません。
-
-もう一つの前提として、このビルドは Windows と MSVC が必要です (`classes` が
-`setupRuntime` に依存し、JNI ブリッジをコンパイルするため)。Linux 環境では
-最大でも Java のコンパイルと JVM テストまでしか確認できず、描画の確認は
-`tools\rtx.bat launch` を使う Windows 実機でしか行えません。
+このビルドは Windows と MSVC を前提にしています (`classes` が `setupRuntime`
+に依存し、JNI ブリッジをコンパイルするため)。移植作業をした Linux 環境では
+`-x setupRuntime` を付けて Java のコンパイルと JVM テストまでを確認しました。
+Remix の描画は Windows で `tools\rtx.bat launch` を使わないと確認できません。
 
 ## 対象バージョン
 
-| 項目 | 移植前 | 移植後 | 状態 |
-| --- | --- | --- | --- |
-| Minecraft | 1.21.1 | 26.3 | ⬜ バージョン番号を Fabric Meta で確認 |
-| マッピング | Yarn `1.21.1+build.3` | なし (26.1 以降は難読化なし、Mojang 名) | ⬜ 確度: 高 |
-| Java | 21 | 25 | ⬜ 確度: 高 (26.1 から Java 25 必須) |
-| Fabric Loader | 0.16.5 | 未定 | ⬜ |
-| Fabric API | 0.116.10+1.21.1 | 未定 (`+26.3`) | ⬜ |
-| Loom | `fabric-loom` 1.15.5 | 未定 | ⬜ 難読化なし版向けのプラグイン ID と設定を確認 |
-| Gradle | 9.3.1 | 未定 | ⬜ Loom の要求に合わせる |
+| 項目 | 移植前 | 移植後 |
+| --- | --- | --- |
+| Minecraft | 1.21.1 | 26.3 |
+| マッピング | Yarn `1.21.1+build.3` | なし (26.x は難読化なし。Mojang の名前そのまま) |
+| Java | 21 | 25 (`java-runtime-epsilon`) |
+| Fabric Loader | 0.16.5 | 0.19.5 |
+| Fabric API | 0.116.10+1.21.1 | 0.165.0+26.3 |
+| Loom | `fabric-loom` 1.15.5 | `net.fabricmc.fabric-loom` 1.18.4 (非リマップ版) |
+| Gradle | 9.3.1 | 9.7.1 |
+| Mixin / MixinExtras | | 0.8.7 / 0.5.5 |
+| Fabric インストーラ | 1.0.1 | 1.0.1 のまま (26.3 + Loader 0.19.5 の導入を実際に確認) |
 
-確認できたらこの表を埋めて、下の「ツールチェーン」に作業を移してください。
+Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism のメタデータ
+(`compatibleJavaMajors: [25]`) の両方で確認しています。
 
-## 規模
+## 確認済みのこと
 
-- Java ソース: 387 ファイル、約 76,000 行 (`rtxremix-java/` を含む)
-- `net.minecraft` を import するファイル: main 162、test 37
-- Mixin: 72 クラス (`src/main/resources/rtx-remix-renderer.mixins.json`)
-- Access widener: 88 行 (`src/main/resources/rtx-remix-renderer.accesswidener`)
-- Fabric API の利用: rendering v1、renderer v1 (Indigo の API)、fluid render、
-  lifecycle events、client command v2、keybinding、networking、screen、
-  resource loader、particle、item group、screen handler
-- `rtxremix-java/` は Minecraft に依存しないため、移植の影響はありません。
-  ネイティブランタイム (dxvk-remix) も同様です。
+| 確認 | 結果 |
+| --- | --- |
+| `compileJava -x setupRuntime` | エラー 0 |
+| Access widener の検証 (26.3 の jar に対して全行) | 問題 0 |
+| Mixin の静的チェック (ASM で全ターゲットのメソッド、フィールド、`@At` の存在を確認) | 問題 0 |
+| Mixin の監査 (`MixinEnvironment.audit()` で全ターゲットクラスを強制ロード、`required` 厳格) | 失敗 0 |
+| JVM テスト `test -x setupRuntime` | 754 件すべて成功 |
+| Python ツールのテスト (`tools/` で `uv run pytest`) | 992 件成功。失敗 3 件は上流 `main` でも Linux で失敗する Windows 専用テスト |
+| Ruff format / lint | 問題なし |
+| `installer.ps1` の構文 (PowerShell 7 のパーサ) | エラー 0 |
+| ヘッドレス起動 (Xvfb + Mesa llvmpipe、`SDL_VIDEO_FORCE_EGL=1`) | ワールド参加まで例外なし。空、雲、エンティティ、HUD、手が描画される |
+| 1.21.1 のワールドを 26.3 サーバーで開く | ゾーンファイルの扱いを確認 (下の「ゾーン」) |
 
-1.21.1 から 26.3 までの間に、Minecraft の描画系は複数回作り直されています。
-このモッドは vanilla の描画パスの中に入り込んで、地形、エンティティ、パーティクル、
-テクスチャをその場で取り出す設計なので、名前の置き換えだけでは済まず、主要な
-キャプチャ経路の多くを設計し直す必要があります。
+ヘッドレス起動ではランタイムがないため、`rtxEnabled` が既定で真のまま地形が
+見えません。これは上流でもランタイムなしで起こる挙動で、移植による退行では
+ありません。`Requested post effect does not exist: minecraft:end_of_frame` は
+開発環境の vanilla アセットに由来する警告です。
 
-## 進め方
+## Windows 実機で確かめること
 
-一度に 26.3 へ飛ぶと、コンパイルエラーが数千件出て、どれが名前の問題でどれが
-設計の問題なのか区別できなくなります。コンパイルが通る状態を保ちながら、段階を
-分けて進めます。
+`.\gradlew.bat build`、`.\gradlew.bat test`、`.\tools\rtx.bat launch`、
+`.\gradlew.bat package -Parch=win64` の順に通してから、以下を見てください。
 
-### 段階 1: 1.21.1 のまま Yarn から Mojang 名へ移行 ⬜
+1. 地形: 各レイヤー (不透明、カットアウト、半透明、水面) が出るか。ブロックの
+   置き換えと破壊で再キャプチャされるか。チャンク読み込み時に穴や継ぎ目がないか。
+2. エンティティとブロックエンティティ: モブ、プレイヤー (スキン、マント、
+   名札)、看板の文字、旗の模様、額縁、チェスト、ベル。視錐台の外のエンティティが
+   影と反射に入るか。
+3. 一人称: 手と持ったアイテム、松明などの手持ちライト、`Toggle Held Lights`。
+   F1 で手が消えること (vanilla と同じ)。
+4. テクスチャ: アニメーションするスプライト (水、溶岩、ポータル)、文字 (グリフ
+   ページ)、地図、プレイヤースキン。
+5. パーティクル、空 (オーバーワールド、ネザー、エンド)、雲 (Classic を含む)、
+   ブロックの破壊ひび、選択ブロックの枠。
+6. Copper Beacon の設置と動き。
+7. オーバーレイ: Alt+X、設定画面の RTX Remix Graphics Settings ボタン、入力の
+   取り込みと解放。
+8. インストーラ: 新規インストール、1.21.1 版からのアップグレード (Prism
+   インスタンスの Minecraft と Loader の版が付け替わること、ARM64 では Java の
+   ピンが `jdk-25` に替わること)、アンインストール。
 
-26.1 以降は難読化がなくなり、Fabric も Mojang の名前を使います。1.21.1 の
-まま名前だけを先に移行すれば、動作を変えずにコンパイルとテストで検証できます。
+## 設計上の変更点
 
-1. ネットワークのブロックを解除する。
-2. `build.gradle` で `./gradlew migrateMappings --mappings "net.minecraft:mappings:1.21.1"`
-   を実行して、`src/main/java` と `src/test/java` を書き換える (Loom の機能)。
-3. `mappings loom.officialMojangMappings()` に切り替える。
-4. Access widener は `migrateMappings` の対象外なので、88 行を手で Mojang 名に
-   書き換える。Mojang マッピングでも Loom の named 名前空間を使うので、ヘッダ
-   `accessWidener v2 named` はそのまま。26.1 以降の名前空間とファイル形式は
-   段階 2 で確認する。
-5. Mixin の `targets = "..."` の文字列指定 (`RenderedChunkMixin`、
-   `ClientChunkMixin`、`ClientChunkSnapshotAccess`、`RebuildTaskMixin`) と、
-   `@At(target = "L...;")` の記述子は自動で書き換わらないので手で直す。
-6. Windows で `.\gradlew.bat build test` と `.\tools\rtx.bat launch` を確認する。
+26.3 の描画系は 1.21.1 から大きく作り直されています。名前の置き換えでは済まず、
+キャプチャ経路の多くを組み直しました。
 
-### 段階 2: ツールチェーンを 26.3 に上げる ⬜
+### ビルドとツールチェーン
 
-- `build.gradle`: Loom のプラグイン ID とバージョン、`minecraft` の依存、
-  `mappings` 行の削除 (26.1 以降)、`modImplementation` から `implementation`
-  への変更 (再マップ不要のため、確度: 中)、Java toolchain と `options.release`
-  を 25 に、`fabricApiCoordinate`。
-- `fabric.mod.json`: `depends` の `minecraft`、`fabricloader`、`fabric-api`、`java`。
-- `rtx-remix-renderer.mixins.json`: `compatibilityLevel` を Java 25 に対応する値へ。
-- `loom.runs.client.vmArgs` と `packaging/installer.ps1` の
-  `RECOMMENDED_JVM_ARGS`: Launcher の 26.3 既定値に合わせ、旧値を
-  `PREVIOUS_RECOMMENDED_JVM_ARGS` に追記する (`AGENTS.md` の規則)。
-- `packaging/installer.ps1`: `FABRIC_API_VERSION`、Minecraft と Java のバージョン。
-- `tools/src/rtx_tools/` (`prism.py`、`prism_launcher.py`、`install.py`、
-  `client.py`、`benchmark/runner.py`) とそのテスト: Prism インスタンスの
-  Minecraft と Java のバージョン。
-- ドキュメント: `README.md`、`docs/`、`packaging/INSTALL.md`、`tools/docs/`
-  に残る `1.21.1` と `Java 21`。
+- 1.21.1 のまま Yarn から Mojang 名へ移した段階を挟み (`27bcf1d`)、その上で
+  26.3 に上げました。
+- 26.x は難読化がないので、Loom は非リマップ版の `net.fabricmc.fabric-loom`
+  を使い、Access widener の名前空間は `official` です。`build/libs/` の JAR も
+  Mojang 名のままです。
+- `options.release = 25`。CI (`.github/workflows/build.yml`) も JDK 25 にしました。
 
-### 段階 3: 描画系を作り直す ⬜
+### ウィンドウ、表示、入力
 
-下の Mixin 一覧の「リスク」が高いものから順に、領域単位で進めます。各領域は
-「vanilla 側で何が変わったかを 26.3 のソースで確認する」「キャプチャの差し込み
-位置を決める」「コンパイルを通す」「Windows 実機で見た目を確認する」の順です。
+- 26.x はウィンドウが SDL3 になり、描画は renderpearl という GPU 抽象層を通ります。
+  Remix は GL の画を受け取る前提なので、`PreferredGraphicsApiMixin` と
+  `GlBackendMixin` で GL バックエンドに固定しています。
+- 表示 (present) の差し替えは `RenderSystemMixin` から `GlSurfaceMixin`
+  (`GlSurface.present`) に移しました。`WindowMixin` は不要になり削除しました。
+- 入力は `KeyboardMixin` と `MouseMixin` のまま、SDL のイベント経路に合わせて
+  書き直しています。
 
-### 段階 4: 検証 ⬜
+### 地形
 
-- `.\gradlew.bat build test`、`.\tools\rtx.bat check --tests`
-- `.\tools\rtx.bat launch` で地形、エンティティ、パーティクル、空、雲、
-  ライト、オーバーレイ入力を目視確認
-- `AGENTS.md` の Invariants の各項目 (特に可視性ウォークの一致確認
-  `-Drtxremix.vanillaVisibilityWalk`、`-Drtxremix.logVisibleSet`)
-- ベンチマーク (`tools/docs/BENCHMARKING.md`) で 1.21.1 版と比較
+- セクションの管理は `LevelRenderer` から `LevelExtractor` と `ViewArea` に移った
+  ので、フックもそちらへ移しました (`LevelExtractorMixin`、`ViewAreaAccessor`、
+  `SectionCopyMixin`)。
+- vanilla の地形描画の取り消しは `ChunkSectionsToRender.renderLayers` を丸ごと
+  止める形にしました (`ChunkSectionsToRenderMixin`)。このメソッドは呼び出し元が
+  開いた `RenderPass` にユニフォームを設定するので、描画だけを止めることは
+  しません。
+- 再キャプチャは `WorldRenderer.reload()` ではなく `LevelExtractor.allChanged()`
+  の前に `builtSections` を取る形になっています。
 
-## 1.21.1 以降の vanilla の主な変更 (要確認)
+### エンティティ、ブロックエンティティ、アイテム
 
-社内資料ではなく公開されている変更履歴の記憶に基づくまとめです。26.3 の
-ソースで一つずつ確認してから作業してください。
+- 26.x は「抽出 (extract) してから提出 (submit) する」構造で、モデルは
+  `EntityRenderState` などの状態から `SubmitNodeCollector` に提出されます。
+  Remix 用には `RemixSubmitCollector` を作り、vanilla が提出する地点でそのまま
+  受け取って `RemixVertexConsumerProvider` に流しています。影、アウトライン、
+  ひび、パーティクル、ギズモなど Remix が使わないノードは捨てます。
+- 状態から元のエンティティを辿れないので、`RenderStateOwnerMixin` で抽出時に
+  持ち主を状態に記録しています。
+- アイテムは `ItemStackRenderState` 経由になりました (`ItemModelResolverMixin`、
+  `ItemStackRenderStateMixin`、`ItemLayerRenderStateMixin`)。
+- 一人称は `FirstPersonHandsAndItemsRenderer.submitHandsWithItems` を
+  `GameRenderer.renderItemInHand` 内で包んでいます。
+- 名札の文字は vanilla 側でキャッシュの問題が直ったので、名前用の Mixin
+  (`LivingEntityRendererNameMixin`、`PlayerEntityNameMixin`、
+  `Deadmau5FeatureRendererMixin`) は削除しました。
+- `PoseStack` は vanilla がエントリをプールするようになったため、再利用用の
+  アクセサを削除しました。`BakedQuad` が record になったので、静的形状の
+  キャッシュは境界をキーにしています。
 
-| 時期 | 変更 | 影響する領域 | 確度 |
-| --- | --- | --- | --- |
-| 1.21.2 | エンティティ描画が `EntityRenderState` 経由になる | エンティティ、名札、プレイヤー | 高 |
-| 1.21.2 | `RenderType` とシェーダの指定方法が変わる | エンティティの材質判定 (`RenderLayerUtils`) | 中 |
-| 1.21.4 | アイテムモデルの再設計 (`ItemStackRenderState`、items/*.json) | 手持ち、アイテム描画 | 高 |
-| 1.21.4 | `HttpTexture` が廃止されスキンのダウンロードが別クラスへ | `PlayerSkinTextureMixin` | 中 |
-| 1.21.5 | Blaze3D の `GpuDevice`、`RenderPipeline`、`GpuTexture`、`GpuBuffer` 導入。`VertexBuffer` 廃止、`RenderSystem` 縮小 | GL 状態、テクスチャ転送、地形バッファ | 高 |
-| 1.21.5 | `BakedModel` が `BlockStateModel` と `BlockModelPart` に分割。`WeightedBakedModel` と `MultiPartBakedModel` も置き換え | ブロックモデル選択の割り当てなし移植 | 高 |
-| 1.21.6 | GUI 描画が render state 化。地形セクション描画の整理 | 画面、地形 | 中 |
-| 1.21.9 | エンティティ、ブロックエンティティ、ModelPart の描画が「提出」方式 (`SubmitNodeCollector`) になる | エンティティキャプチャ全体 | 中 |
-| 1.21.9 | パーティクル描画の再構成 (グループ単位、`TextureSheetParticle` の扱い) | パーティクル | 中 |
-| 1.21.9 | ワールド読み込み画面の統合 | `DownloadingTerrainScreenMixin`、`JoinBurstHold` | 低 |
-| 26.1 | 難読化の廃止。Java 25 必須 | ビルド全体 | 高 |
-| 26.1〜26.3 | 未調査 | すべて | 未確認 |
+### テクスチャ
 
-描画バックエンド (OpenGL のままか、別の API へ移ったか) は 26.3 の時点で確認
-が必要です。このモッドは GLFW ウィンドウに Remix ランタイムを載せているので、
-バックエンドが変わっていると `RemixRenderer`、`WindowMixin`、`gl/` の初期化
-方法が変わります。
+- スプライトのアニメーションは GPU 側で進むようになったので、
+  `SpriteAtlasTextureMixin` がフレーム更新の後に `AnimationState` から現在と次の
+  フレームを読み、CPU で合成して Remix に送ります。
+- スプライトに余白 (padding) が付いたため、座標は `AtlasSprites` で余白分ずらして
+  います。
+- フォントのグリフは GPU 上で組み立てられるので、`CommandEncoderGlyphMirrorMixin`
+  と `BitmapGlyphStagingMixin` で書き込みを CPU 側に写しています。
+- プレイヤースキンは `DynamicTexture` になったので、`PlayerSkinTextureMixin` は
+  不要になりました。
 
-## Mixin 一覧
+### パーティクル、空、雲、光
 
-「Yarn 1.21.1」は現在のコードの名前、「Mojang 1.21.1」は段階 1 で使う名前です。
-Mojang 名は記憶に基づくので、`migrateMappings` の結果で上書きしてください。
-「リスク」は 26.3 で対象そのものが消えているか、差し込み位置の意味が変わって
-いる可能性の目安です。
+- パーティクルは `ParticleGroup` と `SingleQuadParticle` の `Layer` から
+  地形アトラス用とパーティクルアトラス用に振り分けます。
+- 空は `SkyRenderState` (角度は度からラジアンへ) と `DimensionType.Skybox` で
+  分岐します。星は 26.3 で CPU の頂点列がなくなったので、同じ種 (10842) で
+  CPU 側に作り直しています。
+- 雲の色は `LevelRenderState.cloudColor` (ARGB、アルファ 0 は雲なし) から
+  読みます。
 
-### 地形 (`terrain/` 約 10,500 行、最大の領域)
+### 統合サーバーと光
 
-| Mixin | Yarn 1.21.1 | Mojang 1.21.1 | リスク | 状態 |
-| --- | --- | --- | --- | --- |
-| `WorldRendererMixin` (920 行) | `WorldRenderer` | `LevelRenderer` | 高 | ⬜ |
-| `ChunkRenderingDataPreparerMixin` (689 行) | `ChunkRenderingDataPreparer` | `SectionOcclusionGraph` | 高 | ⬜ |
-| `RenderableChunksMixin` | `ChunkRenderingDataPreparer$RenderableChunks` | `SectionOcclusionGraph` の内部クラス | 高 | ⬜ |
-| `SectionBuilderMixin` | `SectionBuilder` | `SectionCompiler` | 高 | ⬜ |
-| `BuiltChunkMixin`、`BuiltChunkBuffersMixin` | `ChunkBuilder$BuiltChunk` | `SectionRenderDispatcher$RenderSection` | 高 | ⬜ |
-| `RebuildTaskMixin` | `ChunkBuilder$BuiltChunk$RebuildTask` | `SectionRenderDispatcher$RenderSection$RebuildTask` | 高 | ⬜ |
-| `BuiltChunkStorageMixin` | `BuiltChunkStorage` | `ViewArea` | 中 | ⬜ |
-| `BlockBufferBuilderPoolMixin` | `BlockBufferBuilderPool` | `SectionBufferBuilderPool` | 中 | ⬜ |
-| `VertexBufferMixin` | `VertexBuffer` | `VertexBuffer` (1.21.5 で廃止) | 高 | ⬜ |
-| `ChunkRendererRegionMixin` | `ChunkRendererRegion` | `RenderChunkRegion` | 中 | ⬜ |
-| `ChunkRendererRegionBuilderMixin` | `ChunkRendererRegionBuilder` | `RenderRegionCache` | 中 | ⬜ |
-| `ClientChunkMixin`、`ClientChunkSnapshotAccess` | `ChunkRendererRegionBuilder$ClientChunk` | `RenderRegionCache` の内部クラス | 中 | ⬜ |
-| `RenderedChunkMixin` | `RenderedChunk` | `RenderChunk` | 中 | ⬜ |
-| `FrustumAccessor` | `Frustum` | `Frustum` | 低 | ⬜ |
-| `ClientChunkManagerMixin` | `ClientChunkManager` | `ClientChunkCache` | 中 | ⬜ |
-| `WorldChunkMixin` | `WorldChunk` | `LevelChunk` | 低 | ⬜ |
-| `PackedIntegerArrayMixin` | `PackedIntegerArray` | `SimpleBitStorage` | 低 | ⬜ |
-| `BakedQuadMixin` | `BakedQuad` | `BakedQuad` (1.21.5 以降 record 化の可能性) | 中 | ⬜ |
-| `WeightedBakedModelMixin` | `WeightedBakedModel` | `WeightedBakedModel` (1.21.5 で置き換え) | 高 | ⬜ |
-| `MultipartBakedModelMixin` | `MultipartBakedModel` | `MultiPartBakedModel` (1.21.5 で置き換え) | 高 | ⬜ |
-| `BiomeMixin`、`ClientWorldColorMixin` | `Biome`、`ClientWorld` | `Biome`、`ClientLevel` | 低 | ⬜ |
-| `FoliageColorsMixin`、`GrassColorsMixin` | `FoliageColors`、`GrassColors` | `FoliageColor`、`GrassColor` | 低 | ⬜ |
-| `WallBlockMixin` | `WallBlock` | `WallBlock` | 低 | ⬜ |
+- サーバーのチャンク tick のリスト再利用 (`ChunkHolderMixin`、
+  `ServerChunkManagerMixin`) は、26.3 の vanilla が `spawningChunks` を
+  使い回すようになったので削除しました。
+- `ChunkDataSenderMixin`、`ChunkSkyLightMixin`、`LightStorageMixin` は新しい
+  シグネチャに合わせて移植しています。
 
-### 光とチャンク配送 (統合サーバーを含む)
+### 設定画面
 
-| Mixin | Yarn 1.21.1 | Mojang 1.21.1 | リスク | 状態 |
-| --- | --- | --- | --- | --- |
-| `LightStorageMixin` | `LightStorage` | `LayerLightSectionStorage` | 中 | ⬜ |
-| `ChunkLightProviderAccessor` | `ChunkLightProvider` | `LightEngine` | 低 | ⬜ |
-| `ChunkSkyLightMixin` | `ChunkSkyLight` | `ChunkSkyLightSources` | 低 | ⬜ |
-| `ChunkDataSenderMixin` | `ChunkDataSender` | `PlayerChunkSender` | 中 | ⬜ |
-| `ChunkHolderMixin` | `ChunkHolder` | `ChunkHolder` | 中 | ⬜ |
-| `ServerChunkManagerMixin` | `ServerChunkManager` | `ServerChunkCache` | 中 | ⬜ |
-| `ThreadExecutorMixin` | `ThreadExecutor` | `BlockableEventLoop` | 低 | ⬜ |
+- `SimpleOption` は `OptionInstance` に、`clearAndInit()` は `rebuildWidgets()`
+  に、遅延適用のスライダーは `OptionInstanceSliderButton.delayedApplyAt` に
+  なりました。`docs/SETTINGS.md` も合わせて直しています。
 
-### エンティティとアイテム (`entity/` 約 8,200 行)
+### ゾーン
 
-| Mixin | Yarn 1.21.1 | Mojang 1.21.1 | リスク | 状態 |
-| --- | --- | --- | --- | --- |
-| `EntityRenderDispatcherMixin`、`EntityRenderDispatcherAccessor` | `EntityRenderDispatcher` | `EntityRenderDispatcher` | 高 | ⬜ |
-| `BlockEntityRenderDispatcherMixin` | `BlockEntityRenderDispatcher` | `BlockEntityRenderDispatcher` | 高 | ⬜ |
-| `ModelPartMixin` | `ModelPart` | `ModelPart` | 高 | ⬜ |
-| `CuboidMixin` | `ModelPart$Cuboid` | `ModelPart$Cube` | 中 | ⬜ |
-| `LivingEntityRendererNameMixin` | `LivingEntityRenderer` | `LivingEntityRenderer` | 高 | ⬜ |
-| `PlayerEntityNameMixin` | `PlayerEntity` | `Player` | 中 | ⬜ |
-| `Deadmau5FeatureRendererMixin` | `Deadmau5FeatureRenderer` | `Deadmau5EarsLayer` | 中 | ⬜ |
-| `HeldItemRendererMixin` | `HeldItemRenderer` | `ItemInHandRenderer` | 高 | ⬜ |
-| `ItemRendererMixin` | `ItemRenderer` | `ItemRenderer` | 高 | ⬜ |
-| `MatrixStackAccessor`、`MatrixStackEntryAccessor` | `MatrixStack`、`MatrixStack$Entry` | `PoseStack`、`PoseStack$Pose` | 低 | ⬜ |
-| `TorchBlockAccessor` | `TorchBlock` | `TorchBlock` | 中 | ⬜ |
+- 26.3 では保存データがワールド共通の `data/rtx-remix-renderer/zones.dat` に
+  置かれます。1.21.1 版は `data/rtx_remix_zones.dat` に書いていました。
+- 1.21.1 で作ったワールドを 26.3 のサーバーで開いて確かめたところ、vanilla の
+  ワールド変換は `raids.dat` などを `dimensions/minecraft/<dim>/data/minecraft/`
+  へ移しますが、知らないファイルである `rtx_remix_zones.dat` はそのまま残します。
+- そこで最初のゾーン参照時に旧ファイルを新しい場所へ移すようにしました
+  (`ZonePersistentState.moveLegacyFile`)。新しいファイルが既にあるときは何も
+  しません。中身の形式は同じで、`SAVED_DATA_COMMAND_STORAGE` には 1.21.1
+  以降のデータ修正が当たらないことも確認し、DataVersion 3955 のファイルを実際の
+  `SavedDataStorage` と DataFixer で読むテストを付けています。
 
-### パーティクル (`particle/`)
+### パッケージとツール
 
-| Mixin | Yarn 1.21.1 | Mojang 1.21.1 | リスク | 状態 |
-| --- | --- | --- | --- | --- |
-| `ParticleManagerMixin`、`ParticleManagerAccessor` | `ParticleManager` | `ParticleEngine` | 高 | ⬜ |
-| `ParticleAccessor`、`ParticleStateMixin` | `Particle` | `Particle` | 中 | ⬜ |
-| `BillboardParticleAccessor` | `BillboardParticle` | `SingleQuadParticle` | 中 | ⬜ |
-| `SpriteBillboardParticleAccessor` | `SpriteBillboardParticle` | `TextureSheetParticle` | 高 | ⬜ |
+- `packaging/installer.ps1`: 版の定数を更新し、`JAVA_MAJOR = 25` を導入。管理 JDK
+  は `jdk-25` に置き、Microsoft ランチャー同梱の Java は
+  `java-runtime-epsilon` を優先します。既存の Prism インスタンスを再利用する
+  ときは、Minecraft と Fabric Loader の版が違えば `mmc-pack.json` を書き直し
+  ます (`Update-PrismInstanceComponents`)。ARM64 で別の版の Java にピン留め
+  されていれば、管理 JDK に付け替えます。`RECOMMENDED_JVM_ARGS` は変えて
+  いません (26.3 のメタデータも `HeapDumpPath` を同じ綴りで渡しています)。
+- `tools/`: `GAME_JAVA_MAJOR = 25`。ゲームウィンドウの判定はタイトル
+  `Minecraft 26.3` に合うよう `^Minecraft\*? \d+\.\d` に広げました。
+- プロファイラのスパン名 (`MinecraftClient.render.*`、`WorldRenderer.render`
+  など) は、移植前後の記録を比べられるよう 1.21.1 時代の名前のままにしています。
+  対応する 26.3 のメソッドは `tools/docs/PROFILING.md` に書きました。
 
-### テクスチャと GL (`texture/`、`gl/`)
+## Mixin の増減
 
-| Mixin | Yarn 1.21.1 | Mojang 1.21.1 | リスク | 状態 |
-| --- | --- | --- | --- | --- |
-| `GlStateManagerUploadMixin` | `GlStateManager` | `GlStateManager` | 高 | ⬜ |
-| `RenderSystemMixin` | `RenderSystem` | `RenderSystem` | 高 | ⬜ |
-| `NativeImageUploadMixin`、`NativeImageAccessor` | `NativeImage` | `NativeImage` | 高 | ⬜ |
-| `NativeImageBackedTextureMixin` | `NativeImageBackedTexture` | `DynamicTexture` | 中 | ⬜ |
-| `SpriteAtlasTextureMixin`、`SpriteAtlasAccessor` | `SpriteAtlasTexture` | `TextureAtlas` | 中 | ⬜ |
-| `SpriteContentsUploadMixin`、`SpriteContentsAccessor` | `SpriteContents` | `SpriteContents` | 高 | ⬜ |
-| `TextureManagerMixin` | `TextureManager` | `TextureManager` | 中 | ⬜ |
-| `GlyphAtlasTextureMixin` | `GlyphAtlasTexture` | `FontTexture` | 高 | ⬜ |
-| `PlayerSkinTextureMixin` | `PlayerSkinTexture` | `HttpTexture` (1.21.4 で廃止) | 高 | ⬜ |
+上流の 1.21.1 (client 70、common 3) から、client 65、common 1 になりました。
 
-### クライアント本体、入力、画面
+追加したもの:
+`BitmapGlyphStagingMixin`、`ChunkSectionsToRenderMixin`、
+`CommandEncoderGlyphMirrorMixin`、`GlBackendMixin`、`GlSurfaceMixin`、
+`ItemLayerRenderStateMixin`、`ItemModelResolverMixin`、
+`ItemStackRenderStateAccessor`、`ItemStackRenderStateMixin`、
+`LevelExtractorAccessor`、`LevelExtractorMixin`、`ParticleGroupAccessor`、
+`ParticleResourcesAccessor`、`PreferredGraphicsApiMixin`、
+`RenderStateOwnerMixin`、`SectionCopyMixin`、`ViewAreaAccessor`。
 
-| Mixin | Yarn 1.21.1 | Mojang 1.21.1 | リスク | 状態 |
-| --- | --- | --- | --- | --- |
-| `MinecraftClientMixin` (776 行) | `MinecraftClient` | `Minecraft` | 中 | ⬜ |
-| `UnfocusedFramerateMixin` | `MinecraftClient` | `Minecraft` | 中 | ⬜ |
-| `GameRendererMixin` | `GameRenderer` | `GameRenderer` | 高 | ⬜ |
-| `WindowMixin` | `Window` | `Window` | 中 | ⬜ |
-| `KeyboardMixin` | `Keyboard` | `KeyboardHandler` | 中 | ⬜ |
-| `MouseMixin` | `Mouse` | `MouseHandler` | 中 | ⬜ |
-| `DownloadingTerrainScreenMixin` | `DownloadingTerrainScreen` | `ReceivingLevelScreen` | 高 | ⬜ |
-| `ClientWorldMixin` | `ClientWorld` | `ClientLevel` | 低 | ⬜ |
+削除したものと理由:
 
-## Mixin 以外で影響が大きいファイル
+| Mixin | 理由 |
+| --- | --- |
+| `RenderSystemMixin`、`WindowMixin` | SDL3 と renderpearl に置き換わった。表示は `GlSurfaceMixin` へ |
+| `GlStateManagerUploadMixin`、`NativeImageUploadMixin`、`SpriteContentsUploadMixin` | テクスチャの転送が renderpearl の `CommandEncoder` 経由になった |
+| `VertexBufferMixin` | vanilla のバッファが renderpearl の `GpuBuffer` になった |
+| `PlayerSkinTextureMixin` | スキンが `DynamicTexture` になった |
+| `ItemRendererMixin` | アイテム描画が `ItemStackRenderState` 経由になった |
+| `LivingEntityRendererNameMixin`、`PlayerEntityNameMixin`、`Deadmau5FeatureRendererMixin` | 名札の文字キャッシュの問題が vanilla で直った |
+| `EntityRenderDispatcherAccessor`、`MatrixStackAccessor`、`MatrixStackEntryAccessor` | 抽出と提出の構造、`PoseStack` のプールで不要になった |
+| `WeightedBakedModelMixin`、`MultipartBakedModelMixin` | モデルの選択が `collectParts` に変わった。割り当てを減らす最適化は未移植 |
+| `ChunkRenderingDataPreparerMixin`、`RenderableChunksMixin`、`RenderedChunkMixin`、`BuiltChunkBuffersMixin`、`BuiltChunkStorageMixin` | 可視性ウォークの割り当てなし版と粗い視錐台インデックス。vanilla の `SectionOcclusionGraph` を使う (性能面の未移植) |
+| `ClientChunkSnapshotAccess` | 描画領域のスナップショットがチャンク単位の `RenderChunk` からセクション単位の `SectionCopy` になった (`SectionCopyMixin`) |
+| `ChunkHolderMixin`、`ServerChunkManagerMixin` | 26.3 の vanilla がリストを使い回すようになった |
 
-- `entity/RemixVertexConsumerProvider.java`、`entity/RenderLayerUtils.java`:
-  `VertexConsumerProvider` と `RenderLayer` の内部構造を access widener で
-  読んでいる。1.21.2 と 1.21.5 の変更で作り直しが必要。
-- `RtxRemixMod.java`: コマンド、キーバインド、ライフサイクル。Fabric API の
-  名前とシグネチャの変更を追う。
-- `block/`、`RtxRemixCommonMod.java`: ブロックとアイテムの登録。1.21.2 以降、
-  登録時に `ResourceKey` を `Properties` に渡す必要がある (確度: 高)。
-- `screen/`、`settings/`: `SimpleOption` (Mojang 名 `OptionInstance`) と
-  ウィジェット。
-- `logic/ConfLayerDriver.java`: バージョン文字列 `1.21.1` を含む。
-- `src/main/resources/assets/`: ブロックモデル、ブロックステート。1.21.4 以降は
-  アイテムに `assets/<ns>/items/*.json` が必要 (確度: 高)。
+## 未移植・既知の差分
+
+優先度の高い順です。
+
+1. **雨と雪** (`weather/RemixWeatherRenderer`): スタブです。RTX が有効な間は
+   Remix の画が vanilla の雨と雪を覆うので、雨も雪も画面に出ません。1.21.1 版は
+   vanilla の天候メッシュを取り込み、屈折用のコアシェーダーを使って生の GL で
+   Remix の画の上に描いていました。26.3 は天候を頂点バッファとレンダー
+   パイプラインで描き、深度が逆 (reversed depth) で、コアシェーダーの登録も
+   なくなったので、renderpearl のパイプラインと逆深度に合わせた深度の初期化を
+   用意する必要があります。地面に落ちる雨粒などのパーティクルは別経路で出ます。
+2. **アイテムアトラスのパーティクル**: アイテムが割れるときなど、アイテム用
+   アトラスを使うパーティクルは Remix に送っていません。
+3. **アトラスの余白**: CPU で組み立てる Remix 用アトラスは、26.3 で付いた
+   スプライトの余白を埋めていません。ミップマップで隣のスプライトがにじむ
+   可能性があります。
+4. **Fabric Renderer API のメッシュ**: FRAPI のメッシュを持つアイテムやブロックは
+   vanilla の経路で提出されたものだけを取り込みます。
+5. **性能面で未移植のもの** (正しさには影響しない):
+   - 可視性ウォークの割り当てなし版と粗い視錐台インデックス
+     (`-Drtxremix.vanillaVisibilityWalk`、`-Drtxremix.logVisibleSet` も消えた)。
+   - チャンク読み込み時の近傍の再ビルド抑制 (`NeighbourReflagFilter`)。26.3 では
+     `LevelExtractor.setSectionDirtyWithNeighbors` が入口になるはずですが、
+     抑制を誤るとテレインに穴が残り、Linux では目で確かめられないので、配線の
+     切れた残骸ごと削除しました。1.21.1 版の実装は git 履歴の
+     `BuiltChunkStorageMixin`、`BuiltChunkMixin`、`NeighbourReflagFilter` に
+     あります。
+   - モデル選択の割り当て削減 (`WeightedBakedModelMixin`、
+     `MultipartBakedModelMixin`)。
+   - vanilla の雲描画の抑止 (Remix が置き換える GL のフレームに描かれるだけ)。
+6. **Prism のフォールバック版** (`PRISM_FALLBACK_VERSION = '9.1'`): 26.3 を
+   起動できるかは未確認です。GitHub から最新版を取れる通常の経路では使われません。
+7. **Java ソースのコメント**: Yarn 時代の名前がコメントに残っている箇所が
+   あります。ドキュメント (`docs/`、`tools/docs/`、`CONTRIBUTING.md`) は
+   26.3 の名前に直しました。
+
+## 上流のファイルへの変更と取り込み時の注意
+
+- `AGENTS.md` と `CLAUDE.md` は変えていません。そのため `AGENTS.md` には
+  1.21.1 時代の記述が残っています。例: Java 21、`WorldRenderer.render()` と
+  `setupTerrain`、`WeightedBakedModelMixin`、`MultipartBakedModelMixin`、
+  `ChunkRenderingDataPreparerMixin`、`FarChunkProbeTest`、
+  `NeighbourReflagFilter`、`-Drtxremix.vanillaVisibilityWalk`。このフォークでは
+  このファイルとソースの方を正としてください。
+- `CHANGELOG.md` は上流の履歴なので、移植の項目は足していません。
+- 版や手順を書いたドキュメント (`README.md`、`docs/`、`tools/docs/`、
+  `packaging/*.md`、`CONTRIBUTING.md`、`THIRD_PARTY_NOTICES.md`、
+  `rtxremix-java/README.md`) は 26.3 に合わせて直しています。上流の更新を
+  取り込むときは、これらと `installer.ps1`、`build.gradle` で衝突しやすいです。
+- 上流の `CONTRIBUTING.md` はすべてのコミットに DCO の `Signed-off-by` を
+  求めています。このブランチのコミットには付いていません。DCO は人が内容を
+  確認して署名するものなので、上流へ送る場合は確認のうえ
+  `git rebase --signoff` などで付けてください。
+
+## 検証の手順 (Linux)
+
+```bash
+./gradlew compileJava -x setupRuntime
+./gradlew test -x setupRuntime
+cd tools && uv run --frozen pytest -q && uv run --frozen ruff check . && uv run --frozen ruff format --check .
+```
+
+`tools/` には uv 0.13 以上と Python 3.15 以上が必要です (uv が Python を
+用意します)。ヘッドレスで起動するときは Xvfb と Mesa を使い、
+`SDL_VIDEO_FORCE_EGL=1` を付けます。クイックプレイで止まらないよう
+`run/options.txt` に `onboardAccessibility:false` を書いておきます。
 
 ## 作業ログ
 
-- 2026-10-24: リポジトリの規模と Mixin の対象を調査し、このメモを作成。
-  ネットワークポリシーで Fabric と Mojang の配布元がブロックされているため、
-  コードの変更は未着手。
+| コミット | 内容 |
+| --- | --- |
+| `c822f52` | PORTING.md を追加 |
+| `27bcf1d` | 1.21.1 のまま Yarn から Mojang 名へ |
+| `7d8af06` | 26.3 へ: ビルド、ウィンドウ、表示、入力 |
+| `268cf48` | 地形のキャプチャと `LevelExtractor` のフック |
+| `e080d83` | Copper Beacon のブロックとデータ |
+| `ed5bc60` | 設定、カメラ、ゾーン、ベンチマーク |
+| `062a4ed`、`cb29a4b` | アトラスのアニメーション転送とグリフの写し |
+| `a2fce6d` | エンティティ、ブロックエンティティ、アイテム、一人称 |
+| `fd5d058` | パーティクル、空、雲、光、天候のフック |
+| `da6156d` | 26.3 に存在しない Mixin ターゲットの修正 (静的チェックと監査で検出) |
+| `2d8aa9f` | JVM テストの移植 |
+| `3ba528b` | 閉じた画像を持つ動的テクスチャを解放済みとして扱う (テストで検出) |
+| `9059e09` | パッケージ、ツール、ドキュメントを 26.3 と Java 25 へ |
+| `5d46ffe` | 配線の切れた近傍再ビルド抑制を削除、ドキュメントを 26.3 の名前へ |
+| `3d7d799` | 1.21.1 のゾーンファイルを 26.3 の保存先へ移す |
