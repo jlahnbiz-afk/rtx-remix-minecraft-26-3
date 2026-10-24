@@ -210,11 +210,15 @@ final class AtmosphericSkyGenerator {
         }
 
         // The GL backend binds its program for every draw and caches none, so the
-        // program in use is all there is to put back.
+        // program is put back. It does cache the active texture unit and skips a switch
+        // to the unit it believes is active, so that unit is put back as well. Units 14
+        // and 15 lie outside the twelve whose bindings it caches.
         int previousProgram;
+        int previousActiveTexture;
         try (ProfileScope ignored =
                 ProfileScope.begin("Sky.ProceduralGeneration.StateSave")) {
             previousProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
+            previousActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
         }
         try {
             try (ProfileScope ignored =
@@ -257,7 +261,7 @@ final class AtmosphericSkyGenerator {
             GL15.glBindBuffer(
                     GL21.GL_PIXEL_PACK_BUFFER,
                     0);
-            GL13.glActiveTexture(GL13.GL_TEXTURE0);
+            GL13.glActiveTexture(previousActiveTexture);
             GL20.glUseProgram(previousProgram);
         }
     }
