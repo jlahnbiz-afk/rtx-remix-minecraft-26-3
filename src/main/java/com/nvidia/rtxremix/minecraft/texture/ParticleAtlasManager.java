@@ -146,6 +146,14 @@ public class ParticleAtlasManager {
                 }
             }
 
+            AtlasSprites.Padding padding = AtlasSprites.padding(sprites.values(), atlasW, atlasH);
+            padding.fill(albedoRGBA, 4);
+            padding.fill(normalAtlas, 4);
+            padding.fill(heightAtlas, 1);
+            padding.fill(roughnessAtlas, 1);
+            padding.fill(metallicAtlas, 1);
+            padding.fill(emissiveAtlas, 4);
+
             RemixTexture albedoTex = uploadTexture("particle_atlas_albedo",
                     albedoRGBA, atlasW, atlasH, TextureFormat.RGBA8_UNORM, TexturePurpose.COLOR);
 

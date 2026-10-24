@@ -2360,6 +2360,16 @@ public class RemixEntitySubmitter {
                 }
             }
 
+            AtlasSprites.Padding padding = AtlasSprites.padding(sprites.values(), w, h);
+            padding.fill(pixels, 4);
+            padding.fill(normalData, 4);
+            padding.fill(heightData, 1);
+            padding.fill(roughData, 1);
+            padding.fill(metalData, 1);
+            padding.fill(emissiveData, 4);
+            padding.fill(sssData, 4);
+            padding.fill(sssAlbedoData, 4);
+
             EntityTextureSet textures = new EntityTextureSet();
             String name = "atlas_" + textureId;
             textures.albedo = uploadAndOwn(textures, name + "_a", pixels, w, h,

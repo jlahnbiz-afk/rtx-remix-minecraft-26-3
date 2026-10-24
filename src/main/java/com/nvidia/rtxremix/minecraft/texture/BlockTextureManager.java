@@ -90,6 +90,7 @@ public class BlockTextureManager {
     private RemixTexture atlasSssTex;
     private RemixTexture atlasSssAlbedoTex;
     private int atlasW, atlasH;
+    private AtlasSprites.Padding atlasPadding;
     private final List<SpriteEntry> sprites = new ArrayList<>();
     private final Map<Identifier, SpriteEntry> spriteById = new HashMap<>();
     private final Map<Long, RemixMaterial> materials = new HashMap<>();
@@ -280,6 +281,8 @@ public class BlockTextureManager {
             LOGGER.warn("Atlas dimensions are zero");
             return;
         }
+        atlasPadding = AtlasSprites.padding(
+                ((SpriteAtlasAccessor) atlas).getSprites().values(), atlasW, atlasH);
         albedoRGBA = stitchAtlasRGBA(atlas);
         atlasAlbedo = upload(api, "block_atlas", albedoRGBA, atlasW, atlasH,
                 TextureFormat.RGBA8_UNORM, TexturePurpose.COLOR);
@@ -464,6 +467,15 @@ public class BlockTextureManager {
             }
         }
 
+        // The blits above wrote sprite texels only; ambient occlusion changed albedo's.
+        atlasPadding.fill(albedoRGBA, 4);
+        atlasPadding.fill(normalAtlas, 4);
+        atlasPadding.fill(heightAtlas, 1);
+        atlasPadding.fill(roughnessAtlas, 1);
+        atlasPadding.fill(metallicAtlas, 1);
+        atlasPadding.fill(emissiveAtlas, 4);
+        atlasPadding.fill(sssThicknessAtlas, 4);
+        atlasPadding.fill(sssAlbedoAtlas, 4);
         atlasAlbedo = upload(api, "atlas_albedo", albedoRGBA, atlasW, atlasH,
                 TextureFormat.RGBA8_UNORM, TexturePurpose.COLOR);
 
@@ -1010,7 +1022,10 @@ public class BlockTextureManager {
         }
     }
 
-    /** Reads per-sprite NativeImages and stitches into an RGBA byte[] atlas buffer. */
+    /**
+     * Reads per-sprite NativeImages and stitches into an RGBA byte[] atlas buffer, with
+     * each sprite's padding filled from its edge texels as vanilla fills it.
+     */
     public static byte[] stitchAtlasRGBA(TextureAtlas atlas) {
         SpriteAtlasAccessor acc = (SpriteAtlasAccessor) atlas;
         int w = acc.getWidth(), h = acc.getHeight();
@@ -1030,6 +1045,7 @@ public class BlockTextureManager {
                     buf[idx + 3] = (byte) ((abgr >> 24) & 0xFF);
                 }
         }
+        AtlasSprites.padding(acc.getSprites().values(), w, h).fill(buf, 4);
         return buf;
     }
 
