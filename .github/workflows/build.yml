@@ -6,7 +6,7 @@ name: build
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "26.3"]
 
 permissions:
   contents: read
@@ -25,3 +25,10 @@ jobs:
       # The pinned runtime comes from public Packman; no credentials are used.
       - name: Build and test
         run: '& "$env:GITHUB_WORKSPACE\gradlew.bat" build test'
+      # The lightweight JAR: it needs the runtime a development setup or the installer stages.
+      - name: Upload mod JAR
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rtx-remix-renderer-${{ github.sha }}
+          path: build/libs/*.jar
+          if-no-files-found: error
