@@ -173,8 +173,10 @@ public final class DynamicTextureCache {
         Set<Identifier> liveIds = new HashSet<>();
         synchronized (TEXTURE_IDS) {
             for (var entry : TEXTURE_IDS.entrySet()) {
+                // A closed texture keeps its image reference, so the image's own
+                // closed flag is what marks it released.
                 if (!(entry.getKey() instanceof DynamicTexture texture)
-                        || texture.getPixels() != null) {
+                        || !texture.getPixels().isClosed()) {
                     liveIds.add(entry.getValue());
                 }
             }
