@@ -409,7 +409,7 @@ public class LightManager {
 
         firstPersonShadowModelOffset = shadowModelPlacement.resolve(
                 world, camera, player, constraints, frameDtSeconds);
-        Vec3 displacedHeadCenter = camera.getPosition().add(firstPersonShadowModelOffset);
+        Vec3 displacedHeadCenter = camera.position().add(firstPersonShadowModelOffset);
 
         // The rig lights surfaces but never the air. A first-person emitter is
         // locked to the camera, and the volumetric grid reuses the previous
@@ -799,7 +799,7 @@ public class LightManager {
                 lensOffsetDirection.scale(BeaconBeam.HELD_LENS_OFFSET));
         float coneAngle = BeaconBeam.CONE_ANGLE_DEGREES;
         if (localFirstPerson && collisionWorld != null && collisionCamera != null) {
-            Vec3 collisionOrigin = collisionCamera.getPosition();
+            Vec3 collisionOrigin = collisionCamera.position();
             Vec3 preferredOffset = pos.subtract(collisionOrigin);
             double preferredDistance = preferredOffset.length();
             if (preferredDistance > 1.0e-6) {

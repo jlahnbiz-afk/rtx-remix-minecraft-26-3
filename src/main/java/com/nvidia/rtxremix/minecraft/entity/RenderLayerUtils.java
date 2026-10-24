@@ -4,26 +4,31 @@
  */
 package com.nvidia.rtxremix.minecraft.entity;
 
-import com.mojang.blaze3d.vertex.VertexFormatElement;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.renderpearl.api.pipeline.BlendFunction;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.WeakHashMap;
-import net.minecraft.client.renderer.RenderStateShard;
-import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.rendertype.RenderSetup;
+import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.resources.Identifier;
 
 /**
  * Reads the layer-level facts the capture path needs from a {@link RenderType}.
  *
- * <p>A renderer requests its {@code VertexConsumer} by layer,
- * {@code provider.getBuffer(RenderLayer.getEntityCutout(textureId))}, so the
- * layer is where geometry and material meet and the one place material
- * identity is read. Its {@link RenderStateShard} state, reached through the access
- * widener, gives the texture the layer is submitted under, if any, the
- * {@link SurfaceMode} Remix shades with, and whether the geometry is streamed
- * afresh every frame; its draw mode gives the {@link Topology} and whether an
- * untextured layer carries geometry worth submitting at all.
+ * <p>Every submit names the {@link RenderType} its geometry is drawn with, so the
+ * layer is where geometry and material meet and the one place material identity
+ * is read. Its {@link RenderSetup}, reached through the access widener, gives the
+ * texture bound to {@code Sampler0}, if any; its {@link RenderPipeline} gives the
+ * {@link SurfaceMode} Remix shades with, whether the geometry is streamed afresh
+ * every frame, the {@link Topology}, and whether an untextured layer carries
+ * geometry worth submitting at all.
  */
 final class RenderLayerUtils {
 
@@ -88,23 +93,15 @@ final class RenderLayerUtils {
     }
 
     private static Optional<Identifier> capturableTextureUncached(RenderType layer) {
-        if (layer instanceof RenderType.CompositeRenderType multiPhase
-                && multiPhase.state().depthTestState == RenderStateShard.NO_DEPTH_TEST) {
+        if (layer.pipeline().getDepthStencilState() == null) {
             return Optional.empty();
         }
         return extractTexture(layer);
     }
 
     private static Optional<Identifier> extractTexture(RenderType layer) {
-        if (layer instanceof RenderType.CompositeRenderType multiPhase) {
-            RenderType.CompositeState phases = multiPhase.state();
-            RenderStateShard.EmptyTextureStateShard textureBase = phases.textureState;
-
-            if (textureBase instanceof RenderStateShard.TextureStateShard texture) {
-                return texture.cutoutTexture();
-            }
-        }
-        return Optional.empty();
+        RenderSetup.TextureBinding texture = layer.state.textures.get("Sampler0");
+        return texture == null ? Optional.empty() : Optional.of(texture.location());
     }
 
     /**
@@ -112,7 +109,8 @@ final class RenderLayerUtils {
      * do not become triangles, such as lines.
      */
     static Optional<Topology> topology(RenderType layer) {
-        return switch (layer.mode()) {
+        PrimitiveTopology topology = layer.primitiveTopology();
+        return switch (topology) {
             case QUADS -> Optional.of(Topology.QUADS);
             case TRIANGLE_STRIP -> Optional.of(Topology.TRIANGLE_STRIP);
             default -> Optional.empty();
@@ -121,7 +119,7 @@ final class RenderLayerUtils {
 
     /**
      * Whether a layer that draws without a texture still carries geometry worth
-     * submitting to Remix. In 1.21.1 the lead between a mob and its holder is the
+     * submitting to Remix. In 26.3 the lead between a mob and its holder is the
      * only such layer.
      *
      * <p>Two conditions, both about what the layer can actually shade with.
@@ -137,7 +135,7 @@ final class RenderLayerUtils {
         // capturableTexture declined must not re-enter capture through here.
         return extractTexture(layer).isEmpty()
                 && topology(layer).filter(t -> t == Topology.TRIANGLE_STRIP).isPresent()
-                && layer.format().getElements().contains(VertexFormatElement.COLOR);
+                && layer.format().contains(DefaultVertexFormat.COLOR_SEMANTIC_NAME);
     }
 
     /**
@@ -155,8 +153,9 @@ final class RenderLayerUtils {
     }
 
     private static boolean isStreamedPerFrameUncached(RenderType layer) {
-        boolean beaconBeamProgram = layer instanceof RenderType.CompositeRenderType multiPhase
-                && multiPhase.state().shaderState == RenderStateShard.RENDERTYPE_BEACON_BEAM_SHADER;
+        RenderPipeline pipeline = layer.pipeline();
+        boolean beaconBeamProgram = pipeline == RenderPipelines.BEACON_BEAM_OPAQUE
+                || pipeline == RenderPipelines.BEACON_BEAM_TRANSLUCENT;
         return classifyStreamedPerFrame(topology(layer).orElse(Topology.QUADS), beaconBeamProgram);
     }
 
@@ -175,20 +174,32 @@ final class RenderLayerUtils {
      * behaviour and it is classified as translucent.
      */
     static SurfaceMode surfaceMode(RenderType layer) {
-        if (!(layer instanceof RenderType.CompositeRenderType multiPhase)) {
-            return SurfaceMode.CUTOUT;
-        }
-
-        RenderType.CompositeState phases = multiPhase.state();
+        RenderPipeline pipeline = layer.pipeline();
         return classifySurfaceMode(
-                phases.shaderState == RenderStateShard.RENDERTYPE_EYES_SHADER
-                        || phases.shaderState == RenderStateShard.RENDERTYPE_ENTITY_TRANSLUCENT_EMISSIVE_SHADER,
-                phases.transparencyState == RenderStateShard.ADDITIVE_TRANSPARENCY,
-                phases.transparencyState == RenderStateShard.TRANSLUCENT_TRANSPARENCY
-                        || phases.transparencyState == RenderStateShard.CRUMBLING_TRANSPARENCY,
-                phases.shaderState == RenderStateShard.RENDERTYPE_ENTITY_SOLID_SHADER,
-                phases.shaderState == RenderStateShard.RENDERTYPE_TEXT_SHADER
-                        || phases.shaderState == RenderStateShard.RENDERTYPE_TEXT_INTENSITY_SHADER);
+                pipeline == RenderPipelines.EYES
+                        || pipeline == RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE,
+                usesBlend(pipeline, BlendFunction.ADDITIVE),
+                usesBlend(pipeline, BlendFunction.TRANSLUCENT)
+                        || pipeline == RenderPipelines.CRUMBLING,
+                pipeline == RenderPipelines.ENTITY_SOLID
+                        || pipeline == RenderPipelines.ENTITY_SOLID_Z_OFFSET_FORWARD,
+                TEXT_PIPELINES.contains(pipeline));
+    }
+
+    /** The world text programs, colour and greyscale, with and without polygon offset. */
+    private static final Set<RenderPipeline> TEXT_PIPELINES = Set.of(
+            RenderPipelines.TEXT,
+            RenderPipelines.TEXT_GRAYSCALE,
+            RenderPipelines.TEXT_POLYGON_OFFSET,
+            RenderPipelines.TEXT_GRAYSCALE_POLYGON_OFFSET);
+
+    private static boolean usesBlend(RenderPipeline pipeline, BlendFunction blend) {
+        for (ColorTargetState target : pipeline.getColorTargetStates()) {
+            if (target != null && target.blendFunction().filter(blend::equals).isPresent()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

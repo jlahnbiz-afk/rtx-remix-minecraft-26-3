@@ -7,7 +7,7 @@ package com.nvidia.rtxremix.minecraft.mixin;
 import net.minecraft.client.particle.Particle;
 import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.particle.ParticleRenderType;
-import net.minecraft.resources.Identifier;
+import net.minecraft.client.particle.ParticleResources;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
@@ -19,11 +19,7 @@ public interface ParticleManagerAccessor {
     @Accessor("particles")
     Map<ParticleRenderType, Queue<Particle>> getParticles();
 
-    /**
-     * Sprite providers keyed by particle type id. The value class is package
-     * private in vanilla, so callers read it through the public
-     * {@code SpriteProvider} interface it implements.
-     */
-    @Accessor("spriteSets")
-    Map<Identifier, ?> getSpriteAwareFactories();
+    /** The sprite sets and providers the engine was built with. */
+    @Accessor("resourceManager")
+    ParticleResources rtxremix$resources();
 }

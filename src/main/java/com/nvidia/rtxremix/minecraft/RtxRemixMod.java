@@ -66,8 +66,7 @@ import it.unimi.dsi.fastutil.longs.LongSets;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.ModelLayerRegistry;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
@@ -75,6 +74,7 @@ import net.fabricmc.fabric.api.resource.v1.ResourceLoader;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.MenuScreens;
@@ -541,9 +541,6 @@ public class RtxRemixMod implements ClientModInitializer {
             if (renderer != null && renderer.getChunkManager() != null) {
                 renderer.getChunkManager().onChunkUnloaded(pos);
             }
-            if (Minecraft.getInstance().levelRenderer instanceof WorldRendererTerrainAccess access) {
-                access.rtxremix$onNeighbourColumnInvalidated(pos.x(), pos.z());
-            }
         });
 
         // Zone discovery: server-thread scan of command blocks as chunks load.
@@ -561,59 +558,29 @@ public class RtxRemixMod implements ClientModInitializer {
                     if (renderer != null) renderer.requestTextureReload();
                 });
 
-        // Applies pending world and resource changes and preloads the large
-        // block-entity atlases before vanilla's world render, where block entities
-        // are captured in place by BlockEntityRenderDispatcherMixin.
-        WorldRenderEvents.START.register(context -> {
-            if (renderer != null && renderer.isInitialized()) {
-                renderer.beginBlockOutlineFrame();
-            }
-            if (isRendererProfilingActive()) {
-                try (ProfileScope startScope = ProfileScope.begin("WorldRender.START")) {
-                    renderer.beginWorldRenderFrame();
-                }
-                transitionWorldRenderPhase("WorldRender.vanilla.setup");
-            } else {
-                closeWorldRenderPhaseScope();
-            }
-        });
-
-        WorldRenderEvents.AFTER_SETUP.register(context ->
+        // The world render's own start and end are WorldRendererMixin's render head and
+        // return, which call onLevelRenderStart and onLevelRenderEnd: entities are
+        // captured while vanilla submits its features, before any frame-graph pass
+        // these events mark has run.
+        LevelRenderEvents.START_MAIN.register(context ->
             transitionWorldRenderPhase("WorldRender.vanilla.terrainOpaque"));
-        WorldRenderEvents.BEFORE_ENTITIES.register(context ->
-            transitionWorldRenderPhase("WorldRender.vanilla.entities"));
-        WorldRenderEvents.AFTER_ENTITIES.register(context ->
-            transitionWorldRenderPhase("WorldRender.vanilla.blockEntities"));
-        WorldRenderEvents.BEFORE_BLOCK_OUTLINE.register((context, hitResult) -> {
-            transitionWorldRenderPhase("WorldRender.vanilla.blockOutline");
-            return true;
-        });
-        WorldRenderEvents.BLOCK_OUTLINE.register((context, outlineContext) -> {
+        LevelRenderEvents.AFTER_OPAQUE_TERRAIN.register(context ->
+            transitionWorldRenderPhase("WorldRender.vanilla.solidFeatures"));
+        LevelRenderEvents.AFTER_SOLID_FEATURES.register(context ->
+            transitionWorldRenderPhase("WorldRender.vanilla.translucent"));
+        LevelRenderEvents.BEFORE_BLOCK_OUTLINE.register((context, outlineState) -> {
             if (renderer != null
                     && renderer.isInitialized()
                     && isRtxEnabled()) {
-                renderer.captureBlockOutline(context, outlineContext);
+                renderer.captureBlockOutline(context.levelState(), outlineState);
             }
             return true;
         });
-        WorldRenderEvents.BEFORE_DEBUG_RENDER.register(context ->
-            transitionWorldRenderPhase("WorldRender.vanilla.debugAndTranslucent"));
-        WorldRenderEvents.AFTER_TRANSLUCENT.register(context ->
+        LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(context ->
             transitionWorldRenderPhase("WorldRender.vanilla.weatherClouds"));
-        WorldRenderEvents.LAST.register(context -> {
+        LevelRenderEvents.END_MAIN.register(context -> {
             transitionWorldRenderPhase("WorldRender.vanilla.last");
-            closeWorldRendererProfilerPhase(context);
-        });
-
-        // WorldRenderer returns to GameRenderer before Minecraft draws the
-        // first-person arms/items. Mark the scene ready here, then submit it
-        // from GameRendererMixin after that model has been captured and before
-        // Minecraft draws its screen overlays.
-        WorldRenderEvents.END.register(context -> {
-            closeWorldRendererProfilerPhase(context);
-            closeWorldRenderPhaseScope();
-            ProfileScope.markWorldRenderEnd();
-            remixFrameReadyToSubmit = renderer != null && renderer.isInitialized();
+            closeWorldRendererProfilerPhase();
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
@@ -694,6 +661,42 @@ public class RtxRemixMod implements ClientModInitializer {
         }
     }
 
+    /**
+     * Applies pending world and resource changes and preloads the large block-entity
+     * atlases before vanilla submits its features, where entities and block entities
+     * are captured in place. Called from the head of {@code LevelRenderer.render}.
+     */
+    public static void onLevelRenderStart() {
+        RtxRemixMod mod = instance;
+        if (mod == null) return;
+        if (renderer != null && renderer.isInitialized()) {
+            renderer.beginBlockOutlineFrame();
+        }
+        if (mod.isRendererProfilingActive()) {
+            try (ProfileScope startScope = ProfileScope.begin("WorldRender.START")) {
+                renderer.beginWorldRenderFrame();
+            }
+            mod.transitionWorldRenderPhase("WorldRender.vanilla.setup");
+        } else {
+            mod.closeWorldRenderPhaseScope();
+        }
+    }
+
+    /**
+     * LevelRenderer returns to GameRenderer before Minecraft draws the first-person
+     * arms and items. Marks the scene ready here; GameRendererMixin then submits it
+     * once that model has been captured and before Minecraft draws its screen
+     * overlays. Called from the return of {@code LevelRenderer.render}.
+     */
+    public static void onLevelRenderEnd() {
+        RtxRemixMod mod = instance;
+        if (mod == null) return;
+        closeWorldRendererProfilerPhase();
+        mod.closeWorldRenderPhaseScope();
+        ProfileScope.markWorldRenderEnd();
+        mod.remixFrameReadyToSubmit = renderer != null && renderer.isInitialized();
+    }
+
     private void transitionWorldRenderPhase(String phaseName) {
         if (!isRendererProfilingActive()) {
             closeWorldRenderPhaseScope();
@@ -719,8 +722,8 @@ public class RtxRemixMod implements ClientModInitializer {
         }
     }
 
-    private static void closeWorldRendererProfilerPhase(WorldRenderContext context) {
-        if (context != null && context.worldRenderer() instanceof WorldRendererProfilingAccess access) {
+    private static void closeWorldRendererProfilerPhase() {
+        if (Minecraft.getInstance().levelRenderer instanceof WorldRendererProfilingAccess access) {
             access.rtxremix$closeProfilerPhaseForFabricEvent();
         }
     }
@@ -1847,18 +1850,14 @@ public class RtxRemixMod implements ClientModInitializer {
      */
     static void recaptureTerrainForRemix(Minecraft client, LongSet built) {
         if (!isWorldActive() || client.levelRenderer == null) return;
-        if (client.getCameraEntity() == null) {
-            // Without a camera entity, WorldRenderer.reload() skips
-            // BuiltChunkStorage.updateCameraPosition, so section origins are
-            // still index-based and queueing would capture nothing useful.
-            LOGGER.warn("Skipping Remix terrain recapture: no camera entity (world still loading?)");
-            return;
-        }
         if (client.levelRenderer instanceof WorldRendererTerrainAccess access) {
-            LongSet queued = access.rtxremix$queueSectionsForRemix(built);
-            pendingRecapture = queued;
-            pendingRecaptureWorld = client.level;
-            LOGGER.info("Queued {} of {} previously built sections for Remix recapture", queued.size(), built.size());
+            ClientLevel level = client.level;
+            access.rtxremix$queueSectionsForRemix(built, queued -> {
+                pendingRecapture = queued;
+                pendingRecaptureWorld = level;
+                LOGGER.info("Queued {} of {} previously built sections for Remix recapture",
+                        queued.size(), built.size());
+            });
         }
     }
 

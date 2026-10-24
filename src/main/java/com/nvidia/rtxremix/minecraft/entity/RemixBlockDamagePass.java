@@ -5,6 +5,7 @@
 package com.nvidia.rtxremix.minecraft.entity;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.QuadInstance;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.nvidia.rtxremix.InstanceCategoryBit;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -14,24 +15,27 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
 import net.minecraft.client.resources.model.ModelBakery;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
 /**
  * Captures the block-breaking crack where vanilla draws it and submits it through the
  * entity submitter as a decal over the terrain.
  *
- * <p>{@code WorldRendererMixin} wraps vanilla's {@code BlockRenderManager.renderDamage}
- * call and routes it to {@code RemixRenderer.renderBlockDamageInPlace}, which calls
- * {@link #capture}. The block model is rendered on this pass's identity
+ * <p>{@code WorldRendererMixin} wraps vanilla's {@code submitBreakingBlockModel} call and
+ * routes it to {@code RemixRenderer.renderBlockDamageInPlace}, which calls
+ * {@link #capture}. The block model's parts are drawn on this pass's identity
  * {@link RecyclingMatrixStack} rather than vanilla's camera-relative one, so the captured
  * quads are block-local and the crack projection runs in block space: one pooled mesh per
  * block shape and stage, and an instance root that is a translation by the block position.
  *
- * <p>Vanilla allocates a fresh {@code BlockPos} for every broken block every frame, and the
+ * <p>Vanilla extracts a fresh state for every broken block every frame, and the
  * submitter's retained registry keys parts by owner identity, so each broken position is
  * lent one owner token for as long as it keeps being rendered. A position vanilla stops
  * rendering, because the block broke, the player let go, or it left the 32-block range,
@@ -43,6 +47,7 @@ public final class RemixBlockDamagePass {
     private static final Logger LOGGER = LoggerFactory.getLogger(RemixBlockDamagePass.class);
 
     private static final String TYPE_KEY = "minecraft:block_breaking";
+    private static final Direction[] DIRECTIONS = Direction.values();
 
     /**
      * The crack is coplanar with the terrain face it is drawn on, which is the case
@@ -54,29 +59,22 @@ public final class RemixBlockDamagePass {
     static final RemixEntitySubmitter.PartCategoryPolicy TERRAIN_DECAL =
             role -> InstanceCategoryBit.DECAL_STATIC;
 
-    /**
-     * Vanilla's damage render with the matrix stack and consumer left open, so the pass
-     * can supply its own. The mixin's {@code Operation} handle stays in the mixin.
-     */
-    @FunctionalInterface
-    public interface BlockDamageRenderCall {
-        void render(PoseStack matrices, VertexConsumer consumer);
-    }
-
     private final RecyclingMatrixStack matrices = new RecyclingMatrixStack();
     private final RemixVertexConsumerProvider provider = new RemixVertexConsumerProvider();
     private final CrackProjector projector = new CrackProjector();
+    private final QuadInstance quadInstance = new QuadInstance();
     private final PositionOwners owners = new PositionOwners();
     private final FailureLogThrottle failures = new FailureLogThrottle(LOGGER, "Block damage");
     private float[] reusableBoneData = new float[0];
 
     /**
-     * Renders one broken block's damage model through vanilla's renderer on the identity
+     * Draws one broken block's model parts through the crack projector on the identity
      * stack and submits the capture inside the submitter's open frame.
      *
      * @param stage the destroy stage vanilla selected for the block, 0 to 9
+     * @param parts the block model's parts vanilla collected for the crack
      */
-    public void capture(BlockPos pos, int stage, BlockDamageRenderCall call,
+    public void capture(BlockPos pos, BlockState blockState, int stage, List<BlockStateModelPart> parts,
                         RemixEntitySubmitter submitter) {
         EntityRenderContext ctx = EntityRenderContext.get();
         provider.beginEntity();
@@ -84,16 +82,27 @@ public final class RemixBlockDamagePass {
         ctx.begin(true);
         List<RemixVertexConsumerProvider.CapturedLayer> layers;
         try {
-            VertexConsumer crack = provider.getBuffer(
-                    ModelBakery.DESTROY_TYPES.get(stage));
-            call.render(matrices, projector.target(crack));
+            VertexConsumer crack = projector.target(provider.getBuffer(
+                    ModelBakery.DESTROY_TYPES.get(stage)));
+            matrices.translate(blockState.getOffset(pos));
+            PoseStack.Pose pose = matrices.last();
+            for (BlockStateModelPart part : parts) {
+                for (Direction direction : DIRECTIONS) {
+                    for (BakedQuad quad : part.getQuads(direction)) {
+                        crack.putBakedQuad(pose, quad, quadInstance);
+                    }
+                }
+                for (BakedQuad quad : part.getQuads(null)) {
+                    crack.putBakedQuad(pose, quad, quadInstance);
+                }
+            }
             layers = provider.endEntity();
         } catch (Exception e) {
             failures.noteFailure("capturing", "block damage", pos, e);
             return;
         } finally {
-            // Both restore even if the renderer threw: the model renderer translates the
-            // root in place, and a capture left open would make the next one look nested.
+            // Both restore even if a quad threw: the offset translates the root in place,
+            // and a capture left open would make the next one look nested.
             matrices.reset();
             ctx.reset();
         }
@@ -208,6 +217,12 @@ public final class RemixBlockDamagePass {
         }
 
         @Override
+        public VertexConsumer setColor(int color) {
+            target.setColor(0xFFFFFFFF);
+            return this;
+        }
+
+        @Override
         public VertexConsumer setUv(float u, float v) {
             return this;
         }
@@ -225,8 +240,18 @@ public final class RemixBlockDamagePass {
         }
 
         @Override
+        public VertexConsumer setUv3(float u, float v) {
+            return this;
+        }
+
+        @Override
+        public VertexConsumer setLineWidth(float width) {
+            return this;
+        }
+
+        @Override
         public VertexConsumer setNormal(float x, float y, float z) {
-            Direction face = Direction.getNearest(x, y, z);
+            Direction face = Direction.getApproximateNearest(x, y, z);
             projected.set(this.x, this.y, this.z)
                     .rotateY(Mth.PI)
                     .rotateX(-Mth.HALF_PI)

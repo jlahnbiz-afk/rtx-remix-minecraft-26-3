@@ -45,16 +45,26 @@ import com.nvidia.rtxremix.minecraft.entity.RemixBlockOutlinePass;
 import com.nvidia.rtxremix.minecraft.entity.RemixEntityPass;
 import com.nvidia.rtxremix.minecraft.entity.RemixEntitySubmitter;
 import com.nvidia.rtxremix.minecraft.entity.RemixFirstPersonPass;
+import com.nvidia.rtxremix.minecraft.entity.RenderStateOwner;
 import com.nvidia.rtxremix.minecraft.cloud.CloudRenderer;
 import it.unimi.dsi.fastutil.longs.LongSet;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.ItemInHandRenderer;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
+import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
+import net.minecraft.client.renderer.FirstPersonHandsAndItemsRenderer;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
+import net.minecraft.client.renderer.state.level.BlockBreakingRenderState;
+import net.minecraft.client.renderer.state.level.BlockOutlineRenderState;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.client.renderer.state.level.LevelRenderState;
+import net.minecraft.client.renderer.state.level.FirstPersonHandsAndItemsRenderState;
+import net.minecraft.client.renderer.state.level.PlayerRenderState;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -564,7 +574,7 @@ public class RemixRenderer {
             Minecraft client = Minecraft.getInstance();
             if (client != null && client.levelRenderer != null) {
                 LongSet built = RtxRemixMod.builtSections(client);
-                client.levelRenderer.allChanged();
+                client.levelExtractor.allChanged();
                 RtxRemixMod.recaptureTerrainForRemix(client, built);
             }
             pendingTerrainRecaptureAfterTextureReload = false;
@@ -650,13 +660,13 @@ public class RemixRenderer {
      * Captures one entity at vanilla's own traversal point, in place of the render
      * that would have gone to OpenGL.
      *
-     * <p>Called from {@code WorldRendererMixin}'s wrap of
-     * {@code WorldRenderer.renderEntity}. Returning true tells the mixin to skip
-     * vanilla's call, which is what reduces each entity to a single model
+     * <p>Called from {@code WorldRendererMixin}'s wrap of the dispatcher submit in
+     * {@code LevelRenderer.submitEntities}. Returning true tells the mixin to skip
+     * vanilla's submit, which is what reduces each entity to a single model
      * evaluation per frame. Returning false hands the entity back to vanilla, so
      * an uninitialised renderer or a disabled toggle still renders normally.
      */
-    public boolean renderEntityInPlace(Entity entity, float tickDelta) {
+    public boolean renderEntityInPlace(EntityRenderState state, CameraRenderState camera, float tickDelta) {
         if (!initialized || remixApi == null || entityPass == null || entitySubmitter == null) {
             return false;
         }
@@ -668,8 +678,11 @@ public class RemixRenderer {
         if (dispatcher == null) {
             return false;
         }
+        if (!(((RenderStateOwner) state).rtxremix$owner() instanceof Entity entity)) {
+            return false;
+        }
         entityPass.beginFrame(entitySubmitter);
-        entityPass.captureAndSubmit(entity, dispatcher, tickDelta, entitySubmitter);
+        entityPass.captureAndSubmit(entity, state, camera, dispatcher, tickDelta, entitySubmitter);
         return true;
     }
 
@@ -677,8 +690,9 @@ public class RemixRenderer {
      * Captures one block entity at vanilla's own dispatch point, in place of the
      * render that would have gone to OpenGL.
      *
-     * <p>Called from {@code BlockEntityRenderDispatcherMixin}. Returning true tells
-     * the mixin to skip vanilla's call; returning false hands the block entity back
+     * <p>Called from {@code WorldRendererMixin}'s wrap of the dispatcher submit in
+     * {@code LevelRenderer.submitBlockEntities}. Returning true tells the mixin to
+     * skip vanilla's submit; returning false hands the block entity back
      * to vanilla, so an uninitialised renderer or a disabled toggle still renders
      * normally. A block entity dispatched while a capture is already open is left
      * to that capture's owner.
@@ -687,8 +701,7 @@ public class RemixRenderer {
      * part requires an open frame and block entities are captured even while the
      * entity toggle, whose pass normally opens it, is off.
      */
-    public boolean renderBlockEntityInPlace(BlockEntity be,
-                                            RemixBlockEntityPass.BlockEntityRenderCall call) {
+    public boolean renderBlockEntityInPlace(BlockEntityRenderState state, CameraRenderState camera) {
         if (!initialized || remixApi == null || blockEntityPass == null || entitySubmitter == null) {
             return false;
         }
@@ -698,13 +711,16 @@ public class RemixRenderer {
         if (EntityRenderContext.get().isActive()) {
             return false;
         }
+        if (!(((RenderStateOwner) state).rtxremix$owner() instanceof BlockEntity be)) {
+            return false;
+        }
         Minecraft client = Minecraft.getInstance();
-        EntityRenderDispatcher dispatcher = client == null ? null : client.getEntityRenderDispatcher();
+        BlockEntityRenderDispatcher dispatcher = client == null ? null : client.getBlockEntityRenderDispatcher();
         if (dispatcher == null) {
             return false;
         }
         entitySubmitter.beginFrame();
-        blockEntityPass.capture(be, call, dispatcher, entitySubmitter);
+        blockEntityPass.capture(be, state, camera, dispatcher, entitySubmitter);
         return true;
     }
 
@@ -713,16 +729,15 @@ public class RemixRenderer {
      * the render that would have gone to OpenGL.
      *
      * <p>Called from {@code WorldRendererMixin}'s wrap of
-     * {@code BlockRenderManager.renderDamage}. Returning true tells the mixin to skip
-     * vanilla's call; returning false hands the crack back to vanilla, so an
+     * {@code submitBreakingBlockModel}. Returning true tells the mixin to skip
+     * vanilla's submit; returning false hands the crack back to vanilla, so an
      * uninitialised renderer or a disabled toggle still renders normally. The crack is
      * terrain decoration, so it follows the world toggle rather than the entity toggle.
      * The submitter's frame is opened here, idempotently, because retaining a part
      * requires an open frame and the entity pass, which normally opens it, runs only
      * while the entity toggle is on.
      */
-    public boolean renderBlockDamageInPlace(BlockPos pos, int stage,
-                                            RemixBlockDamagePass.BlockDamageRenderCall call) {
+    public boolean renderBlockDamageInPlace(BlockBreakingRenderState state, List<BlockStateModelPart> parts) {
         if (!initialized || remixApi == null || blockDamagePass == null || entitySubmitter == null) {
             return false;
         }
@@ -730,7 +745,7 @@ public class RemixRenderer {
             return false;
         }
         entitySubmitter.beginFrame();
-        blockDamagePass.capture(pos, stage, call, entitySubmitter);
+        blockDamagePass.capture(state.blockPos(), state.blockState(), state.progress(), parts, entitySubmitter);
         return true;
     }
 
@@ -790,8 +805,8 @@ public class RemixRenderer {
             }
             submitPendingParticleFrame();
 
-            Camera camera = client.gameRenderer.getMainCamera();
-            float tickDelta = client.getTimer().getGameTimeDeltaPartialTick(true);
+            Camera camera = client.gameRenderer.mainCamera();
+            float tickDelta = client.getDeltaTracker().getGameTimeDeltaPartialTick(true);
             particleFuture = startParticleRenderTask(tickDelta, ProfileScope.currentFrameIndex());
             
             perfTimer.begin(perfCamera);
@@ -801,7 +816,7 @@ public class RemixRenderer {
                 perfTimer.end(perfCamera);
             }
             
-            Vec3 cameraPos = camera.getPosition();
+            Vec3 cameraPos = camera.position();
 
             perfTimer.begin(perfLights);
             try (ProfileScope lightsScope = ProfileScope.begin("Lights")) {
@@ -1195,9 +1210,9 @@ public class RemixRenderer {
      */
     private void updateCamera(Camera camera, float tickDelta) {
         try {
-            Vec3 pos = camera.getPosition();
-            float pitch = camera.getXRot();
-            float yaw = camera.getYRot();
+            Vec3 pos = camera.position();
+            float pitch = camera.xRot();
+            float yaw = camera.yRot();
     
             float yawRad = (float) Math.toRadians(-yaw);
             float pitchRad = (float) Math.toRadians(pitch);
@@ -1215,7 +1230,7 @@ public class RemixRenderer {
             float upZ = rightX * forwardY - rightY * forwardX;
     
             Minecraft client = Minecraft.getInstance();
-            float worldFov = (float) client.gameRenderer.getFov(camera, tickDelta, true);
+            float worldFov = camera.getFov();
             int width = client.getWindow().getWidth();
             int height = client.getWindow().getHeight();
             float aspect = (float) width / (float) height;
@@ -1448,11 +1463,11 @@ public class RemixRenderer {
      * Captures vanilla's targeted-block outline for Remix submission later in
      * the same frame.
      */
-    public void captureBlockOutline(
-            WorldRenderContext context,
-            WorldRenderContext.BlockOutlineContext outline) {
+    public void captureBlockOutline(LevelRenderState levelState, BlockOutlineRenderState outline) {
         if (blockOutlinePass != null) {
-            blockOutlinePass.captureBlockOutline(context, outline);
+            Minecraft client = Minecraft.getInstance();
+            blockOutlinePass.captureBlockOutline(client.level, outline, levelState.cameraRenderState,
+                    client.gameRenderer.mainCamera().getFov());
         }
     }
     
@@ -1689,13 +1704,14 @@ public class RemixRenderer {
     }
 
     public void captureFirstPersonModel(
-            ItemInHandRenderer heldItemRenderer,
+            FirstPersonHandsAndItemsRenderer handsRenderer,
             float tickDelta,
             PoseStack matrices,
-            LocalPlayer player,
-            int light) {
+            PlayerRenderState playerState,
+            FirstPersonHandsAndItemsRenderState handsState,
+            CameraRenderState cameraState) {
         if (firstPersonPass != null && initialized && RtxRemixMod.isRtxEnabled()) {
-            firstPersonPass.capture(heldItemRenderer, tickDelta, matrices, player, light);
+            firstPersonPass.capture(handsRenderer, tickDelta, matrices, playerState, handsState, cameraState);
         }
     }
 }

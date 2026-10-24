@@ -21,6 +21,7 @@ import java.util.Iterator;
 import java.util.List;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.renderer.SpriteCoordinateExpander;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 
 
 /**
@@ -82,7 +83,8 @@ public abstract class ModelPartMixin {
             int overlay,
             int color) {
         VertexConsumer target = vertexConsumer instanceof SpriteCoordinateExpander wrapped
-                ? wrapped.delegate
+                        && wrapped.mapping() instanceof TextureAtlasSprite
+                ? wrapped.delegate()
                 : vertexConsumer;
         // Local reads first: the cuboid count and list type reject group and
         // multi-cuboid parts before the capture check pays for its thread-local lookup.

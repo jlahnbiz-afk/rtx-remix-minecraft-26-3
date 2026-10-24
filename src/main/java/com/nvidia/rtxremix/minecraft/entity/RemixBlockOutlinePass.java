@@ -15,11 +15,11 @@ import com.nvidia.rtxremix.minecraft.asset.RemixMaterialStore;
 import com.nvidia.rtxremix.minecraft.asset.RemixMesh;
 import com.nvidia.rtxremix.minecraft.asset.RemixMeshStore;
 import com.nvidia.rtxremix.minecraft.asset.RemixMeshSurface;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
+import net.minecraft.client.renderer.state.level.BlockOutlineRenderState;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,7 +32,7 @@ import java.util.List;
  * voxel-shape edge becomes a thin camera-facing ribbon. Its dynamic mesh is
  * recreated for each captured outline because the Remix scene API exposes
  * immutable mesh geometry. The instance is submitted only in frames where
- * Fabric reports a block outline. {@link InstanceCategoryBit#WORLD_UI} applies
+ * vanilla submits a block outline. {@link InstanceCategoryBit#WORLD_UI} applies
  * Remix's world-UI material treatment while preserving scene depth testing.
  */
 public final class RemixBlockOutlinePass implements AutoCloseable {
@@ -65,41 +65,34 @@ public final class RemixBlockOutlinePass implements AutoCloseable {
 
     /**
      * Starts a new vanilla world-render frame. The mesh remains allocated, but
-     * the captured outline does not carry over if Fabric omits the callback.
+     * the captured outline does not carry over if vanilla submits none.
      */
     public void beginFrame() {
         pendingOutline = null;
     }
 
     /**
-     * Captures the targeted block's vanilla outline shape. Shape evaluation
-     * happens during the Fabric callback so modded block shape behavior is
-     * preserved exactly at the point vanilla draws it.
+     * Captures the targeted block's vanilla outline shape. The shape is the one the
+     * level extractor evaluated for the outline state, so modded block shape
+     * behavior is preserved exactly as vanilla draws it.
      */
-    public void captureBlockOutline(
-            WorldRenderContext context,
-            WorldRenderContext.BlockOutlineContext outline) {
-        ClientLevel world = context.world();
-        BlockPos blockPos = outline.blockPos();
-        if (world == null
-                || outline.blockState().isAir()
-                || !world.getWorldBorder().isWithinBounds(blockPos)) {
+    public void captureBlockOutline(ClientLevel world, BlockOutlineRenderState outline,
+                                    CameraRenderState camera, double fovDegrees) {
+        BlockPos blockPos = outline.pos();
+        if (world == null || !world.getWorldBorder().isWithinBounds(blockPos)) {
             pendingOutline = null;
             return;
         }
 
-        VoxelShape shape = outline.blockState().getShape(
-                world,
-                blockPos,
-                CollisionContext.of(outline.entity()));
+        VoxelShape shape = outline.shape();
         if (shape.isEmpty()) {
             pendingOutline = null;
             return;
         }
 
-        double cameraX = outline.cameraX();
-        double cameraY = outline.cameraY();
-        double cameraZ = outline.cameraZ();
+        double cameraX = camera.pos.x;
+        double cameraY = camera.pos.y;
+        double cameraZ = camera.pos.z;
         double offsetX = blockPos.getX() - cameraX;
         double offsetY = blockPos.getY() - cameraY;
         double offsetZ = blockPos.getZ() - cameraZ;
@@ -126,8 +119,6 @@ public final class RemixBlockOutlinePass implements AutoCloseable {
             return;
         }
 
-        float tickDelta = context.tickCounter().getGameTimeDeltaPartialTick(true);
-        double fovDegrees = context.gameRenderer().getFov(context.camera(), tickDelta, true);
         fovDegrees = Math.max(MIN_FOV_DEGREES, Math.min(MAX_FOV_DEGREES, fovDegrees));
         double tanHalfFov = Math.tan(Math.toRadians(fovDegrees) * 0.5);
         double lineWidthPixels = OUTLINE_WIDTH_PIXELS * Math.max(

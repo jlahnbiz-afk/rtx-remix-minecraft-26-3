@@ -8,9 +8,12 @@ import com.nvidia.rtxremix.minecraft.terrain.capture.RegionBuilderRelease;
 import com.nvidia.rtxremix.minecraft.terrain.WorldRendererTerrainAccess;
 import com.nvidia.rtxremix.minecraft.profiling.WorldRendererProfilingAccess;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
+import com.nvidia.rtxremix.minecraft.RemixRenderer;
 import com.nvidia.rtxremix.minecraft.RtxRemixMod;
+import com.mojang.blaze3d.vertex.PoseStack;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.llamalad7.mixinextras.sugar.Local;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -26,6 +29,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.ArrayDeque;
+import java.util.List;
 import java.util.function.Consumer;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -36,9 +40,15 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.ViewArea;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
+import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
+import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.chunk.CompiledSectionMesh;
 import net.minecraft.client.renderer.chunk.RenderRegionCache;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
+import net.minecraft.client.renderer.state.level.BlockBreakingRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.ParticlesRenderState;
@@ -233,6 +243,7 @@ public abstract class WorldRendererMixin
         rtxremix$frameBlockEntityCount = levelRenderState.blockEntityRenderStates.size();
         rtxremix$frameBlockBreakingCount = levelRenderState.blockBreakingRenderStates.size();
         rtxremix$transitionProfilerPhase("preamble");
+        RtxRemixMod.onLevelRenderStart();
         RtxRemixMod mod = RtxRemixMod.getInstance();
         if (mod != null && mod.getRenderer() != null) {
             mod.getRenderer().beginEntityFrame();
@@ -241,6 +252,7 @@ public abstract class WorldRendererMixin
 
     @Inject(method = "render", at = @At("RETURN"))
     private void rtxremix$renderReturn(CallbackInfo ci) {
+        RtxRemixMod.onLevelRenderEnd();
         rtxremix$closeProfilerPhase();
         rtxremix$close(rtxremix$renderScope);
     }
@@ -273,6 +285,82 @@ public abstract class WorldRendererMixin
             Operation<Void> original) {
         if (!RtxRemixMod.isRemixWorldRendering()) {
             original.call(particles, collector, camera);
+        }
+    }
+
+    /**
+     * Captures each entity vanilla extracted at its own submit point, in place of the
+     * submit that would have gone to the frame graph; see
+     * {@code RemixRenderer.renderEntityInPlace}.
+     */
+    @WrapOperation(
+            method = "submitEntities",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;submit(Lnet/minecraft/client/renderer/entity/state/EntityRenderState;Lnet/minecraft/client/renderer/state/level/CameraRenderState;DDDLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;)V"
+            ))
+    private void rtxremix$captureEntityInPlace(
+            EntityRenderDispatcher dispatcher,
+            EntityRenderState state,
+            CameraRenderState camera,
+            double x,
+            double y,
+            double z,
+            PoseStack poseStack,
+            SubmitNodeCollector collector,
+            Operation<Void> original) {
+        RemixRenderer renderer = RtxRemixMod.renderer;
+        if (renderer == null || !renderer.renderEntityInPlace(state, camera, levelRenderState.worldPartialTicks)) {
+            original.call(dispatcher, state, camera, x, y, z, poseStack, collector);
+        }
+    }
+
+    /**
+     * Captures each block entity vanilla extracted at its own submit point, in place
+     * of the submit that would have gone to the frame graph; see
+     * {@code RemixRenderer.renderBlockEntityInPlace}.
+     */
+    @WrapOperation(
+            method = "submitBlockEntities",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher;submit(Lnet/minecraft/client/renderer/blockentity/state/BlockEntityRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/renderer/state/level/CameraRenderState;)V"
+            ))
+    private void rtxremix$captureBlockEntityInPlace(
+            BlockEntityRenderDispatcher dispatcher,
+            BlockEntityRenderState state,
+            PoseStack poseStack,
+            SubmitNodeCollector collector,
+            CameraRenderState camera,
+            Operation<Void> original) {
+        RemixRenderer renderer = RtxRemixMod.renderer;
+        if (renderer == null || !renderer.renderBlockEntityInPlace(state, camera)) {
+            original.call(dispatcher, state, poseStack, collector, camera);
+        }
+    }
+
+    /**
+     * Captures each block's breaking crack at vanilla's own submit point, in place of
+     * the submit that would have gone to the frame graph; see
+     * {@code RemixRenderer.renderBlockDamageInPlace}.
+     */
+    @WrapOperation(
+            method = "submitBlockDestroyAnimation",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/SubmitNodeCollector;submitBreakingBlockModel(Lcom/mojang/blaze3d/vertex/PoseStack;Ljava/util/List;IZ)V"
+            ))
+    private void rtxremix$captureBlockDamageInPlace(
+            SubmitNodeCollector collector,
+            PoseStack poseStack,
+            List<BlockStateModelPart> parts,
+            int progress,
+            boolean isBlockTranslucent,
+            Operation<Void> original,
+            @Local BlockBreakingRenderState state) {
+        RemixRenderer renderer = RtxRemixMod.renderer;
+        if (renderer == null || !renderer.renderBlockDamageInPlace(state, parts)) {
+            original.call(collector, poseStack, parts, progress, isBlockTranslucent);
         }
     }
 
