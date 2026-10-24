@@ -235,10 +235,11 @@ $script:PRISM_MIN_PORTABLE_VERSION = '9.1'
 # them as written. The Prism instance gets them without their heap sizes
 # (Get-PrismJvmArgs), which reach the game through its memory settings
 # (Get-PrismMemorySettings).
-$script:RECOMMENDED_JVM_ARGS = '-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M -XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump'
+$script:RECOMMENDED_JVM_ARGS = '-Xms16G -Xmx16G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M -XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump'
 
 # Every earlier RECOMMENDED_JVM_ARGS, oldest first, exactly as written here:
-# the sets from 2026-04-21, 2026-05-12 and 2026-09-03. Installers wrote each
+# the sets from 2026-04-21, 2026-05-12, 2026-09-03 and 2026-10-22, the last
+# the Minecraft launcher's 2 GB heap with G1GC. Installers wrote each
 # set to the Microsoft launcher profile as it is, and to the Prism instance
 # as it is or, once installers left the heap out of Prism's JVM args,
 # without its heap sizes. Sync-JvmArgs replaces any of those forms without
@@ -250,6 +251,7 @@ $script:PREVIOUS_RECOMMENDED_JVM_ARGS = @(
     '-XX:MaxRAMPercentage=100.0 -XX:+UseZGC -XX:+ZGenerational -Xss1M -XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump'
     '-XX:MaxRAMPercentage=100.0 -XX:SoftMaxHeapSize=8G -XX:+UseZGC -XX:+ZGenerational -XX:ZUncommitDelay=30 -Xss1M -XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump'
     '-Xmx12G -XX:SoftMaxHeapSize=8G -XX:+UseZGC -XX:+ZGenerational -XX:ZUncommitDelay=30 -Xss1M -XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump'
+    '-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M -XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump'
 )
 
 # Prism's own MinMemAlloc default, the instance's -Xms when the JVM args set none.
@@ -270,9 +272,9 @@ $script:PRISM_REFUSED_JVM_ARG = '-XX:PermSize=|-Xm[sx]|-XX-MaxHeapSize|-XX:Initi
 # The installer's record of the JvmArgs and memory it last wrote to a Prism
 # instance, a JSON file beside instance.cfg. It is how a later run tells
 # what the installer wrote from what the user set in Prism, which no value
-# alone can show: Prism fills the Memory group with its defaults, so a user
-# who sets only the maximum saves the same 512 MiB minimum the installer
-# writes. A file of its own, because Prism rewrites instance.cfg. Export
+# alone can show: Prism fills the Memory group with the sizes already set,
+# so a user who changes only the maximum saves the minimum the installer
+# wrote. A file of its own, because Prism rewrites instance.cfg. Export
 # copies it with instance.cfg, and removing the instance removes it.
 $script:PRISM_INSTALLER_RECORD = 'rtx-remix-installer.json'
 $script:PRISM_INSTALLER_RECORD_KEYS = @('JvmArgs', 'OverrideMemory', 'MinMemAlloc', 'MaxMemAlloc')
@@ -1822,7 +1824,7 @@ function Sync-JvmArgs {
         $record = Read-PrismInstallerRecord -Cfg $PrismCfg
         $recommended = Get-PrismJvmArgs -JvmArgs $script:RECOMMENDED_JVM_ARGS
         if ($current -eq $recommended) {
-            Write-Info 'Prism instance JVM args already match launcher defaults; no change.'
+            Write-Info 'Prism instance JVM args already match the recommended ones; no change.'
             Sync-PrismMemory -Cfg $PrismCfg -Record $record
             return
         }
@@ -1835,7 +1837,7 @@ function Sync-JvmArgs {
         if (Test-InstallerJvmArgs -JvmArgs $current -For Prism -Record $record) {
             $refused = @(Get-PrismRefusedJvmArgs -JvmArgs $current)
             $reason = if ($refused.Count -gt 0) { " Prism refuses to launch with their $($refused -join ' ')." } else { '' }
-            Write-Info "Replacing the JVM args an earlier installer wrote to the Prism instance with launcher defaults.$reason"
+            Write-Info "Replacing the JVM args an earlier installer wrote to the Prism instance with the recommended ones.$reason"
             Backup-PrismCfg -Cfg $PrismCfg
             Write-Info "Previous JVM args, kept in instance.cfg.bak: $current"
             Write-PrismJvmArgs -Cfg $PrismCfg
@@ -1858,7 +1860,7 @@ function Sync-JvmArgs {
         )
         if (Confirm-JvmArgsOverwrite -Label 'Prism instance' -Current $current -Recommended $recommended -Note $notes) {
             Write-PrismJvmArgs -Cfg $PrismCfg
-            Write-Info 'Prism instance JVM args updated to launcher defaults.'
+            Write-Info 'Prism instance JVM args updated to the recommended ones.'
             Write-PrismMemory -Cfg $PrismCfg
         } elseif ($refusal) {
             Write-Warn "Keeping existing Prism JVM args. $refusal Change them in the instance's Java settings in Prism."
@@ -1891,14 +1893,14 @@ function Sync-JvmArgs {
     }
     $profileObj = $json.profiles.$key
     $current = if ($profileObj.PSObject.Properties['javaArgs']) { $profileObj.javaArgs } else { $null }
-    if ($current -eq $script:RECOMMENDED_JVM_ARGS) { Write-Info 'Microsoft launcher profile JVM args already match launcher defaults; no change.'; return }
+    if ($current -eq $script:RECOMMENDED_JVM_ARGS) { Write-Info 'Microsoft launcher profile JVM args already match the recommended ones; no change.'; return }
     if (-not $current) {
         Write-Info 'Applying launcher default JVM args to Microsoft launcher profile.'
         Write-MsLauncherJvmArgs
         return
     }
     if (Test-InstallerJvmArgs -JvmArgs $current -For Microsoft) {
-        Write-Info 'Replacing the JVM args an earlier installer wrote to the Microsoft launcher profile with launcher defaults.'
+        Write-Info 'Replacing the JVM args an earlier installer wrote to the Microsoft launcher profile with the recommended ones.'
         Write-MsLauncherJvmArgs
         Write-Info "Previous JVM args, kept in launcher_profiles.json.bak: $current"
         return
@@ -1906,7 +1908,7 @@ function Sync-JvmArgs {
     if ($Unattended) { Write-Info 'Microsoft launcher JVM args differ; keeping existing (unattended).'; return }
     if (Confirm-JvmArgsOverwrite -Label "Microsoft launcher profile '$key'" -Current $current -Recommended $script:RECOMMENDED_JVM_ARGS) {
         Write-MsLauncherJvmArgs
-        Write-Info 'Microsoft launcher profile JVM args updated to launcher defaults.'
+        Write-Info 'Microsoft launcher profile JVM args updated to the recommended ones.'
     } else {
         Write-Info 'Keeping existing Microsoft launcher JVM args.'
     }
@@ -2266,15 +2268,15 @@ function Write-MsLauncherJvmArgs {
 function Confirm-JvmArgsOverwrite {
     param([string]$Label, [string]$Current, [string]$Recommended, [string[]]$Note)
     Write-Host ''
-    Write-Host "  $($script:ICON_WARN) $($script:C_YELLOW)$Label$($script:C_RESET) has custom JVM args that differ from the Minecraft $($script:MC_VERSION) launcher defaults."
+    Write-Host "  $($script:ICON_WARN) $($script:C_YELLOW)$Label$($script:C_RESET) has custom JVM args that differ from the recommended ones."
     Write-Host ''
     Write-Host "     $($script:C_BOLD)Current:$($script:C_RESET)     $($script:C_DIM)$Current$($script:C_RESET)"
     Write-Host "     $($script:C_BOLD)Recommended:$($script:C_RESET) $($script:C_DIM)$Recommended$($script:C_RESET)"
     Write-Host ''
-    Write-Host "  Minecraft $($script:MC_VERSION) launcher defaults use G1GC and a 2 GB heap. Custom"
-    Write-Host '  args may include profiling flags, test toggles, or more memory.'
+    Write-Host '  The recommended args use G1GC with a fixed 16 GB heap. Custom'
+    Write-Host '  args may include profiling flags, test toggles, or other memory.'
     foreach ($line in $Note) { if ($line) { Write-Host "  $line" } }
-    return (Confirm-YesNo -Prompt 'Overwrite current JVM args with launcher defaults?' -DefaultNo)
+    return (Confirm-YesNo -Prompt 'Overwrite current JVM args with the recommended ones?' -DefaultNo)
 }
 
 function Initialize-Prism {

@@ -529,9 +529,9 @@ def test_start_gives_prism_the_heap_of_the_last_xmx(launcher, fake_prism):
     launcher.start(LaunchRequest(arch="win64", env={}))
     assert f"MaxMemAlloc={recommended_heap_mib()}" in instance_cfg(launcher).splitlines()
     fake_prism.process = None
-    launcher.config = {"launch": {"jvmArgs": ["-Xmx16G"]}}
+    launcher.config = {"launch": {"jvmArgs": ["-Xmx24G"]}}
     launcher.start(LaunchRequest(arch="win64", env={}))
-    assert "MaxMemAlloc=16384" in instance_cfg(launcher).splitlines()
+    assert "MaxMemAlloc=24576" in instance_cfg(launcher).splitlines()
 
 
 def test_start_blocks_on_a_configured_heap_size_before_touching_prism(launcher, fake_prism):

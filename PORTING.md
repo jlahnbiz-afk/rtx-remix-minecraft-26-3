@@ -237,8 +237,15 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
   `java-runtime-epsilon` を優先します。既存の Prism インスタンスを再利用する
   ときは、Minecraft と Fabric Loader の版が違えば `mmc-pack.json` を書き直し
   ます (`Update-PrismInstanceComponents`)。ARM64 で別の版の Java にピン留め
-  されていれば、管理 JDK に付け替えます。`RECOMMENDED_JVM_ARGS` は変えて
-  いません (26.3 のメタデータも `HeapDumpPath` を同じ綴りで渡しています)。
+  されていれば、管理 JDK に付け替えます。
+- ヒープはフォークの判断で、最小・最大とも 16 GB に固定しました
+  (`-Xms16G -Xmx16G`)。上流はランチャー既定の 2 GB でした。G1 の設定と
+  `HeapDumpPath` (26.3 のメタデータも同じ綴り) はそのままです。
+  `RECOMMENDED_JVM_ARGS` と `build.gradle` の `loom.runs.client.vmArgs` を
+  揃えて変え、2 GB の組は `PREVIOUS_RECOMMENDED_JVM_ARGS` に足したので、以前の
+  インストーラーが書いた設定は確認なしで 16 GB に置き換わります。Prism では
+  インスタンスのメモリ設定が最小 16384 MiB、最大 16384 MiB になります。
+  Prism のメモリ設定で自分で選んだ値は、これまでどおり残ります。
 - `tools/`: `GAME_JAVA_MAJOR = 25`。ゲームウィンドウの判定はタイトル
   `Minecraft 26.3` に合うよう `^Minecraft\*? \d+\.\d` に広げました。
 - プロファイラのスパン名 (`MinecraftClient.render.*`、`WorldRenderer.render`
@@ -309,6 +316,10 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
   スパン名は、上流との差分と記録の比較のために 1.21.1 時代の名前のままです。
   コメントとドキュメントの中の vanilla のクラス名は 26.3 の名前に直しました。
 - Prism のフォールバック版 (`PRISM_FALLBACK_VERSION`) は 11.1.1 にしました。
+- `RECOMMENDED_JVM_ARGS` は 16 GB 固定にしています (上流は 2 GB)。上流が
+  この行を変えたら、上流の新しい組を `PREVIOUS_RECOMMENDED_JVM_ARGS` に足し、
+  ヒープを 16 GB にした組を現行にしてください。`build.gradle` の `vmArgs` も
+  同じ値にします。
   チェックサムのサイドカーがないため、SHA-256 はリリースの zip から計算しています。
 - 版や手順を書いたドキュメント (`README.md`、`docs/`、`tools/docs/`、
   `packaging/*.md`、`CONTRIBUTING.md`、`THIRD_PARTY_NOTICES.md`、

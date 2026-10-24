@@ -135,8 +135,22 @@ def heap_mib(jvm_args: list[str]) -> int:
     return int(match.group(1)) * {"m": 1, "g": 1024}[match.group(2).lower()]
 
 
+def min_heap_mib(jvm_args: list[str]) -> int:
+    """The minimum the installer writes for `jvm_args`: the last -Xms in MiB, or Prism's default without one, never
+    above the maximum."""
+    sizes = [arg.removeprefix("-Xms") for arg in jvm_args if arg.startswith("-Xms")]
+    if not sizes:
+        return min(PRISM_DEFAULT_MIN_MIB, heap_mib(jvm_args))
+    match = re.fullmatch(r"(\d+)([mMgG])", sizes[-1])
+    assert match is not None, sizes[-1]
+    return min(int(match.group(1)) * {"m": 1, "g": 1024}[match.group(2).lower()], heap_mib(jvm_args))
+
+
 RECOMMENDED_HEAP_MIB = heap_mib(RECOMMENDED.split())
-INSTALLER_MEMORY = f"OverrideMemory=true\r\nMinMemAlloc=512\r\nMaxMemAlloc={RECOMMENDED_HEAP_MIB}\r\n"
+RECOMMENDED_MIN_HEAP_MIB = min_heap_mib(RECOMMENDED.split())
+INSTALLER_MEMORY = (
+    f"OverrideMemory=true\r\nMinMemAlloc={RECOMMENDED_MIN_HEAP_MIB}\r\nMaxMemAlloc={RECOMMENDED_HEAP_MIB}\r\n"
+)
 
 
 def prism_refuses_jvm_args(jvm_args: str) -> bool:
@@ -212,7 +226,7 @@ def as_installers_wrote(jvm_args: str) -> str:
 
 
 # The recommended JVM args earlier installers wrote, oldest first, by the date packaging/installer.ps1 changed them.
-# Prism refuses the 2026-09-03 set for its -Xmx12G.
+# Prism refuses the 2026-09-03 and 2026-10-22 sets for their -Xmx.
 PREVIOUS_RECOMMENDED = {
     "2026-04-21": (
         "-XX:MaxRAMPercentage=100.0 -XX:+UseZGC -XX:+ZGenerational -Xss1M "
@@ -224,6 +238,11 @@ PREVIOUS_RECOMMENDED = {
     ),
     "2026-09-03": (
         "-Xmx12G -XX:SoftMaxHeapSize=8G -XX:+UseZGC -XX:+ZGenerational -XX:ZUncommitDelay=30 -Xss1M "
+        "-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump"
+    ),
+    "2026-10-22": (
+        "-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 "
+        "-XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M "
         "-XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump"
     ),
 }
@@ -242,8 +261,8 @@ def next_recommended(*, gc: bool, heap: bool) -> str:
     if heap:
         args = [f"-Xmx{RECOMMENDED_HEAP_MIB * 2}m" if arg.startswith("-Xmx") else arg for arg in args]
     if gc:
-        args = [arg for arg in args if arg.startswith(("-Xmx", "-XX:HeapDumpPath="))]
-        args[1:1] = ["-XX:+UseZGC", "-XX:+ZGenerational"]
+        args = [arg for arg in args if arg.startswith(("-Xms", "-Xmx", "-XX:HeapDumpPath="))]
+        args[-1:-1] = ["-XX:+UseZGC", "-XX:+ZGenerational"]
     return " ".join(args)
 
 
@@ -409,7 +428,7 @@ def test_new_instance_launches_with_the_recommended_heap(sync: Sync, unattended:
     assert cfg["JvmArgs"] == RECOMMENDED_FOR_PRISM
     assert not prism_refuses_jvm_args(cfg["JvmArgs"])
     assert cfg["OverrideMemory"] == "true"
-    assert cfg["MinMemAlloc"] == "512"
+    assert cfg["MinMemAlloc"] == str(RECOMMENDED_MIN_HEAP_MIB)
     assert cfg["MaxMemAlloc"] == str(RECOMMENDED_HEAP_MIB)
     assert launch_heap_mib(text) == RECOMMENDED_HEAP_MIB
     assert PROMPTED not in output
@@ -420,7 +439,7 @@ def test_matching_args_get_the_recommended_heap_on_upgrade(sync: Sync):
 
     assert f'JvmArgs="{RECOMMENDED_FOR_PRISM}"' in text.splitlines()
     cfg = cfg_values(text)
-    assert cfg["MinMemAlloc"] == "512"
+    assert cfg["MinMemAlloc"] == str(RECOMMENDED_MIN_HEAP_MIB)
     assert cfg["MaxMemAlloc"] == str(RECOMMENDED_HEAP_MIB)
     assert launch_heap_mib(text) == RECOMMENDED_HEAP_MIB
 
@@ -501,7 +520,7 @@ def test_the_next_installer_updates_an_instance_this_one_set_up_without_asking(
     next_heap_mib = heap_mib(next_args.split())
     assert {key: cfg[key] for key in MEMORY_KEYS} == {
         "OverrideMemory": "true",
-        "MinMemAlloc": "512",
+        "MinMemAlloc": str(min_heap_mib(next_args.split())),
         "MaxMemAlloc": str(next_heap_mib),
     }
     assert launch_heap_mib(text) == next_heap_mib
@@ -531,7 +550,7 @@ def test_the_installer_records_what_it_writes_to_a_new_instance(sync: Sync, tmp_
         "formatVersion": 1,
         "JvmArgs": RECOMMENDED_FOR_PRISM,
         "OverrideMemory": "true",
-        "MinMemAlloc": "512",
+        "MinMemAlloc": str(RECOMMENDED_MIN_HEAP_MIB),
         "MaxMemAlloc": str(RECOMMENDED_HEAP_MIB),
     }
     assert memory_of(text) == {key: recorded(tmp_path)[key] for key in MEMORY_KEYS}
@@ -562,7 +581,7 @@ def test_a_user_who_goes_back_to_an_earlier_heap_keeps_it(sync: Sync):
     moved, _ = sync(configured, unattended=True, next_jvm_args=next_args)
     assert cfg_values(moved)["MaxMemAlloc"] == str(heap_mib(next_args.split()))
     # The user then picks the earlier heap again in Prism.
-    chosen = saved_by_prism(prism_form(next_args), own_memory(512, RECOMMENDED_HEAP_MIB))
+    chosen = saved_by_prism(prism_form(next_args), own_memory(RECOMMENDED_MIN_HEAP_MIB, RECOMMENDED_HEAP_MIB))
 
     first, output = sync(chosen, unattended=True, next_jvm_args=next_args)
     second, _ = sync(first, unattended=True, next_jvm_args=next_args)
@@ -591,7 +610,12 @@ UNREADABLE_RECORDS = {
     "not-json": "{JvmArgs=",
     "not-an-object": "[]",
     "not-strings": json.dumps(
-        {"formatVersion": 1, "OverrideMemory": True, "MinMemAlloc": 512, "MaxMemAlloc": RECOMMENDED_HEAP_MIB}
+        {
+            "formatVersion": 1,
+            "OverrideMemory": True,
+            "MinMemAlloc": RECOMMENDED_MIN_HEAP_MIB,
+            "MaxMemAlloc": RECOMMENDED_HEAP_MIB,
+        }
     ),
     "format-version-2": json.dumps({"formatVersion": 2, **memory_of(INSTALLER_MEMORY)}),
     "no-format-version": json.dumps(memory_of(INSTALLER_MEMORY)),
@@ -625,16 +649,19 @@ def test_an_unreadable_record_still_lets_the_installer_set_memory_where_none_is_
 
 @pytest.mark.parametrize("record", [True, False], ids=["recorded", "not-recorded"])
 def test_the_record_marks_args_the_installer_wrote_that_the_list_misses(sync: Sync, tmp_path: Path, record: bool):
-    next_args = NEXT_RECOMMENDED["gc-list"]
-    configured, _ = sync(NEW_INSTANCE, unattended=True)
+    # An installer writes a set no other installer lists. It must differ from every listed set without its heap, the
+    # form Prism holds, so not the current set, which differs from the 2026-10-22 set only in its heap.
+    written = NEXT_RECOMMENDED["gc-list"]
+    assert prism_form(written) not in {prism_form(listed) for listed in INSTALLER_SETS.values()}
+    configured, _ = sync(NEW_INSTANCE, unattended=True, next_jvm_args=written, unlisted=True)
     if not record:
         (tmp_path / RECORD).unlink()
 
-    text, output = sync(configured, next_jvm_args=next_args, unlisted=True)
+    text, output = sync(configured, next_jvm_args=RECOMMENDED, unlisted=True)
 
     # Without its record, the next installer cannot tell its predecessor's args from the user's, so it asks.
     assert (PROMPTED in output) is not record
-    assert cfg_values(text)["JvmArgs"] == (prism_form(next_args) if record else RECOMMENDED_FOR_PRISM)
+    assert cfg_values(text)["JvmArgs"] == (RECOMMENDED_FOR_PRISM if record else prism_form(written))
 
 
 def test_export_takes_the_record_with_instance_cfg_and_leaves_the_backup(tmp_path: Path):
@@ -950,7 +977,7 @@ def test_every_recommended_jvm_args_in_git_history_is_the_installers(previous_re
 
 def test_recommended_args_give_the_developer_tools_memory(memory_settings: MemorySettings):
     # The developer tools' Prism instance writes the same memory for these arguments.
-    assert memory_settings(RECOMMENDED) == {"OverrideMemory": "true", "MinMemAlloc": "512", "MaxMemAlloc": "2048"}
+    assert memory_settings(RECOMMENDED) == {"OverrideMemory": "true", "MinMemAlloc": "16384", "MaxMemAlloc": "16384"}
 
 
 @pytest.mark.parametrize(

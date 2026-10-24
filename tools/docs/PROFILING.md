@@ -258,7 +258,7 @@ timeline and native stack rather than blaming every phase that waited on it.
 Small stop-the-world pause totals do not rule out GC-related frame cost.
 `jfr_gc`, `jfr_summary`, `jfr_timeline --gc`, and `jfr_compare --mode gc` use
 pause/collection events, not a complete account of concurrent collector work.
-The launch arguments select G1 with a 2 GB heap; see
+The launch arguments select G1 with a fixed 16 GB heap; see
 [JVM Arguments](../../docs/TUNING.md#jvm-arguments). Between its young and
 mixed collection pauses, G1 marks the heap and rebuilds remembered sets on its
 own threads. List a recording's concurrent phases, then filter by a name the

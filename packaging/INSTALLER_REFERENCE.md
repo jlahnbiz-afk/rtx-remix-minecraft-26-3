@@ -81,7 +81,7 @@ A memory choice saved in the Memory group of the instance's Java settings in
 Prism is kept, whether that is the instance's own memory or, with Memory
 unticked, Prism's global memory. That holds even when your choice equals what
 some set of recommended arguments asks for, such as a 12 GB maximum, or 2 GB
-after the recommended heap has grown. Memory stays the installer's only while
+after the recommended heap has grown to 16 GB. Memory stays the installer's only while
 it is exactly what the installer's record says it wrote. Such memory follows
 the recommended heap without asking, and `instance.cfg.bak` keeps the previous
 file. Where the instance has no memory setting at all, because Memory was never
@@ -93,8 +93,8 @@ game more memory in Prism, raise the maximum in that Memory group, not with an
 The installer's record is `rtx-remix-installer.json`, beside `instance.cfg` in
 the instance folder. It holds the JVM arguments and memory the installer last
 wrote to the instance, which is how a later run tells its own settings from
-yours. No value alone can show that: Prism fills the Memory group with its
-defaults, so the 512 MiB minimum the installer writes is also what you save
+yours. No value alone can show that: Prism fills the Memory group with the
+sizes already set, so the minimum the installer writes is also what you save
 when you change only the maximum. Export copies the record with `instance.cfg`,
 and removing the instance removes it. Without the record, or when it cannot be
 read, the instance's memory counts as yours.
