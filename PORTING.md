@@ -172,7 +172,10 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
 ### パーティクル、空、雲、光
 
 - パーティクルは `ParticleGroup` と `SingleQuadParticle` の `Layer` から
-  地形アトラス用とパーティクルアトラス用に振り分けます。
+  地形、パーティクル、アイテムの各アトラス用に振り分けます。26.3 でアイテム用
+  アトラスが独立したので、`ParticleAtlasManager` がアイテムアトラスの
+  マテリアルも作り、アイテムが割れたときの破片などはブロックの破片と同じく
+  アルファテストで描きます。
 - 空は `SkyRenderState` (角度は度からラジアンへ) と `DimensionType.Skybox` で
   分岐します。星は 26.3 で CPU の頂点列がなくなったので、同じ種 (10842) で
   CPU 側に作り直しています。
@@ -255,14 +258,12 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
 
 優先度の高い順です。
 
-1. **アイテムアトラスのパーティクル**: アイテムが割れるときなど、アイテム用
-   アトラスを使うパーティクルは Remix に送っていません。
-2. **アニメーションするスプライトの余白**: 水や溶岩などは毎フレーム本体だけを
+1. **アニメーションするスプライトの余白**: 水や溶岩などは毎フレーム本体だけを
    差し替えるので、余白は最初のフレームの端の画素のままです。遠くで縁の色が
    わずかにずれる程度で、黒い線にはなりません。
-3. **Fabric Renderer API のメッシュ**: FRAPI のメッシュを持つアイテムやブロックは
+2. **Fabric Renderer API のメッシュ**: FRAPI のメッシュを持つアイテムやブロックは
    vanilla の経路で提出されたものだけを取り込みます。
-4. **性能面で未移植のもの** (正しさには影響しない):
+3. **性能面で未移植のもの** (正しさには影響しない):
    - 可視性ウォークの割り当てなし版と粗い視錐台インデックス
      (`-Drtxremix.vanillaVisibilityWalk`、`-Drtxremix.logVisibleSet` も消えた)。
    - チャンク読み込み時の近傍の再ビルド抑制 (`NeighbourReflagFilter`)。26.3 では
@@ -274,9 +275,9 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
    - モデル選択の割り当て削減 (`WeightedBakedModelMixin`、
      `MultipartBakedModelMixin`)。
    - vanilla の雲描画の抑止 (Remix が置き換える GL のフレームに描かれるだけ)。
-5. **Prism のフォールバック版** (`PRISM_FALLBACK_VERSION = '9.1'`): 26.3 を
+4. **Prism のフォールバック版** (`PRISM_FALLBACK_VERSION = '9.1'`): 26.3 を
    起動できるかは未確認です。GitHub から最新版を取れる通常の経路では使われません。
-6. **Java ソースのコメント**: Yarn 時代の名前がコメントに残っている箇所が
+5. **Java ソースのコメント**: Yarn 時代の名前がコメントに残っている箇所が
    あります。ドキュメント (`docs/`、`tools/docs/`、`CONTRIBUTING.md`) は
    26.3 の名前に直しました。
 

@@ -69,6 +69,11 @@ public class RemixParticleRenderer {
     private static final int BLEND_PARTICLE = 1;
     private static final int BLEND_TERRAIN = 2;
 
+    // The atlas a particle samples, which picks its material.
+    private static final int SOURCE_TERRAIN = 0;
+    private static final int SOURCE_PARTICLES = 1;
+    private static final int SOURCE_ITEMS = 2;
+
     private final RemixRenderer renderer;
     private final ParticleAtlasManager atlasManager;
     private final HashMap<BucketKey, DynamicBucket> buckets = new HashMap<>();
@@ -135,8 +140,10 @@ public class RemixParticleRenderer {
         ParticleBillboardBasis billboardBasis = ParticleBillboardBasis.fromCamera(qx, qy, qz, qw);
         DynamicBucket terrainBucket = null;
         DynamicBucket particleBucket = null;
+        DynamicBucket itemBucket = null;
         boolean terrainResolved = false;
         boolean particleResolved = false;
+        boolean itemResolved = false;
 
         for (Particle particle : ((ParticleGroupAccessor) group).rtxremix$particles()) {
             if (!(particle instanceof SingleQuadParticle)) continue;
@@ -147,21 +154,27 @@ public class RemixParticleRenderer {
             SpriteBillboardParticleAccessor quad = (SpriteBillboardParticleAccessor) particle;
             // Each particle names the atlas it samples. Block-breaking and similar
             // particles sample the block atlas, which terrain's cutout material covers;
-            // item particles sample the item atlas, which has no Remix material yet.
+            // item particles sample the item atlas and are drawn like block-breaking ones.
             Identifier atlas = quad.rtxremix$getLayer().textureAtlasLocation();
             DynamicBucket bucket;
             if (TextureAtlas.LOCATION_BLOCKS.equals(atlas)) {
                 if (!terrainResolved) {
-                    terrainBucket = resolveBucket(true, blockTexMgr);
+                    terrainBucket = resolveBucket(SOURCE_TERRAIN, blockTexMgr);
                     terrainResolved = true;
                 }
                 bucket = terrainBucket;
             } else if (TextureAtlas.LOCATION_PARTICLES.equals(atlas)) {
                 if (!particleResolved) {
-                    particleBucket = resolveBucket(false, blockTexMgr);
+                    particleBucket = resolveBucket(SOURCE_PARTICLES, blockTexMgr);
                     particleResolved = true;
                 }
                 bucket = particleBucket;
+            } else if (TextureAtlas.LOCATION_ITEMS.equals(atlas)) {
+                if (!itemResolved) {
+                    itemBucket = resolveBucket(SOURCE_ITEMS, blockTexMgr);
+                    itemResolved = true;
+                }
+                bucket = itemBucket;
             } else {
                 continue;
             }
@@ -310,22 +323,27 @@ public class RemixParticleRenderer {
         meshUpdatesThisFrame = 0;
     }
 
-    /** The bucket for terrain-atlas or particle-atlas particles, or null without a live material. */
-    private DynamicBucket resolveBucket(boolean isTerrain, BlockTextureManager blockTexMgr) {
-        RemixMaterial material = resolveMaterial(isTerrain, blockTexMgr);
+    /** The bucket for particles sampling one atlas, or null without a live material. */
+    private DynamicBucket resolveBucket(int source, BlockTextureManager blockTexMgr) {
+        RemixMaterial material = resolveMaterial(source, blockTexMgr);
         if (material == null || !material.isAlive()) return null;
-        int categoryFlags = isTerrain ? 0 : InstanceCategoryBit.PARTICLE;
-        int blendKind = isTerrain ? BLEND_TERRAIN : BLEND_PARTICLE;
+        // Only particle-atlas sprites are the soft, glowing kind the particle category lights;
+        // block and item shards are alpha-tested pieces of solid things.
+        boolean particleAtlas = source == SOURCE_PARTICLES;
+        int categoryFlags = particleAtlas ? InstanceCategoryBit.PARTICLE : 0;
+        int blendKind = particleAtlas ? BLEND_PARTICLE : BLEND_TERRAIN;
         return getOrCreateBucket(
                 new BucketKey(material.getHandle(), categoryFlags, blendKind),
                 material, categoryFlags, blendKind);
     }
 
-    private RemixMaterial resolveMaterial(boolean isTerrain, BlockTextureManager blockTexMgr) {
-        if (isTerrain) {
-            return blockTexMgr != null ? blockTexMgr.getAtlasMaterial(BlockTextureManager.L_CUTOUT) : null;
-        }
-        return atlasManager.getMaterial();
+    private RemixMaterial resolveMaterial(int source, BlockTextureManager blockTexMgr) {
+        return switch (source) {
+            case SOURCE_TERRAIN -> blockTexMgr != null
+                    ? blockTexMgr.getAtlasMaterial(BlockTextureManager.L_CUTOUT) : null;
+            case SOURCE_ITEMS -> atlasManager.getItemMaterial();
+            default -> atlasManager.getMaterial();
+        };
     }
 
     private DynamicBucket getOrCreateBucket(BucketKey key, RemixMaterial material,

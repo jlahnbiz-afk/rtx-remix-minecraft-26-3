@@ -31,17 +31,17 @@ import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.resources.Identifier;
-import net.minecraft.server.packs.resources.ResourceManager;
 
 /**
- * Captures the particle sprite atlas and builds parallel LabPBR atlas textures
- * plus a single atlas-wide {@link MaterialInfoOpaqueEXT} that carries its own
- * alpha test rather than draw-call alpha state. Blending is chosen per instance
- * by {@link RemixParticleRenderer} through {@link InstanceInfoBlendEXT}, so one
- * material serves both the alpha-tested and the blended particle passes.
+ * Captures the particle and item sprite atlases and builds, for each, parallel
+ * LabPBR atlas textures plus one atlas-wide {@link MaterialInfoOpaqueEXT} that
+ * carries its own alpha test rather than draw-call alpha state. Blending is chosen
+ * per instance by {@link RemixParticleRenderer} through {@link InstanceInfoBlendEXT},
+ * so one material serves both the alpha-tested and the blended particle passes.
  *
- * <p>Mirrors {@link BlockTextureManager#buildAtlasMaterials} but operates on
- * the particle atlas ({@code SpriteAtlasTexture.PARTICLE_ATLAS_TEXTURE}).
+ * <p>Mirrors {@link BlockTextureManager#buildAtlasMaterials} but operates on the
+ * particle atlas and on the item atlas, which item particles such as the shards of
+ * a broken tool or an eaten apple sample.
  *
  * <p>TERRAIN_SHEET particles reuse materials from {@link BlockTextureManager}
  * rather than creating new ones here.
@@ -56,6 +56,7 @@ public class ParticleAtlasManager {
     private final List<RemixMaterial> managedMaterials = new ArrayList<>();
 
     private RemixMaterial material;
+    private RemixMaterial itemMaterial;
 
     private boolean initialized;
     private boolean initFailed;
@@ -71,129 +72,154 @@ public class ParticleAtlasManager {
             Minecraft client = Minecraft.getInstance();
             if (api == null || client == null || client.getTextureManager() == null) return;
 
-            AbstractTexture tex = client.getTextureManager()
-                    .getTexture(TextureAtlas.LOCATION_PARTICLES);
-            if (!(tex instanceof TextureAtlas atlas)) return;
+            TextureAtlas particles = stitchedAtlas(client, TextureAtlas.LOCATION_PARTICLES);
+            if (particles == null) return;
 
-            SpriteAtlasAccessor acc = (SpriteAtlasAccessor) atlas;
-            int atlasW = acc.getWidth();
-            int atlasH = acc.getHeight();
-            if (atlasW == 0 || atlasH == 0) {
-                LOGGER.warn("Particle atlas dimensions are zero, deferring init");
-                return;
-            }
-
-            Map<Identifier, TextureAtlasSprite> sprites = acc.getSprites();
-            if (sprites == null || sprites.isEmpty()) {
-                LOGGER.warn("Particle atlas has no sprites, deferring init");
-                return;
-            }
-
-            byte[] albedoRGBA = BlockTextureManager.stitchAtlasRGBA(atlas);
-
-            int pixels = atlasW * atlasH;
-            byte[] normalAtlas    = new byte[pixels * 4];
-            byte[] heightAtlas    = new byte[pixels];
-            byte[] roughnessAtlas = new byte[pixels];
-            byte[] metallicAtlas  = new byte[pixels];
-            byte[] emissiveAtlas  = new byte[pixels * 4];
-
-            Arrays.fill(heightAtlas, (byte) 255);
-            Arrays.fill(roughnessAtlas, (byte) 180);
-            for (int i = 0; i < pixels; i++) {
-                int idx4 = i * 4;
-                normalAtlas[idx4]     = (byte) 128;
-                normalAtlas[idx4 + 1] = (byte) 128;
-                normalAtlas[idx4 + 2] = (byte) 255;
-                normalAtlas[idx4 + 3] = (byte) 255;
-            }
-
-            boolean hasAnyNormal = false, hasAnyHeight = false, hasAnyEmissive = false;
-            ResourceManager rm = client.getResourceManager();
-            LabPBRConverter.VariantCache labPBRVariants = LabPBRConverter.buildVariantCache(rm);
-
-            for (var entry : sprites.entrySet()) {
-                Identifier spriteId = entry.getKey();
-                TextureAtlasSprite sprite = entry.getValue();
-                int pixX = AtlasSprites.contentX(sprite), pixY = AtlasSprites.contentY(sprite);
-                int pixW = sprite.contents().width();
-                int pixH = sprite.contents().height();
-
-                Identifier texId = Identifier.fromNamespaceAndPath(spriteId.getNamespace(),
-                        "particle/" + spriteId.getPath());
-                NativeImage nImg = labPBRVariants.loadVariant(texId, "_n");
-                NativeImage sImg = labPBRVariants.loadVariant(texId, "_s");
-                try {
-                    if (nImg != null) {
-                        LabPBRConverter.blitNormal(normalAtlas, atlasW, nImg, pixX, pixY, pixW, pixH);
-                        LabPBRConverter.blitHeight(heightAtlas, atlasW, nImg, pixX, pixY, pixW, pixH);
-                        LabPBRConverter.applyAO(albedoRGBA, atlasW, nImg, pixX, pixY, pixW, pixH);
-                        hasAnyNormal = true;
-                        hasAnyHeight = true;
-                    }
-                    if (sImg != null) {
-                        LabPBRConverter.blitRoughness(roughnessAtlas, atlasW, sImg, pixX, pixY, pixW, pixH);
-                        LabPBRConverter.blitMetallic(metallicAtlas, atlasW, sImg, pixX, pixY, pixW, pixH);
-                    }
-                    if (sImg != null && LabPBRConverter.hasEmissiveData(sImg)) {
-                        LabPBRConverter.blitEmissive(emissiveAtlas, atlasW, albedoRGBA, sImg,
-                                pixX, pixY, pixW, pixH, 0);
-                        hasAnyEmissive = true;
-                    }
-                } finally {
-                    if (nImg != null) nImg.close();
-                    if (sImg != null) sImg.close();
-                }
-            }
-
-            AtlasSprites.Padding padding = AtlasSprites.padding(sprites.values(), atlasW, atlasH);
-            padding.fill(albedoRGBA, 4);
-            padding.fill(normalAtlas, 4);
-            padding.fill(heightAtlas, 1);
-            padding.fill(roughnessAtlas, 1);
-            padding.fill(metallicAtlas, 1);
-            padding.fill(emissiveAtlas, 4);
-
-            RemixTexture albedoTex = uploadTexture("particle_atlas_albedo",
-                    albedoRGBA, atlasW, atlasH, TextureFormat.RGBA8_UNORM, TexturePurpose.COLOR);
-
-            RemixTexture normalTex = hasAnyNormal
-                    ? uploadTexture("particle_atlas_normal", normalAtlas, atlasW, atlasH,
-                            TextureFormat.RGBA8_UNORM, TexturePurpose.NORMAL_DX) : null;
-            RemixTexture heightTex = hasAnyHeight
-                    ? uploadTexture("particle_atlas_height", heightAtlas, atlasW, atlasH,
-                            TextureFormat.R8_UNORM, TexturePurpose.HEIGHTMAP) : null;
-            RemixTexture roughnessTex = uploadTexture("particle_atlas_roughness",
-                    roughnessAtlas, atlasW, atlasH, TextureFormat.R8_UNORM, TexturePurpose.DATA);
-            RemixTexture metallicTex = uploadTexture("particle_atlas_metallic",
-                    metallicAtlas, atlasW, atlasH, TextureFormat.R8_UNORM, TexturePurpose.DATA);
-            RemixTexture emissiveTex = hasAnyEmissive
-                    ? uploadTexture("particle_atlas_emissive", emissiveAtlas, atlasW, atlasH,
-                            TextureFormat.RGBA8_UNORM, TexturePurpose.COLOR) : null;
-
-            if (albedoTex == null) {
-                LOGGER.error("Failed to upload particle atlas albedo, aborting");
-                initFailed = true;
-                return;
-            }
-
-            material = buildOpaqueMaterial(albedoTex, normalTex, heightTex,
-                    roughnessTex, metallicTex, emissiveTex);
-
+            LabPBRConverter.VariantCache labPBRVariants =
+                    LabPBRConverter.buildVariantCache(client.getResourceManager());
+            // Particle sprites are named without their folder; item atlas sprites carry it.
+            material = buildAtlasMaterial(particles, "particle_atlas", "particle/", labPBRVariants);
             if (material == null) {
                 LOGGER.error("Failed to create particle material(s)");
                 initFailed = true;
                 return;
             }
 
-            initialized = true;
-            LOGGER.info("Particle atlas initialized ({}x{}, {} sprites, normal={}, height={}, emissive={})",
-                    atlasW, atlasH, sprites.size(), hasAnyNormal, hasAnyHeight, hasAnyEmissive);
+            // Item particles are skipped without it, so the particle material alone still serves.
+            TextureAtlas items = stitchedAtlas(client, TextureAtlas.LOCATION_ITEMS);
+            itemMaterial = items == null
+                    ? null : buildAtlasMaterial(items, "item_particle_atlas", "", labPBRVariants);
+            if (itemMaterial == null) {
+                LOGGER.warn("No item atlas material; item particles are not drawn");
+            }
 
+            initialized = true;
         } catch (Exception e) {
             LOGGER.error("Particle atlas init failed", e);
             initFailed = true;
         }
+    }
+
+    /** The atlas once Minecraft has stitched it, or null to try again on a later frame. */
+    private static TextureAtlas stitchedAtlas(Minecraft client, Identifier atlasId) {
+        AbstractTexture tex = client.getTextureManager().getTexture(atlasId);
+        if (!(tex instanceof TextureAtlas atlas)) return null;
+        SpriteAtlasAccessor acc = (SpriteAtlasAccessor) atlas;
+        if (acc.getWidth() == 0 || acc.getHeight() == 0) {
+            LOGGER.warn("Atlas {} dimensions are zero, deferring init", atlasId);
+            return null;
+        }
+        Map<Identifier, TextureAtlasSprite> sprites = acc.getSprites();
+        if (sprites == null || sprites.isEmpty()) {
+            LOGGER.warn("Atlas {} has no sprites, deferring init", atlasId);
+            return null;
+        }
+        return atlas;
+    }
+
+    /**
+     * Stitches {@code atlas} with its LabPBR companions, looked up as
+     * {@code <labPbrPrefix><sprite path>}, and returns its material, or null when the
+     * albedo or the material could not be created.
+     */
+    private RemixMaterial buildAtlasMaterial(TextureAtlas atlas, String name, String labPbrPrefix,
+                                             LabPBRConverter.VariantCache labPBRVariants) {
+        SpriteAtlasAccessor acc = (SpriteAtlasAccessor) atlas;
+        int atlasW = acc.getWidth();
+        int atlasH = acc.getHeight();
+        Map<Identifier, TextureAtlasSprite> sprites = acc.getSprites();
+
+        byte[] albedoRGBA = BlockTextureManager.stitchAtlasRGBA(atlas);
+
+        int pixels = atlasW * atlasH;
+        byte[] normalAtlas    = new byte[pixels * 4];
+        byte[] heightAtlas    = new byte[pixels];
+        byte[] roughnessAtlas = new byte[pixels];
+        byte[] metallicAtlas  = new byte[pixels];
+        byte[] emissiveAtlas  = new byte[pixels * 4];
+
+        Arrays.fill(heightAtlas, (byte) 255);
+        Arrays.fill(roughnessAtlas, (byte) 180);
+        for (int i = 0; i < pixels; i++) {
+            int idx4 = i * 4;
+            normalAtlas[idx4]     = (byte) 128;
+            normalAtlas[idx4 + 1] = (byte) 128;
+            normalAtlas[idx4 + 2] = (byte) 255;
+            normalAtlas[idx4 + 3] = (byte) 255;
+        }
+
+        boolean hasAnyNormal = false, hasAnyHeight = false, hasAnyEmissive = false;
+
+        for (var entry : sprites.entrySet()) {
+            Identifier spriteId = entry.getKey();
+            TextureAtlasSprite sprite = entry.getValue();
+            int pixX = AtlasSprites.contentX(sprite), pixY = AtlasSprites.contentY(sprite);
+            int pixW = sprite.contents().width();
+            int pixH = sprite.contents().height();
+
+            Identifier texId = Identifier.fromNamespaceAndPath(spriteId.getNamespace(),
+                    labPbrPrefix + spriteId.getPath());
+            NativeImage nImg = labPBRVariants.loadVariant(texId, "_n");
+            NativeImage sImg = labPBRVariants.loadVariant(texId, "_s");
+            try {
+                if (nImg != null) {
+                    LabPBRConverter.blitNormal(normalAtlas, atlasW, nImg, pixX, pixY, pixW, pixH);
+                    LabPBRConverter.blitHeight(heightAtlas, atlasW, nImg, pixX, pixY, pixW, pixH);
+                    LabPBRConverter.applyAO(albedoRGBA, atlasW, nImg, pixX, pixY, pixW, pixH);
+                    hasAnyNormal = true;
+                    hasAnyHeight = true;
+                }
+                if (sImg != null) {
+                    LabPBRConverter.blitRoughness(roughnessAtlas, atlasW, sImg, pixX, pixY, pixW, pixH);
+                    LabPBRConverter.blitMetallic(metallicAtlas, atlasW, sImg, pixX, pixY, pixW, pixH);
+                }
+                if (sImg != null && LabPBRConverter.hasEmissiveData(sImg)) {
+                    LabPBRConverter.blitEmissive(emissiveAtlas, atlasW, albedoRGBA, sImg,
+                            pixX, pixY, pixW, pixH, 0);
+                    hasAnyEmissive = true;
+                }
+            } finally {
+                if (nImg != null) nImg.close();
+                if (sImg != null) sImg.close();
+            }
+        }
+
+        AtlasSprites.Padding padding = AtlasSprites.padding(sprites.values(), atlasW, atlasH);
+        padding.fill(albedoRGBA, 4);
+        padding.fill(normalAtlas, 4);
+        padding.fill(heightAtlas, 1);
+        padding.fill(roughnessAtlas, 1);
+        padding.fill(metallicAtlas, 1);
+        padding.fill(emissiveAtlas, 4);
+
+        RemixTexture albedoTex = uploadTexture(name + "_albedo",
+                albedoRGBA, atlasW, atlasH, TextureFormat.RGBA8_UNORM, TexturePurpose.COLOR);
+        if (albedoTex == null) {
+            LOGGER.error("Failed to upload {} albedo", name);
+            return null;
+        }
+
+        RemixTexture normalTex = hasAnyNormal
+                ? uploadTexture(name + "_normal", normalAtlas, atlasW, atlasH,
+                        TextureFormat.RGBA8_UNORM, TexturePurpose.NORMAL_DX) : null;
+        RemixTexture heightTex = hasAnyHeight
+                ? uploadTexture(name + "_height", heightAtlas, atlasW, atlasH,
+                        TextureFormat.R8_UNORM, TexturePurpose.HEIGHTMAP) : null;
+        RemixTexture roughnessTex = uploadTexture(name + "_roughness",
+                roughnessAtlas, atlasW, atlasH, TextureFormat.R8_UNORM, TexturePurpose.DATA);
+        RemixTexture metallicTex = uploadTexture(name + "_metallic",
+                metallicAtlas, atlasW, atlasH, TextureFormat.R8_UNORM, TexturePurpose.DATA);
+        RemixTexture emissiveTex = hasAnyEmissive
+                ? uploadTexture(name + "_emissive", emissiveAtlas, atlasW, atlasH,
+                        TextureFormat.RGBA8_UNORM, TexturePurpose.COLOR) : null;
+
+        RemixMaterial atlasMaterial = buildOpaqueMaterial(albedoTex, normalTex, heightTex,
+                roughnessTex, metallicTex, emissiveTex);
+        if (atlasMaterial != null) {
+            LOGGER.info("{} initialized ({}x{}, {} sprites, normal={}, height={}, emissive={})",
+                    name, atlasW, atlasH, sprites.size(), hasAnyNormal, hasAnyHeight, hasAnyEmissive);
+        }
+        return atlasMaterial;
     }
 
     private RemixMaterial buildOpaqueMaterial(RemixTexture albedo, RemixTexture normal,
@@ -221,6 +247,8 @@ public class ParticleAtlasManager {
     }
 
     public RemixMaterial getMaterial()  { return material; }
+    /** The item atlas's material, or null when the item atlas could not be captured. */
+    public RemixMaterial getItemMaterial() { return itemMaterial; }
     public boolean isInitialized()     { return initialized; }
 
     private RemixTexture uploadTexture(String name, byte[] data, int w, int h, int fmt, int purpose) {
@@ -262,6 +290,7 @@ public class ParticleAtlasManager {
         managedTextures.clear();
 
         material = null;
+        itemMaterial = null;
         initialized = false;
         initFailed = false;
     }
