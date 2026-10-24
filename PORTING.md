@@ -180,7 +180,8 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
   分岐します。星は 26.3 で CPU の頂点列がなくなったので、同じ種 (10842) で
   CPU 側に作り直しています。
 - 雲の色は `LevelRenderState.cloudColor` (ARGB、アルファ 0 は雲なし) から
-  読みます。
+  読みます。Remix の雲が正常に動いている間は、vanilla の雲描画 (通常の透過と
+  OIT の両方) を止めます。
 
 ### 統合サーバーと光
 
@@ -273,8 +274,9 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
      `BuiltChunkStorageMixin`、`BuiltChunkMixin`、`NeighbourReflagFilter` に
      あります。
    - モデル選択の割り当て削減 (`WeightedBakedModelMixin`、
-     `MultipartBakedModelMixin`)。
-   - vanilla の雲描画の抑止 (Remix が置き換える GL のフレームに描かれるだけ)。
+     `MultipartBakedModelMixin`)。26.3 は部品の収集が面ごとではなくブロックごとに
+     なり、重み付きの選択は割り当てなし、multipart もブロックごとに `BitSet` と
+     イテレータを作るだけになったので、移植していません。
 4. **Prism のフォールバック版** (`PRISM_FALLBACK_VERSION = '9.1'`): 26.3 を
    起動できるかは未確認です。GitHub から最新版を取れる通常の経路では使われません。
 5. **Java ソースのコメント**: Yarn 時代の名前がコメントに残っている箇所が

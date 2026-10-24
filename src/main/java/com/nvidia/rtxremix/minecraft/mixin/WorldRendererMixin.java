@@ -54,6 +54,10 @@ import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.ParticlesRenderState;
 import net.minecraft.client.renderer.state.level.WeatherRenderState;
 import net.minecraft.client.renderer.WeatherEffectRenderer;
+import net.minecraft.client.renderer.CloudRenderer;
+import net.minecraft.client.CloudStatus;
+import net.minecraft.client.renderer.oit.OitRenderPassProvider;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import net.minecraft.client.renderer.oit.OitStage;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import net.minecraft.core.SectionPos;
@@ -330,6 +334,53 @@ public abstract class WorldRendererMixin
         if (!RtxRemixMod.isRemixWorldRendering()) {
             original.call(weather, stage, state, pass);
         }
+    }
+
+    /**
+     * Remix draws the clouds whenever its cloud mode is healthy; vanilla's draw would land
+     * in the frame the Remix image replaces. Skipped whole like the weather draw.
+     */
+    @WrapOperation(
+            method = "executeClassicTransparency",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/CloudRenderer;render(Lnet/minecraft/client/CloudStatus;Lcom/mojang/renderpearl/api/commands/RenderPass;)V"
+            ))
+    private void rtxremix$skipVanillaClouds(
+            CloudRenderer clouds,
+            CloudStatus status,
+            RenderPass pass,
+            Operation<Void> original) {
+        if (!rtxremix$remixDrawsClouds()) {
+            original.call(clouds, status, pass);
+        }
+    }
+
+    /** The order-independent transparency counterpart of {@link #rtxremix$skipVanillaClouds}. */
+    @WrapOperation(
+            method = "executeOit",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/CloudRenderer;renderOit(Lnet/minecraft/client/CloudStatus;Lnet/minecraft/client/renderer/oit/OitStage;Lcom/mojang/renderpearl/api/textures/GpuTextureView;Lnet/minecraft/client/renderer/oit/OitRenderPassProvider$Parameters;)V"
+            ))
+    private void rtxremix$skipVanillaOitClouds(
+            CloudRenderer clouds,
+            CloudStatus status,
+            OitStage stage,
+            GpuTextureView depth,
+            OitRenderPassProvider.Parameters parameters,
+            Operation<Void> original) {
+        if (!rtxremix$remixDrawsClouds()) {
+            original.call(clouds, status, stage, depth, parameters);
+        }
+    }
+
+    private static boolean rtxremix$remixDrawsClouds() {
+        RemixRenderer renderer = RtxRemixMod.renderer;
+        return RtxRemixMod.isRemixWorldRendering()
+                && renderer != null
+                && renderer.getCloudRenderer() != null
+                && renderer.getCloudRenderer().shouldSuppressVanillaClouds();
     }
 
     /**
