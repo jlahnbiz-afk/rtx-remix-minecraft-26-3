@@ -128,17 +128,20 @@ their distance.
 
 ## Rain Surfaces
 
-Rain pools on open ground and rings open water. Puddles are laid when a
-section is built, on the top face of each occluding block that is the highest
-to stop rain in its column, where it rains rather than snows; the puddle
-material then floods them outward while it rains and dries them after
-(`PuddleField`, `RainSurfaces`). Open water switches to raindrop rings while
-rain falls. Both read at startup.
+Rain pools on open ground and rings open water. A section build lays a puddle
+film on the top face of each occluding block that is the highest to stop rain
+in its column, where it rains rather than snows, inside the wet zones
+`PuddleField` places; it lays a ripple film just over water open to the rain.
+The films never change after they are built: the weather reaches them as
+texture content (`RainSurfaceTextures`). The puddle mask floods over about 20
+seconds of rain and dries over about 30 once it stops (`RainSurfaces`), and
+raindrop rings play at the rain's strength and clear when it stops
+(`RainRipples`). Both keys read at startup.
 
 | Key | Effect | Owner |
 |---|---|---|
-| `rtxremix.rain.puddles` | Set to false to lay no puddles | `BlockQuadEmitter` |
-| `rtxremix.rain.ripples` | Set to false to keep open water's waves in the rain | `BlockTextureManager` |
+| `rtxremix.rain.puddles` | Set to false to lay no puddles | `BlockTextureManager` |
+| `rtxremix.rain.ripples` | Set to false to lay no ripple films over open water | `BlockTextureManager` |
 
 ## Profiling And Diagnostics
 

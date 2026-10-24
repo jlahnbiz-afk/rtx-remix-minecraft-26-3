@@ -45,9 +45,9 @@ public final class DirectQuadWriter {
     /** Quads one block may stage; past it the rest are dropped rather than grown into. */
     private static final int MAX_BLOCK_QUADS = 1 << 16;
     private static final float DECAL_NORMAL_DOT_EPSILON = 0.999f;
-    /** Bucket of water surfaces open to the sky, drawn with the rain-aware water material. */
-    public static final String SKY_WATER_BUCKET = "water_sky";
-    /** Bucket of puddle films, drawn with the puddle material. */
+    /** Bucket of the films over open water where raindrop rings show. */
+    public static final String RIPPLE_FILM_BUCKET = "rain_ripple";
+    /** Bucket of puddle films over open ground. */
     public static final String PUDDLE_BUCKET = "puddle";
     private static final float DECAL_PLANE_DISTANCE_EPSILON = 1.0E-3f;
     private static final float DECAL_OVERLAP_EPSILON = 1.0E-4f;
@@ -354,23 +354,21 @@ public final class DirectQuadWriter {
         bb.writeQuad(positions, 0, uvs, 0, nx, ny, nz, color, boundsMin, boundsMax);
     }
 
-    /** Writes a water surface quad open to the sky, which the rain-aware water material draws. */
-    public void writeSkyWaterQuad(float[] positions, float[] uvs,
-                                  float nx, float ny, float nz, int color) {
-        getBucket(ChunkManager.CAT_TRANSLUCENT, SKY_WATER_BUCKET).writeQuad(positions, 0, uvs, 0,
-                nx, ny, nz, color, HardcodedVertex.packHalf2x16(0, 0), HardcodedVertex.packHalf2x16(1, 1));
+    /** Writes the ripple film over an open water surface, in world-space UVs. */
+    public void writeRippleFilmQuad(float[] positions, float[] uvs) {
+        getBucket(ChunkManager.CAT_SOLID, RIPPLE_FILM_BUCKET).writeQuad(positions, 0, uvs, 0,
+                0f, 1f, 0f, 0xFFFFFFFF, HardcodedVertex.packHalf2x16(0, 0), HardcodedVertex.packHalf2x16(1, 1));
     }
 
     /**
-     * Writes a puddle film over a block's top face: the ground's own sprite with a colour
-     * per vertex, whose alpha is the puddle depth at that corner.
+     * Writes a puddle film over a block's top face, in world-space UVs, with a colour per
+     * vertex whose alpha is the wet zone at that corner.
      */
     public void writePuddleQuad(float[] positions, float[] uvs,
-                                int color0, int color1, int color2, int color3,
-                                float su0, float sv0, float su1, float sv1) {
+                                int color0, int color1, int color2, int color3) {
         getBucket(ChunkManager.CAT_SOLID, PUDDLE_BUCKET).writeQuad(positions, 0, uvs, 0,
                 0f, 1f, 0f, color0, color1, color2, color3,
-                HardcodedVertex.packHalf2x16(su0, sv0), HardcodedVertex.packHalf2x16(su1, sv1));
+                HardcodedVertex.packHalf2x16(0, 0), HardcodedVertex.packHalf2x16(1, 1));
     }
 
     /**
