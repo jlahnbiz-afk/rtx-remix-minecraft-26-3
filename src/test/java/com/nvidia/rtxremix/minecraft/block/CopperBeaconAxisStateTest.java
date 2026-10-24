@@ -9,7 +9,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.stream.Stream;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.level.storage.TagValueInput;
+import net.minecraft.world.level.storage.TagValueOutput;
+import net.minecraft.world.level.storage.ValueInput;
 
 class CopperBeaconAxisStateTest {
 
@@ -106,11 +112,16 @@ class CopperBeaconAxisStateTest {
                 18.5f,
                 7.25f,
                 987_654_321L);
-        CompoundTag nbt = new CompoundTag();
-        original.writeNbt(nbt);
+        TagValueOutput output = TagValueOutput.createWithoutContext(ProblemReporter.DISCARDING);
+        original.save(output);
 
-        assertEquals(original, CopperBeaconAxisState.readNbt(nbt));
-        assertEquals(CopperBeaconAxisState.defaults(), CopperBeaconAxisState.readNbt(new CompoundTag()));
+        assertEquals(original, CopperBeaconAxisState.load(input(output.buildResult())));
+        assertEquals(CopperBeaconAxisState.defaults(), CopperBeaconAxisState.load(input(new CompoundTag())));
+    }
+
+    private static ValueInput input(CompoundTag tag) {
+        return TagValueInput.create(
+                ProblemReporter.DISCARDING, HolderLookup.Provider.create(Stream.empty()), tag);
     }
 
     private static CopperBeaconAxisState axis(

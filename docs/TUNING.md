@@ -276,7 +276,7 @@ directory for an installed client. Portable Prism keeps the former at
 | `camera-paths/<world-key>/` | you | Your recordings | Loses them, so keep this one |
 | `benchmark/` | benchmark harness | Trigger file, status heartbeat, results, and screenshots | Safe |
 | `saves/<world>/rtx-remix/confs/` | map author | Read when you join that world | Part of the map, not of the install |
-| `saves/<world>/data/rtx_remix_zones.dat` | mod, per save | Zone definitions for that world | Loses the zones defined in that world |
+| `saves/<world>/data/rtx-remix-renderer/zones.dat` | mod, per save | Zone definitions for that world | Loses the zones defined in that world |
 | `logs/latest.log` | game | Where the mod reports what it did and why | Safe |
 
 ## Resource Pack Inputs

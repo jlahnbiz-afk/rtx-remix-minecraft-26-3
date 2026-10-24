@@ -7,7 +7,7 @@ package com.nvidia.rtxremix.minecraft.block;
 import com.nvidia.rtxremix.minecraft.RtxRemixCommonMod;
 import com.nvidia.rtxremix.minecraft.light.LightEntry;
 import com.nvidia.rtxremix.minecraft.light.OverridesItemLight;
-import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
+import net.fabricmc.fabric.api.creativetab.v1.CreativeModeTabEvents;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -15,7 +15,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.BlockItem;
-import net.minecraft.world.item.CreativeModeTab;
+import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.block.Block;
@@ -64,15 +64,6 @@ public abstract class SpotLightBlock extends DirectionalBlock implements Overrid
     /** Full block light level, matching a lantern. */
     protected static final int LUMINANCE = 15;
 
-    /**
-     * Vanilla's "Functional Blocks" creative tab, where torches and lanterns live.
-     *
-     * <p>Built from the registry id rather than {@code ItemGroups.FUNCTIONAL},
-     * which is private in 1.21.1 and would otherwise need an access-widener entry.
-     */
-    private static final ResourceKey<CreativeModeTab> FUNCTIONAL_BLOCKS =
-            ResourceKey.create(Registries.CREATIVE_MODE_TAB, Identifier.withDefaultNamespace("functional_blocks"));
-
     private final LightEntry.ColorOverride beamColor;
 
     protected SpotLightBlock(BlockBehaviour.Properties settings, LightEntry.ColorOverride beamColor) {
@@ -81,9 +72,15 @@ public abstract class SpotLightBlock extends DirectionalBlock implements Overrid
         registerDefaultState(getStateDefinition().any().setValue(FACING, Direction.NORTH));
     }
 
-    /** Shared settings for every beacon variant. */
-    protected static BlockBehaviour.Properties beaconSettings() {
+    /**
+     * Shared settings for every beacon variant.
+     *
+     * @param path the variant's registry path; a block's settings carry its registry key,
+     *             which vanilla reads at construction for the loot table and translation key
+     */
+    protected static BlockBehaviour.Properties beaconSettings(String path) {
         return BlockBehaviour.Properties.of()
+                .setId(ResourceKey.create(Registries.BLOCK, id(path)))
                 .strength(3.0f)
                 .sound(SoundType.METAL)
                 .lightLevel(state -> LUMINANCE);
@@ -109,12 +106,23 @@ public abstract class SpotLightBlock extends DirectionalBlock implements Overrid
         CopperBeaconBlockEntity.register();
     }
 
-    /** Registers one variant, its item, and the creative tab entry. */
+    /**
+     * Registers one variant, its item, and its entry in vanilla's "Functional Blocks" creative
+     * tab, where torches and lanterns live.
+     */
     private static void register(String path, SpotLightBlock block) {
-        Identifier id = Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, path);
+        Identifier id = id(path);
         Registry.register(BuiltInRegistries.BLOCK, id, block);
-        BlockItem item = Registry.register(BuiltInRegistries.ITEM, id, new BlockItem(block, new Item.Properties()));
-        ItemGroupEvents.modifyEntriesEvent(FUNCTIONAL_BLOCKS).register(entries -> entries.accept(item));
+        Item.Properties itemSettings = new Item.Properties()
+                .setId(ResourceKey.create(Registries.ITEM, id))
+                .useBlockDescriptionPrefix();
+        BlockItem item = Registry.register(BuiltInRegistries.ITEM, id, new BlockItem(block, itemSettings));
+        CreativeModeTabEvents.modifyOutputEvent(CreativeModeTabs.FUNCTIONAL_BLOCKS)
+                .register(output -> output.accept(item));
+    }
+
+    private static Identifier id(String path) {
+        return Identifier.fromNamespaceAndPath(RtxRemixCommonMod.MOD_ID, path);
     }
 
     @Override
