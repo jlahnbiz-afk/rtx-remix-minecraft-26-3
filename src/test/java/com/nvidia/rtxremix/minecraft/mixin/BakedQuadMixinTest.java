@@ -15,36 +15,25 @@ class BakedQuadMixinTest {
     @Test
     void zeroIsAValidCachedHash() {
         BakedQuadMixin cache = new BakedQuadMixin();
-        int[] vertexData = {1, 2, 3, 4};
 
-        assertFalse(cache.rtxremix$matchesStaticGeometry(vertexData, 11, 12));
-        cache.rtxremix$setStaticGeometryHash(0L, vertexData, 11, 12);
+        assertFalse(cache.rtxremix$matchesStaticGeometry(11, 12));
+        cache.rtxremix$setStaticGeometryHash(0L, 11, 12);
 
-        assertTrue(cache.rtxremix$matchesStaticGeometry(vertexData, 11, 12));
+        assertTrue(cache.rtxremix$matchesStaticGeometry(11, 12));
         assertEquals(0L, cache.rtxremix$getStaticGeometryHash());
     }
 
     @Test
-    void mutableVertexDataInvalidatesAndReusesTheSnapshot() {
+    void changedSpriteBoundsInvalidateAndReplaceTheCachedHash() {
         BakedQuadMixin cache = new BakedQuadMixin();
-        int[] vertexData = {1, 2, 3, 4};
-        cache.rtxremix$setStaticGeometryHash(7L, vertexData, 11, 12);
+        cache.rtxremix$setStaticGeometryHash(7L, 11, 12);
 
-        vertexData[2] = 99;
-        assertFalse(cache.rtxremix$matchesStaticGeometry(vertexData, 11, 12));
+        assertFalse(cache.rtxremix$matchesStaticGeometry(21, 12));
+        assertFalse(cache.rtxremix$matchesStaticGeometry(11, 22));
 
-        cache.rtxremix$setStaticGeometryHash(8L, vertexData, 11, 12);
-        assertTrue(cache.rtxremix$matchesStaticGeometry(vertexData, 11, 12));
+        cache.rtxremix$setStaticGeometryHash(8L, 21, 12);
+        assertTrue(cache.rtxremix$matchesStaticGeometry(21, 12));
+        assertFalse(cache.rtxremix$matchesStaticGeometry(11, 12));
         assertEquals(8L, cache.rtxremix$getStaticGeometryHash());
-    }
-
-    @Test
-    void changedSpriteBoundsInvalidateUnchangedVertexData() {
-        BakedQuadMixin cache = new BakedQuadMixin();
-        int[] vertexData = {1, 2, 3, 4};
-        cache.rtxremix$setStaticGeometryHash(7L, vertexData, 11, 12);
-
-        assertFalse(cache.rtxremix$matchesStaticGeometry(vertexData, 21, 12));
-        assertFalse(cache.rtxremix$matchesStaticGeometry(vertexData, 11, 22));
     }
 }

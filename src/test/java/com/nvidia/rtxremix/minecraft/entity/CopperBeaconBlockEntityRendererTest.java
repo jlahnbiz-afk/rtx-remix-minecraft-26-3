@@ -7,6 +7,8 @@ package com.nvidia.rtxremix.minecraft.entity;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Quadrant;
+import com.mojang.serialization.JsonOps;
 import com.nvidia.rtxremix.minecraft.block.CopperBeaconPose;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -14,7 +16,7 @@ import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;
 import net.minecraft.client.model.geom.ModelPart;
-import net.minecraft.client.resources.model.BlockModelRotation;
+import net.minecraft.client.renderer.block.dispatch.Variant;
 import net.minecraft.core.Direction;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -84,7 +86,7 @@ class CopperBeaconBlockEntityRendererTest {
                     continue;
                 }
                 matrices.pushPose();
-                matrices.mulPose(
+                matrices.rotate(
                         CopperBeaconBlockEntityRenderer.mountingRotation(mount, forward));
                 for (float yaw : angles) {
                     for (float pitch : angles) {
@@ -284,14 +286,16 @@ class CopperBeaconBlockEntityRendererTest {
             JsonObject variant = variants
                     .getAsJsonObject("mount=" + mount.name().toLowerCase(Locale.ROOT));
             assertNotNull(variant, "Missing base model variant for mount=" + mount);
-            int x = variant.has("x") ? variant.get("x").getAsInt() : 0;
-            int y = variant.has("y") ? variant.get("y").getAsInt() : 0;
+            // Decoded with vanilla's own variant codec, so x, y and z rotate as they do in game.
+            Variant.SimpleModelState rotation = Variant.CODEC
+                    .parse(JsonOps.INSTANCE, variant)
+                    .getOrThrow()
+                    .modelState();
             Direction unrotatedDirection =
                     readBaseModelDirection(variant.get("model").getAsString());
             directions.put(
                     mount,
-                    BlockModelRotation.by(x, y)
-                            .actualRotation()
+                    Quadrant.fromXYZAngles(rotation.x(), rotation.y(), rotation.z())
                             .rotate(unrotatedDirection));
         }
         return directions;

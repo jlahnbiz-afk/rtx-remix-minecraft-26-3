@@ -7,14 +7,14 @@ package com.nvidia.rtxremix.minecraft.texture;
 import org.junit.jupiter.api.Test;
 
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.resources.Identifier;
-import net.minecraft.server.packs.resources.ResourceManager;
+import sun.misc.Unsafe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -93,17 +93,16 @@ class DynamicTextureCacheTest {
     }
 
     @Test
-    void clearDropsAClosedImageTextureEvenWhileTheManagerKeepsItRegistered() {
+    void clearDropsAClosedImageTextureWhileItIsStillReachable() {
+        // The texture stays strongly reachable, as one the TextureManager keeps
+        // registered is, so only its closed image can tell the cache it is gone.
         Identifier id = Identifier.fromNamespaceAndPath("minecraft", "dynamic/closed-map");
-        TextureManager manager = new TextureManager(null);
-        DynamicTexture texture = new DynamicTexture(new NativeImage(1, 1, true));
-        manager.register(id, texture);
+        DynamicTexture texture = imageTexture(new NativeImage(1, 1, true));
         DynamicTextureCache.onRegisterTexture(id, texture, texture.getPixels());
         assertNotNull(DynamicTextureCache.get(id));
 
         texture.close();
-        assertNull(texture.getPixels());
-        assertSame(texture, manager.getTexture(id));
+        assertTrue(texture.getPixels().isClosed());
         DynamicTextureCache.clear();
 
         assertNull(DynamicTextureCache.get(id));
@@ -112,10 +111,10 @@ class DynamicTextureCacheTest {
     @Test
     void clearKeepsALiveImageTextureWhenAClosedTextureSharesItsId() {
         Identifier id = Identifier.fromNamespaceAndPath("minecraft", "dynamic/replaced-map");
-        DynamicTexture closed = new DynamicTexture(new NativeImage(1, 1, true));
+        DynamicTexture closed = imageTexture(new NativeImage(1, 1, true));
         DynamicTextureCache.onRegisterTexture(id, closed, closed.getPixels());
         closed.close();
-        try (DynamicTexture live = new DynamicTexture(new NativeImage(1, 1, true))) {
+        try (DynamicTexture live = imageTexture(new NativeImage(1, 1, true))) {
             DynamicTextureCache.onRegisterTexture(id, live, live.getPixels());
             DynamicTextureCache.Pixels captured = DynamicTextureCache.get(id);
 
@@ -128,7 +127,7 @@ class DynamicTextureCacheTest {
     @Test
     void capacityPruningDropsClosedImageTexturesWithoutWaitingForCollection() {
         Identifier closedId = Identifier.fromNamespaceAndPath("minecraft", "dynamic/pruned-map");
-        DynamicTexture closed = new DynamicTexture(new NativeImage(1, 1, true));
+        DynamicTexture closed = imageTexture(new NativeImage(1, 1, true));
         DynamicTextureCache.onRegisterTexture(closedId, closed, closed.getPixels());
         closed.close();
         List<AbstractTexture> live = new ArrayList<>();
@@ -141,7 +140,7 @@ class DynamicTextureCacheTest {
             }
         }
 
-        assertNull(closed.getPixels());
+        assertTrue(closed.getPixels().isClosed());
         assertNull(DynamicTextureCache.get(closedId));
         assertEquals(DynamicTextureCache.capacity(), live.size());
     }
@@ -210,9 +209,27 @@ class DynamicTextureCacheTest {
     }
 
     private static AbstractTexture newTexture() {
-        return new AbstractTexture() {
-            @Override
-            public void load(ResourceManager manager) {}
-        };
+        return new AbstractTexture() {};
+    }
+
+    /**
+     * A {@link DynamicTexture} holding {@code pixels}. Every constructor creates the GPU
+     * texture on RenderSystem's device, which a unit test has none of, and the cache reads
+     * nothing of the texture but its image, so the texture is allocated without running a
+     * constructor and handed the image directly.
+     */
+    private static DynamicTexture imageTexture(NativeImage pixels) {
+        try {
+            Field theUnsafe = Unsafe.class.getDeclaredField("theUnsafe");
+            theUnsafe.setAccessible(true);
+            DynamicTexture texture = (DynamicTexture) ((Unsafe) theUnsafe.get(null))
+                    .allocateInstance(DynamicTexture.class);
+            Field image = DynamicTexture.class.getDeclaredField("pixels");
+            image.setAccessible(true);
+            image.set(texture, pixels);
+            return texture;
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
     }
 }

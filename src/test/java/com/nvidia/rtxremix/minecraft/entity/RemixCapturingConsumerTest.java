@@ -6,6 +6,7 @@ package com.nvidia.rtxremix.minecraft.entity;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.QuadInstance;
 import com.nvidia.rtxremix.HardcodedVertex;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import org.joml.Matrix4f;
@@ -17,14 +18,14 @@ import java.util.EnumSet;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import net.minecraft.client.model.geom.ModelPart;
-import net.minecraft.client.renderer.block.model.BakedQuad;
+import net.minecraft.client.model.geom.builders.UVPair;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.renderer.texture.SpriteContents;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.resources.metadata.animation.FrameSize;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
-import net.minecraft.server.packs.resources.ResourceMetadata;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -66,34 +67,47 @@ class RemixCapturingConsumerTest {
         assertEquals(pose, context.getBoneTransforms().getFirst());
     }
 
-    private static int[] quadVertexData(float[][] positions) {
-        int[] vd = new int[32];
-        for (int v = 0; v < 4; v++) {
-            vd[v * 8] = Float.floatToRawIntBits(positions[v][0]);
-            vd[v * 8 + 1] = Float.floatToRawIntBits(positions[v][1]);
-            vd[v * 8 + 2] = Float.floatToRawIntBits(positions[v][2]);
-        }
-        return vd;
+    /**
+     * A baked quad with model-space corners {@code positions} and UVs {@code uvs}, facing
+     * {@code face}. Nothing under test reads the section layer or the item render types.
+     */
+    private static BakedQuad bakedQuad(float[][] positions, float[][] uvs, Direction face, TextureAtlasSprite sprite) {
+        return new BakedQuad(
+                new Vector3f(positions[0][0], positions[0][1], positions[0][2]),
+                new Vector3f(positions[1][0], positions[1][1], positions[1][2]),
+                new Vector3f(positions[2][0], positions[2][1], positions[2][2]),
+                new Vector3f(positions[3][0], positions[3][1], positions[3][2]),
+                UVPair.pack(uvs[0][0], uvs[0][1]),
+                UVPair.pack(uvs[1][0], uvs[1][1]),
+                UVPair.pack(uvs[2][0], uvs[2][1]),
+                UVPair.pack(uvs[3][0], uvs[3][1]),
+                face,
+                new BakedQuad.MaterialInfo(sprite, null, null, null, null, -1, null, 0));
+    }
+
+    /** A quad that has only a shape; card-face classification reads nothing else. */
+    private static BakedQuad quadShape(float[][] positions, Direction face) {
+        return bakedQuad(positions, new float[4][2], face, null);
     }
 
     @Test
     void onlyAFullLayerFaceOfAnItemCardIsACardFace() {
         float front = 7.5f / 16, back = 8.5f / 16;
-        int[] frontFace = quadVertexData(new float[][] {{0, 0, front}, {1, 0, front}, {1, 1, front}, {0, 1, front}});
-        int[] backFace = quadVertexData(new float[][] {{0, 0, back}, {0, 1, back}, {1, 1, back}, {1, 0, back}});
-        assertTrue(RemixCapturingConsumer.isFullCardFace(frontFace, Direction.NORTH));
-        assertTrue(RemixCapturingConsumer.isFullCardFace(backFace, Direction.SOUTH));
+        float[][] frontFace = {{0, 0, front}, {1, 0, front}, {1, 1, front}, {0, 1, front}};
+        float[][] backFace = {{0, 0, back}, {0, 1, back}, {1, 1, back}, {1, 0, back}};
+        assertTrue(RemixCapturingConsumer.isFullCardFace(quadShape(frontFace, Direction.NORTH)));
+        assertTrue(RemixCapturingConsumer.isFullCardFace(quadShape(backFace, Direction.SOUTH)));
         // A side sliver spans one texel run across the card's thickness and faces along the card.
-        int[] sliver = quadVertexData(new float[][] {
-                {0.4375f, 0.625f, front}, {0.5625f, 0.625f, front}, {0.5625f, 0.625f, back}, {0.4375f, 0.625f, back}});
-        assertFalse(RemixCapturingConsumer.isFullCardFace(sliver, Direction.UP));
-        assertFalse(RemixCapturingConsumer.isFullCardFace(sliver, Direction.NORTH));
+        float[][] sliver = {
+                {0.4375f, 0.625f, front}, {0.5625f, 0.625f, front}, {0.5625f, 0.625f, back}, {0.4375f, 0.625f, back}};
+        assertFalse(RemixCapturingConsumer.isFullCardFace(quadShape(sliver, Direction.UP)));
+        assertFalse(RemixCapturingConsumer.isFullCardFace(quadShape(sliver, Direction.NORTH)));
         // A block model's full face lies on the block's own planes, not the card's.
-        int[] blockFace = quadVertexData(new float[][] {{0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1}});
-        assertFalse(RemixCapturingConsumer.isFullCardFace(blockFace, Direction.SOUTH));
+        float[][] blockFace = {{0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1}};
+        assertFalse(RemixCapturingConsumer.isFullCardFace(quadShape(blockFace, Direction.SOUTH)));
         // A generated face that does not span the whole card is not a layer face either.
-        int[] partial = quadVertexData(new float[][] {{0, 0, front}, {0.5f, 0, front}, {0.5f, 1, front}, {0, 1, front}});
-        assertFalse(RemixCapturingConsumer.isFullCardFace(partial, Direction.NORTH));
+        float[][] partial = {{0, 0, front}, {0.5f, 0, front}, {0.5f, 1, front}, {0, 1, front}};
+        assertFalse(RemixCapturingConsumer.isFullCardFace(quadShape(partial, Direction.NORTH)));
     }
 
     private static boolean[] mask(String[] rows) {
@@ -137,20 +151,18 @@ class RemixCapturingConsumerTest {
 
     /** A full item-card face on the plane {@code z}; u runs with x, or against it when mirrored. */
     private static BakedQuad cardFace(TextureAtlasSprite sprite, float z, Direction face, boolean mirroredU) {
-        int[] vd = new int[32];
         float[][] corners = {{0, 1}, {0, 0}, {1, 0}, {1, 1}};
+        float[][] positions = new float[4][];
+        float[][] uvs = new float[4][];
+        float span = sprite.getU1() - sprite.getU0();
         for (int v = 0; v < 4; v++) {
             float x = corners[v][0], y = corners[v][1];
-            float span = sprite.getU1() - sprite.getU0();
-            vd[v * 8] = Float.floatToRawIntBits(x);
-            vd[v * 8 + 1] = Float.floatToRawIntBits(y);
-            vd[v * 8 + 2] = Float.floatToRawIntBits(z);
-            vd[v * 8 + 3] = 0xFFFFFFFF;
-            vd[v * 8 + 4] = Float.floatToRawIntBits(mirroredU ? sprite.getU1() - span * x : sprite.getU0() + span * x);
-            vd[v * 8 + 5] = Float.floatToRawIntBits(sprite.getV0() + (sprite.getV1() - sprite.getV0()) * (1 - y));
-            vd[v * 8 + 7] = face == Direction.NORTH ? 0x00810000 : 0x007F0000;
+            positions[v] = new float[] {x, y, z};
+            uvs[v] = new float[] {
+                    mirroredU ? sprite.getU1() - span * x : sprite.getU0() + span * x,
+                    sprite.getV0() + (sprite.getV1() - sprite.getV0()) * (1 - y)};
         }
-        return new BakedQuad(vd, -1, face, sprite, true);
+        return bakedQuad(positions, uvs, face, sprite);
     }
 
     private static void assertRect(float[] px, float[] py, int start, float x0, float x1, float y0, float y1) {
@@ -169,20 +181,19 @@ class RemixCapturingConsumerTest {
         for (int y = 0; y < 8; y++) {
             for (int x = 0; x < 8; x++) image.setPixelABGR(x, y, rows[y].charAt(x) == '#' ? 0xFF808080 : 0);
         }
-        return new SpriteContents(Identifier.fromNamespaceAndPath("minecraft", id), new FrameSize(8, 8), image,
-                ResourceMetadata.EMPTY);
+        return new SpriteContents(Identifier.fromNamespaceAndPath("minecraft", id), new FrameSize(8, 8), image);
     }
 
     private static TextureAtlasSprite atlasSprite(SpriteContents contents) {
-        return new TextureAtlasSprite(Identifier.fromNamespaceAndPath("minecraft", "textures/atlas/blocks.png"), contents, 64, 64, 16, 32) {};
+        return new TextureAtlasSprite(Identifier.fromNamespaceAndPath("minecraft", "textures/atlas/blocks.png"), contents, 64, 64, 16, 32, 0) {};
     }
 
     /** Renders both full faces of an item card, as ItemRenderer does for a flat item. */
     private static void cardFaces(RemixCapturingConsumer consumer, TextureAtlasSprite sprite) {
         PoseStack.Pose pose = new PoseStack().last();
-        float[] ones = {1, 1, 1, 1};
-        consumer.putBulkData(pose, cardFace(sprite, 7.5f / 16, Direction.NORTH, false), ones, 1, 1, 1, 1, new int[4], OverlayTexture.NO_OVERLAY, false);
-        consumer.putBulkData(pose, cardFace(sprite, 8.5f / 16, Direction.SOUTH, true), ones, 1, 1, 1, 1, new int[4], OverlayTexture.NO_OVERLAY, false);
+        QuadInstance white = new QuadInstance();
+        consumer.putBakedQuad(pose, cardFace(sprite, 7.5f / 16, Direction.NORTH, false), white);
+        consumer.putBakedQuad(pose, cardFace(sprite, 8.5f / 16, Direction.SOUTH, true), white);
         consumer.finishOpenVertex();
     }
 
@@ -371,7 +382,7 @@ class RemixCapturingConsumerTest {
         for (int q = 0; q < count; q++) {
             ModelPart.Vertex[] vs = new ModelPart.Vertex[4];
             for (int v = 0; v < 4; v++) {
-                vs[v] = new ModelPart.Vertex(new Vector3f(q + v, q, 0.0f), v * 0.25f, q * 0.25f);
+                vs[v] = new ModelPart.Vertex(q + v, q, 0.0f, v * 0.25f, q * 0.25f);
             }
             sides[q] = new ModelPart.Polygon(vs, 0, 0, 0, 0, 1, 1, false, Direction.NORTH);
         }
@@ -440,7 +451,7 @@ class RemixCapturingConsumerTest {
         for (int q = 0; q < count; q++) {
             ModelPart.Vertex[] vs = new ModelPart.Vertex[4];
             for (int v = 0; v < 4; v++) {
-                vs[v] = new ModelPart.Vertex(new Vector3f(q + v, q, v), 0.0f, 0.0f);
+                vs[v] = new ModelPart.Vertex(q + v, q, v, 0.0f, 0.0f);
             }
             sides[q] = new ModelPart.Polygon(vs, 4, 4, 12, 12, 16, 16, false, Direction.NORTH);
         }
@@ -481,9 +492,9 @@ class RemixCapturingConsumerTest {
         for (ModelPart.Polygon quad : sides) {
             float minU = Float.POSITIVE_INFINITY, minV = Float.POSITIVE_INFINITY;
             float maxU = Float.NEGATIVE_INFINITY, maxV = Float.NEGATIVE_INFINITY;
-            for (ModelPart.Vertex vertex : quad.vertices) {
-                float u = sprite.getU0() + (sprite.getU1() - sprite.getU0()) * vertex.u;
-                float v = sprite.getV0() + (sprite.getV1() - sprite.getV0()) * vertex.v;
+            for (ModelPart.Vertex vertex : quad.vertices()) {
+                float u = sprite.getU0() + (sprite.getU1() - sprite.getU0()) * vertex.u();
+                float v = sprite.getV0() + (sprite.getV1() - sprite.getV0()) * vertex.v();
                 assertEquals(u, scratch.getTu()[i], "u of vertex " + i);
                 assertEquals(v, scratch.getTv()[i], "v of vertex " + i);
                 minU = Math.min(minU, u); maxU = Math.max(maxU, u);
@@ -515,8 +526,8 @@ class RemixCapturingConsumerTest {
         scratch.finishOpenVertex();
 
         for (int v = 0; v < 4; v++) {
-            assertEquals(sides[0].vertices[v].u, scratch.getTu()[v], "u of vertex " + v);
-            assertEquals(sides[0].vertices[v].v, scratch.getTv()[v], "v of vertex " + v);
+            assertEquals(sides[0].vertices()[v].u(), scratch.getTu()[v], "u of vertex " + v);
+            assertEquals(sides[0].vertices()[v].v(), scratch.getTv()[v], "v of vertex " + v);
         }
     }
 
@@ -551,55 +562,29 @@ class RemixCapturingConsumerTest {
         assertEquals(packed.getColors()[0], channels.getColors()[0]);
     }
 
-    /**
-     * Builds one quad's worth of BakedQuad vertex data. Minecraft packs the
-     * colour element as 0xAABBGGRR, with red in the low byte.
-     */
-    private static BakedQuad bakedQuad(int packedAbgr) {
-        int[] vertexData = new int[4 * 8];
-        for (int v = 0; v < 4; v++) {
-            vertexData[v * 8 + 3] = packedAbgr;
-            vertexData[v * 8 + 7] = 0x007F0000; // +Z face normal
-        }
-        return new BakedQuad(vertexData, -1, Direction.UP, null, true);
+    /** One upward-facing item quad collapsed to the origin; the colour tests read nothing else. */
+    private static BakedQuad itemModelQuad() {
+        return bakedQuad(new float[4][3], new float[4][2], Direction.UP, SpriteFixtures.sprite(0, 0, 16, 16));
     }
 
     @Test
-    void bakedQuadTintWithoutColorizePacksArgb() {
+    void bakedQuadTintPacksArgb() {
         EntityRenderContext.get().begin(true);
         RemixCapturingConsumer consumer = new RemixCapturingConsumer(null, true);
+        QuadInstance red = new QuadInstance();
+        red.setColor(0xFFFF0000);
 
-        consumer.putBulkData(new PoseStack().last(), bakedQuad(0xFFFFFFFF),
-                new float[]{1.0f, 1.0f, 1.0f, 1.0f},
-                1.0f, 0.0f, 0.0f, 1.0f,
-                new int[]{0, 0, 0, 0}, OverlayTexture.NO_OVERLAY, false);
+        consumer.putBakedQuad(new PoseStack().last(), itemModelQuad(), red);
 
         // A pure-red tint must arrive as pure red, not pure blue.
         assertEquals(0xFFFF0000, consumer.getColors()[0]);
-    }
-
-    @Test
-    void bakedQuadColorizeMultipliesMatchingChannels() {
-        EntityRenderContext.get().begin(true);
-        RemixCapturingConsumer consumer = new RemixCapturingConsumer(null, true);
-
-        // Base vertex colour r=0x80 g=0x40 b=0x20, tinted with blue at half strength.
-        consumer.putBulkData(new PoseStack().last(), bakedQuad(0xFF204080),
-                new float[]{1.0f, 1.0f, 1.0f, 1.0f},
-                1.0f, 1.0f, 0.5f, 1.0f,
-                new int[]{0, 0, 0, 0}, OverlayTexture.NO_OVERLAY, true);
-
-        assertEquals(0xFF804010, consumer.getColors()[0]);
     }
 
     // ---- Block item layer ----
 
     /** Renders one baked quad under {@code pose}, as ItemRenderer does for an item model. */
     private static void itemQuad(RemixCapturingConsumer consumer, PoseStack.Pose pose) {
-        consumer.putBulkData(pose, bakedQuad(0xFFFFFFFF),
-                new float[]{1.0f, 1.0f, 1.0f, 1.0f},
-                1.0f, 1.0f, 1.0f, 1.0f,
-                new int[]{0, 0, 0, 0}, OverlayTexture.NO_OVERLAY, false);
+        consumer.putBakedQuad(pose, itemModelQuad(), new QuadInstance());
     }
 
     /** A distinct pose per item, as each item render pushes its own transform. */
