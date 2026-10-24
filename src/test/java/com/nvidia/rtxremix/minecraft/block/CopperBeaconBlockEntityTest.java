@@ -10,10 +10,14 @@ import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;
 import net.minecraft.core.Direction;
-import net.minecraft.nbt.CompoundTag;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.level.storage.TagValueInput;
+import net.minecraft.world.level.storage.TagValueOutput;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -26,12 +30,15 @@ class CopperBeaconBlockEntityTest {
 
     @Test
     void anglesAreNormalizedClampedAndPersisted() {
-        CompoundTag nbt = new CompoundTag();
+        TagValueOutput output = TagValueOutput.createWithoutContext(ProblemReporter.DISCARDING);
         CopperBeaconState.writeAngles(
-                nbt,
+                output,
                 CopperBeaconState.normalizeAzimuth(540.0f),
                 CopperBeaconState.clampZenith(120.0f));
-        CopperBeaconState.Angles restored = CopperBeaconState.readAngles(nbt);
+        CopperBeaconState.Angles restored = CopperBeaconState.readAngles(TagValueInput.create(
+                ProblemReporter.DISCARDING,
+                HolderLookup.Provider.create(Stream.empty()),
+                output.buildResult()));
 
         assertEquals(-180.0f, restored.azimuth());
         assertEquals(90.0f, restored.zenith());
@@ -115,6 +122,7 @@ class CopperBeaconBlockEntityTest {
                 "assets/rtx-remix-renderer/models/block/copper_beacon_wall.json",
                 "assets/rtx-remix-renderer/models/block/copper_beacon_complete.json",
                 "assets/rtx-remix-renderer/models/item/copper_beacon.json",
+                "assets/rtx-remix-renderer/items/copper_beacon.json",
                 "assets/rtx-remix-renderer/blockstates/copper_beacon.json"}) {
             var stream = CopperBeaconBlockEntityTest.class.getClassLoader()
                     .getResourceAsStream(path);
