@@ -2713,7 +2713,7 @@ public class RemixEntitySubmitter {
         byte[] out = new byte[w * h * 4];
         for (int y = 0; y < h; y++)
             for (int x = 0; x < w; x++) {
-                int abgr = image.getPixelRGBA(x, y);
+                int abgr = image.getPixelABGR(x, y);
                 int idx = (y * w + x) * 4;
                 out[idx]     = (byte) (abgr & 0xFF);
                 out[idx + 1] = (byte) ((abgr >> 8) & 0xFF);

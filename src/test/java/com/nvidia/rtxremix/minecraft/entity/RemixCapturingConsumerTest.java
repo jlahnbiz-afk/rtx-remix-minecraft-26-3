@@ -167,7 +167,7 @@ class RemixCapturingConsumerTest {
     private static SpriteContents spriteContents(String id, String[] rows) {
         NativeImage image = new NativeImage(8, 8, false);
         for (int y = 0; y < 8; y++) {
-            for (int x = 0; x < 8; x++) image.setPixelRGBA(x, y, rows[y].charAt(x) == '#' ? 0xFF808080 : 0);
+            for (int x = 0; x < 8; x++) image.setPixelABGR(x, y, rows[y].charAt(x) == '#' ? 0xFF808080 : 0);
         }
         return new SpriteContents(Identifier.fromNamespaceAndPath("minecraft", id), new FrameSize(8, 8), image,
                 ResourceMetadata.EMPTY);

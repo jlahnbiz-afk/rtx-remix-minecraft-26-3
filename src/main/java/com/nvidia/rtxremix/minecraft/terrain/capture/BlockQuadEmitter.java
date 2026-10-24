@@ -9,17 +9,26 @@ import com.nvidia.rtxremix.minecraft.light.BlockLightRuleManager;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.light.LightEntry;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
-import net.fabricmc.fabric.api.client.render.fluid.v1.FluidRenderHandler;
-import net.fabricmc.fabric.api.client.render.fluid.v1.FluidRenderHandlerRegistry;
-import net.fabricmc.fabric.api.renderer.v1.model.FabricBakedModel;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import net.fabricmc.fabric.api.client.renderer.v1.Renderer;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.MutableQuadView;
+import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadEmitter;
+import net.fabricmc.fabric.api.client.renderer.v1.sprite.SpriteFinder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.color.block.BlockColors;
-import net.minecraft.client.renderer.ItemBlockRenderTypes;
-import net.minecraft.client.renderer.RenderType;
-import net.minecraft.client.renderer.block.BlockRenderDispatcher;
-import net.minecraft.client.renderer.block.model.BakedQuad;
+import net.minecraft.client.model.geom.builders.UVPair;
+import net.minecraft.client.color.block.BlockTintSource;
+import net.minecraft.client.renderer.block.BlockAndTintGetter;
+import net.minecraft.client.renderer.block.BlockStateModelSet;
+import net.minecraft.client.renderer.block.FluidModel;
+import net.minecraft.client.renderer.block.FluidStateModelSet;
+import net.minecraft.client.renderer.block.ModelBlockRenderer;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
+import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
@@ -27,7 +36,6 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
-import net.minecraft.world.level.BlockAndTintGetter;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -38,10 +46,12 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
+import org.jspecify.annotations.Nullable;
+import org.joml.Vector3fc;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.function.Supplier;
+import java.util.function.Predicate;
 
 /**
  * Per-block mesh emission for RTX Remix, designed to be driven from
@@ -66,17 +76,15 @@ public final class BlockQuadEmitter {
     private static final Direction[] HORIZONTAL_DIRECTIONS = {
         Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST
     };
-    private static final Direction[] ALL_DIRECTIONS = {
-        null, Direction.UP, Direction.DOWN, Direction.NORTH,
-        Direction.SOUTH, Direction.EAST, Direction.WEST
-    };
+    private static final Direction[] CULLED_DIRECTIONS = Direction.values();
 
     private static final ThreadLocal<BlockQuadEmitter> INSTANCE = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> threadNamed =
             ThreadLocal.withInitial(() -> Boolean.FALSE);
 
-    private final RemixRenderContext renderContext = new RemixRenderContext();
     private final SingleThreadedRandomSource random = new SingleThreadedRandomSource(42);
+    /** The model's parts for the block being emitted, reused so the vanilla path allocates nothing. */
+    private final List<BlockStateModelPart> parts = new ObjectArrayList<>();
     private final BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
     private final BlockPos.MutableBlockPos neighborPos = new BlockPos.MutableBlockPos();
     private final BlockPos.MutableBlockPos fluidPos = new BlockPos.MutableBlockPos();
@@ -102,6 +110,7 @@ public final class BlockQuadEmitter {
 
     private final float[] tempPositions = new float[12];
     private final float[] tempUvs = new float[8];
+    private final float[] tempNormal = new float[3];
     private final int[] tintCache = new int[TINT_CACHE_SIZE];
     private final int[] waterColorCache = new int[WATER_COLOR_CACHE_SIZE];
     private final byte[] waterTopCellCache = new byte[WATER_TOP_CACHE_CELL_COUNT];
@@ -126,7 +135,7 @@ public final class BlockQuadEmitter {
 
     /**
      * Model-randomisation seed for the block being emitted, mirroring vanilla's
-     * {@code state.getRenderingSeed(pos)}. Set once per block in {@link #emitBlock}.
+     * {@code state.getSeed(pos)}. Set once per block in {@link #emitBlock}.
      *
      * <p>A multi-variant block picks its variant from this, so a constant makes
      * every instance identical. Where the variants are rotations of one model
@@ -134,11 +143,6 @@ public final class BlockQuadEmitter {
      * pickle cluster rotates its pickles around the block.
      */
     private long modelRandomSeed = 42L;
-
-    private final Supplier<RandomSource> randomSupplier = () -> {
-        random.setSeed(modelRandomSeed);
-        return random;
-    };
 
     // Per-section state set by beginSection / processBlock
     /**
@@ -149,7 +153,10 @@ public final class BlockQuadEmitter {
      */
     private boolean active;
     private BlockTextureManager texManager;
-    private BlockRenderDispatcher blockRenderManager;
+    private BlockStateModelSet blockModelSet;
+    private FluidStateModelSet fluidModelSet;
+    /** Vanilla's Cutout Leaves option for this build; off draws leaves on the solid layer. */
+    private boolean cutoutLeaves;
     private BlockColors blockColors;
     private int baseX, baseY, baseZ;
     private long topMask, bottomMask, eastMask, westMask, southMask, northMask;
@@ -193,7 +200,9 @@ public final class BlockQuadEmitter {
      */
     public void beginSection(SectionPos sectionPos,
                              BlockTextureManager tex,
-                             BlockRenderDispatcher brm) {
+                             BlockStateModelSet blockModelSet,
+                             FluidStateModelSet fluidModelSet,
+                             boolean cutoutLeaves) {
         if (!threadNamed.get()) {
             RemixAPI.tracyThreadName("Worker " + Thread.currentThread().getName());
             threadNamed.set(Boolean.TRUE);
@@ -203,7 +212,9 @@ public final class BlockQuadEmitter {
         }
         this.active = true;
         this.texManager = tex;
-        this.blockRenderManager = brm;
+        this.blockModelSet = blockModelSet;
+        this.fluidModelSet = fluidModelSet;
+        this.cutoutLeaves = cutoutLeaves;
         this.baseX = sectionPos.minBlockX();
         this.baseY = sectionPos.minBlockY();
         this.baseZ = sectionPos.minBlockZ();
@@ -263,7 +274,8 @@ public final class BlockQuadEmitter {
 
     /**
      * Captures opacity bitmap, boundary face masks, and light-emitting
-     * blocks. Called once per block from the isOpaqueFullCube redirect.
+     * blocks. Called once per non-air block from the isSolidRender redirect;
+     * the section starts out all transparent, which is what air is.
      */
     public void processBlock(BlockState state, BlockGetter world, BlockPos pos, boolean opaque) {
         int lx = SectionPos.sectionRelative(pos.getX());
@@ -303,16 +315,17 @@ public final class BlockQuadEmitter {
         // frames agree for every vanilla block; a modded or resource-pack rule
         // on an offset block would need the same offset passed into begin() and
         // into the LightEntry positions.
-        modelSampling.begin(blockRenderManager, state, state.getSeed(pos));
+        modelSampling.begin(blockModelSet, state, state.getSeed(pos));
         List<LightEntry> resolvedLights = BlockLightRuleManager.resolve(state, pos, modelSampling);
         lights.addAll(resolvedLights);
     }
 
     /**
      * Emits block model quads for the current block. Called from the
-     * isOpaqueFullCube redirect for blocks vanilla would hand to renderBlock,
-     * a call the build then skips by reporting the block invisible. Bypasses
-     * FRAPI/Indigo and writes directly to the DirectQuadWriter.
+     * isSolidRender redirect for blocks vanilla would hand to its block
+     * renderer, a call the build then skips by reporting the block invisible.
+     * Vanilla models bypass FRAPI/Indigo and write directly to the
+     * DirectQuadWriter.
      */
     public void emitBlock(BlockState state, BlockPos pos, BlockAndTintGetter world) {
         blockCount++;
@@ -320,44 +333,50 @@ public final class BlockQuadEmitter {
         tintValidMask = 0;
 
         // Vanilla derives model randomisation from the block position, in the
-        // same BlockModelRenderer.render this emitter replaces. It also
-        // re-seeds before every getQuads call, which the loops below match.
+        // same ModelBlockRenderer.tesselateBlock this emitter replaces, and
+        // seeds once before collecting the model's parts, as the paths below do.
         modelRandomSeed = state.getSeed(pos);
 
         float lx = SectionPos.sectionRelative(pos.getX());
         float ly = SectionPos.sectionRelative(pos.getY());
         float lz = SectionPos.sectionRelative(pos.getZ());
 
-        // Vanilla applies the per-position model offset (AbstractBlock.OffsetType
+        // Vanilla applies the per-position model offset (BlockBehaviour.OffsetType
         // XZ/XYZ: flowers, saplings, grass, dripstone) inside
-        // BlockModelRenderer.render, which this emitter replaces wholesale.
+        // ModelBlockRenderer.tesselateBlock, which this emitter replaces wholesale.
         // Applying it here is what keeps Remix geometry on the same spot as
         // vanilla's.
         //
         // Folded into the section-local origin rather than applied per vertex:
         // both model paths already add that origin to every position, so the
-        // offset rides along for free. hasModelOffset() is a bare null check on
-        // the block's offsetter, while getModelOffset() allocates a Vec3d, so
-        // the gate keeps that allocation off a path that runs for every block in
-        // every section build.
+        // offset rides along for free. hasOffsetFunction() is a bare null check on
+        // the block's offsetter, while getOffset() allocates a Vec3, so the gate
+        // keeps that allocation off a path that runs for every block in every
+        // section build.
         //
         // This moves geometry only. Block lights are resolved in processBlock
         // against the unoffset grid position; see the note there before adding a
         // light rule to a block that offsets.
         if (state.hasOffsetFunction()) {
-            Vec3 modelOffset = state.getOffset(world, pos);
+            Vec3 modelOffset = state.getOffset(pos);
             lx += (float) modelOffset.x;
             ly += (float) modelOffset.y;
             lz += (float) modelOffset.z;
         }
 
-        BakedModel model = blockRenderManager.getBlockModel(state);
-        String layerName = classifyBlockLayer(state);
+        BlockStateModel model = blockModelSet.get(state);
+        String layerOverride = blockLayerOverride(state, cutoutLeaves);
 
-        if (model instanceof FabricBakedModel fbm && !fbm.isVanillaAdapter()) {
-            emitFrapiBlock(world, state, model, fbm, layerName, lx, ly, lz);
-        } else {
-            emitVanillaBlock(world, state, model, layerName, lx, ly, lz);
+        random.setSeed(modelRandomSeed);
+        model.collectParts(random, parts);
+        try {
+            if (isVanillaModel(model, parts)) {
+                emitVanillaBlock(world, state, layerOverride, lx, ly, lz);
+            } else {
+                emitFrapiBlock(world, state, model, layerOverride, lx, ly, lz);
+            }
+        } finally {
+            parts.clear();
         }
     }
 
@@ -394,61 +413,70 @@ public final class BlockQuadEmitter {
     }
 
     private void emitVanillaBlock(BlockAndTintGetter world, BlockState state,
-                                   BakedModel model, String layerName,
+                                   @Nullable String layerOverride,
                                    float lx, float ly, float lz) {
-
-        for (Direction dir : ALL_DIRECTIONS) {
-            if (dir != null && !shouldDrawBlockSide(world, state, dir)) {
-                continue;
+        // Vanilla's face loop: each culled side is tested once per block and
+        // only when some part has quads on it, then every part's unculled quads.
+        int sideTested = 0;
+        int sideDrawn = 0;
+        for (int p = 0, partCount = parts.size(); p < partCount; p++) {
+            BlockStateModelPart part = parts.get(p);
+            for (Direction dir : CULLED_DIRECTIONS) {
+                List<BakedQuad> culledQuads = part.getQuads(dir);
+                if (culledQuads.isEmpty()) {
+                    continue;
+                }
+                int sideBit = 1 << dir.ordinal();
+                if ((sideTested & sideBit) == 0) {
+                    sideTested |= sideBit;
+                    if (shouldDrawBlockSide(world, state, dir)) {
+                        sideDrawn |= sideBit;
+                    }
+                }
+                if ((sideDrawn & sideBit) == 0) {
+                    continue;
+                }
+                for (int q = 0, quadCount = culledQuads.size(); q < quadCount; q++) {
+                    stageBakedQuad(culledQuads.get(q), layerOverride, state, world, lx, ly, lz);
+                }
             }
-
-            random.setSeed(modelRandomSeed);
-            List<BakedQuad> bakedQuads = model.getQuads(state, dir, random);
-
-            for (BakedQuad bq : bakedQuads) {
-                stageBakedQuad(bq, layerName, state, world, lx, ly, lz);
+            List<BakedQuad> unculledQuads = part.getQuads(null);
+            for (int q = 0, quadCount = unculledQuads.size(); q < quadCount; q++) {
+                stageBakedQuad(unculledQuads.get(q), layerOverride, state, world, lx, ly, lz);
             }
         }
 
         writer.flushBlock(texManager);
     }
 
-    private void stageBakedQuad(BakedQuad bq, String layerName,
+    private void stageBakedQuad(BakedQuad bq, @Nullable String layerOverride,
                                  BlockState state, BlockAndTintGetter world,
                                  float lx, float ly, float lz) {
-        int[] vd = bq.getVertices();
-
         for (int v = 0; v < 4; v++) {
-            int off = v * 8;
-            tempPositions[v * 3]     = Float.intBitsToFloat(vd[off])     + lx;
-            tempPositions[v * 3 + 1] = Float.intBitsToFloat(vd[off + 1]) + ly;
-            tempPositions[v * 3 + 2] = Float.intBitsToFloat(vd[off + 2]) + lz;
-            tempUvs[v * 2]     = Float.intBitsToFloat(vd[off + 4]);
-            tempUvs[v * 2 + 1] = Float.intBitsToFloat(vd[off + 5]);
+            Vector3fc position = bq.position(v);
+            long packedUv = bq.packedUV(v);
+            tempPositions[v * 3]     = position.x() + lx;
+            tempPositions[v * 3 + 1] = position.y() + ly;
+            tempPositions[v * 3 + 2] = position.z() + lz;
+            tempUvs[v * 2]     = UVPair.unpackU(packedUv);
+            tempUvs[v * 2 + 1] = UVPair.unpackV(packedUv);
         }
 
-        int packedNormal = vd[7];
-        float nx = (byte) (packedNormal & 0xFF) / 127f;
-        float ny = (byte) ((packedNormal >> 8) & 0xFF) / 127f;
-        float nz = (byte) ((packedNormal >> 16) & 0xFF) / 127f;
-        if (nx * nx + ny * ny + nz * nz < 0.01f) {
-            float e1x = tempPositions[3] - tempPositions[0], e1y = tempPositions[4] - tempPositions[1], e1z = tempPositions[5] - tempPositions[2];
-            float e2x = tempPositions[6] - tempPositions[0], e2y = tempPositions[7] - tempPositions[1], e2z = tempPositions[8] - tempPositions[2];
-            nx = e1y * e2z - e1z * e2y;
-            ny = e1z * e2x - e1x * e2z;
-            nz = e1x * e2y - e1y * e2x;
-            float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
-            if (len > 0.001f) { nx /= len; ny /= len; nz /= len; }
-        }
+        // Baked quads carry no normal; vanilla's own vertex normal comes from the
+        // face direction, which a rotated element (a cross plant) does not follow.
+        computeGeometricNormal();
+        float nx = tempNormal[0], ny = tempNormal[1], nz = tempNormal[2];
 
+        BakedQuad.MaterialInfo material = bq.materialInfo();
         int color = 0xFFFFFFFF;
-        if (bq.getTintIndex() >= 0 && blockColors != null) {
-            int tint = getBlockTint(state, world, bq.getTintIndex());
+        if (material.isTinted() && blockColors != null) {
+            int tint = getBlockTint(state, world, material.tintIndex());
             int r = (tint >> 16) & 0xFF, g = (tint >> 8) & 0xFF, b = tint & 0xFF;
             color = 0xFF000000 | (r << 16) | (g << 8) | b;
         }
+        String layerName = layerOverride != null ? layerOverride : layerName(material.layer());
 
-        TextureAtlasSprite sprite = bq.getSprite();
+        TextureAtlasSprite sprite = material.sprite();
         Identifier spriteId = sprite != null ? sprite.contents().name() : null;
         if (isWaterSprite(spriteId)) {
             emitBlockWaterQuad(nx, ny, nz, color, layerName);
@@ -461,6 +489,20 @@ public final class BlockQuadEmitter {
 
         writer.stageQuad(tempPositions, tempUvs, nx, ny, nz, color,
                 spriteId, su0, sv0, su1, sv1, layerName);
+    }
+
+    /** Writes the unit normal of the quad in {@code tempPositions} into {@code tempNormal}. */
+    private void computeGeometricNormal() {
+        float e1x = tempPositions[3] - tempPositions[0], e1y = tempPositions[4] - tempPositions[1], e1z = tempPositions[5] - tempPositions[2];
+        float e2x = tempPositions[6] - tempPositions[0], e2y = tempPositions[7] - tempPositions[1], e2z = tempPositions[8] - tempPositions[2];
+        float nx = e1y * e2z - e1z * e2y;
+        float ny = e1z * e2x - e1x * e2z;
+        float nz = e1x * e2y - e1y * e2x;
+        float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (len > 0.001f) { nx /= len; ny /= len; nz /= len; }
+        tempNormal[0] = nx;
+        tempNormal[1] = ny;
+        tempNormal[2] = nz;
     }
 
     private static final Identifier WATER_STILL_SPRITE = Identifier.withDefaultNamespace("block/water_still");
@@ -504,58 +546,137 @@ public final class BlockQuadEmitter {
 
     private BlockState frapiState;
     private BlockAndTintGetter frapiWorld;
+    private @Nullable String frapiLayerOverride;
+    private float frapiX, frapiY, frapiZ;
+    private SpriteFinder frapiSpriteFinder;
 
-    private boolean frapiCullTest(Direction dir) {
-        return !shouldDrawBlockSide(frapiWorld, frapiState, dir);
-    }
+    /**
+     * Receives every quad a FRAPI model emits for the block being meshed. Created
+     * lazily, once per worker, so a session with no modded models never asks the
+     * renderer for one.
+     */
+    private QuadEmitter frapiEmitter;
+
+    private final Predicate<@Nullable Direction> frapiCullTest =
+            dir -> dir != null && !shouldDrawBlockSide(frapiWorld, frapiState, dir);
 
     private void emitFrapiBlock(BlockAndTintGetter world, BlockState state,
-                                 BakedModel model, FabricBakedModel fbm,
-                                 String layerName, float lx, float ly, float lz) {
-
+                                 BlockStateModel model, @Nullable String layerOverride,
+                                 float lx, float ly, float lz) {
+        if (frapiEmitter == null) {
+            frapiEmitter = Renderer.get().quadEmitter(this::captureFrapiQuad);
+        }
         frapiState = state;
         frapiWorld = world;
+        frapiLayerOverride = layerOverride;
+        frapiX = lx;
+        frapiY = ly;
+        frapiZ = lz;
+        frapiSpriteFinder = blockSpriteFinder();
 
-        renderContext.prepare(world, state, mutablePos.immutable(), this::frapiCullTest);
-
-        fbm.emitBlockQuads(world, state, mutablePos.immutable(), randomSupplier, renderContext);
-
-        List<SectionBlockData.BlockQuad> frapiQuads = renderContext.harvest();
-        for (SectionBlockData.BlockQuad fq : frapiQuads) {
-            float[] fqPos = fq.positions();
-            for (int v = 0; v < 4; v++) {
-                tempPositions[v * 3]     = fqPos[v * 3]     + lx;
-                tempPositions[v * 3 + 1] = fqPos[v * 3 + 1] + ly;
-                tempPositions[v * 3 + 2] = fqPos[v * 3 + 2] + lz;
-            }
-
-            writer.stageQuad(tempPositions, fq.uvs(), fq.nx(), fq.ny(), fq.nz(),
-                    fq.color(), fq.spriteId(),
-                    fq.spriteU0(), fq.spriteV0(), fq.spriteU1(), fq.spriteV1(),
-                    layerName);
-        }
+        random.setSeed(modelRandomSeed);
+        model.emitQuads(frapiEmitter, world, mutablePos, state, random, frapiCullTest);
 
         writer.flushBlock(texManager);
+        frapiState = null;
+        frapiWorld = null;
     }
+
+    private void captureFrapiQuad(MutableQuadView quad) {
+        // The cull test is only advisory to the model, so a quad on a culled side
+        // can still arrive here.
+        Direction cull = quad.cullFace();
+        if (cull != null && frapiCullTest.test(cull)) {
+            return;
+        }
+
+        for (int v = 0; v < 4; v++) {
+            tempPositions[v * 3]     = quad.x(v) + frapiX;
+            tempPositions[v * 3 + 1] = quad.y(v) + frapiY;
+            tempPositions[v * 3 + 2] = quad.z(v) + frapiZ;
+            tempUvs[v * 2]     = quad.u(v);
+            tempUvs[v * 2 + 1] = quad.v(v);
+        }
+
+        Vector3fc faceNormal = quad.faceNormal();
+        float nx = faceNormal.x(), ny = faceNormal.y(), nz = faceNormal.z();
+
+        int color = quad.color(0);
+        int tintIndex = quad.tintIndex();
+        if (tintIndex >= 0 && blockColors != null) {
+            int tint = getBlockTint(frapiState, frapiWorld, tintIndex);
+            color = multiplyRgb(color, tint);
+        }
+        String layerName = frapiLayerOverride != null
+                ? frapiLayerOverride
+                : layerName(quad.chunkLayer());
+
+        TextureAtlasSprite sprite = frapiSpriteFinder != null ? frapiSpriteFinder.find(quad) : null;
+        Identifier spriteId = sprite != null ? sprite.contents().name() : null;
+        float su0 = sprite != null ? sprite.getU0() : 0;
+        float sv0 = sprite != null ? sprite.getV0() : 0;
+        float su1 = sprite != null ? sprite.getU1() : 1;
+        float sv1 = sprite != null ? sprite.getV1() : 1;
+
+        writer.stageQuad(tempPositions, tempUvs, nx, ny, nz, color,
+                spriteId, su0, sv0, su1, sv1, layerName);
+    }
+
+    private static SpriteFinder blockSpriteFinder() {
+        Minecraft client = Minecraft.getInstance();
+        if (client == null) {
+            return null;
+        }
+        return client.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS) instanceof TextureAtlas atlas
+                ? atlas.spriteFinder()
+                : null;
+    }
+
+    private static int multiplyRgb(int argb, int tint) {
+        int r = ((argb >> 16) & 0xFF) * ((tint >> 16) & 0xFF) / 255;
+        int g = ((argb >> 8) & 0xFF) * ((tint >> 8) & 0xFF) / 255;
+        int b = (argb & 0xFF) * (tint & 0xFF) / 255;
+        return (argb & 0xFF000000) | (r << 16) | (g << 8) | b;
+    }
+
+    /**
+     * Whether the model and every part it picked for this block are vanilla's own,
+     * so their quads are exactly what {@link BlockStateModelPart#getQuads} returns.
+     * A modded model or part may emit different quads through FRAPI.
+     */
+    private static boolean isVanillaModel(BlockStateModel model, List<BlockStateModelPart> parts) {
+        if (!VANILLA_CLASS.get(model.getClass())) {
+            return false;
+        }
+        for (int p = 0, partCount = parts.size(); p < partCount; p++) {
+            if (!VANILLA_CLASS.get(parts.get(p).getClass())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static final ClassValue<Boolean> VANILLA_CLASS = new ClassValue<>() {
+        @Override
+        protected Boolean computeValue(Class<?> type) {
+            return type.getName().startsWith("net.minecraft.");
+        }
+    };
 
     // --- Fluid geometry ---
 
     private void emitFluidQuads(BlockAndTintGetter world, FluidState fluidState,
                                  int lx, int ly, int lz) {
-        FluidRenderHandler handler = FluidRenderHandlerRegistry.INSTANCE.get(fluidState.getType());
-        if (handler == null) return;
+        FluidModel model = fluidModelSet.get(fluidState);
 
         fluidPos.set(baseX + lx, baseY + ly, baseZ + lz);
-
-        TextureAtlasSprite[] fluidSprites = handler.getFluidSprites(world, fluidPos, fluidState);
-        if (fluidSprites == null || fluidSprites.length < 2) return;
 
         boolean isLava = fluidState.is(FluidTags.LAVA);
         boolean isWater = !isLava;
         String layer = isLava ? "solid" : "translucent";
         int fluidColor = isWater
-                ? getCachedWaterColor(handler, world, fluidState, lx, ly, lz)
-                : handler.getFluidColor(world, fluidPos, fluidState);
+                ? getCachedWaterColor(model, world, lx, ly, lz)
+                : fluidTint(model, world);
         int r = (fluidColor >> 16) & 0xFF, g = (fluidColor >> 8) & 0xFF, b = fluidColor & 0xFF;
         int color = 0xFF000000 | (r << 16) | (g << 8) | b;
 
@@ -567,8 +688,8 @@ public final class BlockQuadEmitter {
         float tileSize = BlockTextureManager.getWaterTileSize();
         int wx = baseX + lx, wy = baseY + ly, wz = baseZ + lz;
 
-        TextureAtlasSprite stillSprite = fluidSprites[0];
-        TextureAtlasSprite flowSprite = fluidSprites[1];
+        TextureAtlasSprite stillSprite = model.stillMaterial().sprite();
+        TextureAtlasSprite flowSprite = model.flowingMaterial().sprite();
 
         Identifier stillId = stillSprite.contents().name();
         float su0 = stillSprite.getU0(), sv0 = stillSprite.getV0();
@@ -648,7 +769,7 @@ public final class BlockQuadEmitter {
                 fluidCheckPos.getX(), fluidCheckPos.getY(), fluidCheckPos.getZ());
         BlockState belowState = getCachedBlockState(world,
                 fluidCheckPos.getX(), fluidCheckPos.getY(), fluidCheckPos.getZ());
-        if (!belowFluid.getType().isSame(fluidState.getType()) && !belowState.isSolidRender(world, fluidCheckPos)) {
+        if (!belowFluid.getType().isSame(fluidState.getType()) && !belowState.isSolidRender()) {
             setPos4(tempPositions, lx, ly, lz + 1, lx + 1, ly, lz + 1,
                     lx + 1, ly, lz, lx, ly, lz);
             if (isWater) {
@@ -676,7 +797,7 @@ public final class BlockQuadEmitter {
                     fluidCheckPos.getX(), fluidCheckPos.getY(), fluidCheckPos.getZ());
 
             if (sideFluid.getType().isSame(fluidState.getType())) continue;
-            if (sideState.isSolidRender(world, fluidCheckPos)) continue;
+            if (sideState.isSolidRender()) continue;
 
             float sideH0, sideH1;
             switch (dir) {
@@ -739,11 +860,11 @@ public final class BlockQuadEmitter {
                 || !neighborState.canOcclude()) {
             return false;
         }
-        if (neighborState.isSolidRender(world, neighborPos)) {
+        if (neighborState.isSolidRender()) {
             return true;
         }
 
-        VoxelShape neighborShape = neighborState.getOcclusionShape(world, neighborPos);
+        VoxelShape neighborShape = neighborState.getOcclusionShape();
         return isFluidSideCovered(Direction.UP, 1.0f, true, neighborShape);
     }
 
@@ -759,7 +880,7 @@ public final class BlockQuadEmitter {
         if (!neighborOpaque) return false;
 
         VoxelShape fluidShape = Shapes.box(0.0, 0.0, 0.0, 1.0, fluidHeight, 1.0);
-        return Shapes.blockOccudes(fluidShape, neighborShape, direction);
+        return Shapes.blockOccludes(fluidShape, neighborShape, direction);
     }
 
     private FluidTopOcclusion.Exposure classifyWaterTopExposure(
@@ -882,15 +1003,25 @@ public final class BlockQuadEmitter {
         return count > 0 ? totalHeight / count : 0.5f;
     }
 
-    private int getCachedWaterColor(FluidRenderHandler handler, BlockAndTintGetter world,
-                                    FluidState fluidState, int lx, int ly, int lz) {
+    private int getCachedWaterColor(FluidModel model, BlockAndTintGetter world,
+                                    int lx, int ly, int lz) {
         int cell = ((ly >> 3) << 4) | ((lz >> 2) << 2) | (lx >> 2);
         int bit = 1 << cell;
         if ((waterColorKnownMask & bit) == 0) {
-            waterColorCache[cell] = handler.getFluidColor(world, fluidPos, fluidState);
+            waterColorCache[cell] = fluidTint(model, world);
             waterColorKnownMask |= bit;
         }
         return waterColorCache[cell];
+    }
+
+    /** The fluid model's tint at {@code fluidPos}, white for an untinted fluid such as lava. */
+    private int fluidTint(FluidModel model, BlockAndTintGetter world) {
+        BlockTintSource tintSource = model.tintSource();
+        if (tintSource == null) {
+            return 0xFFFFFFFF;
+        }
+        return tintSource.colorInWorld(getCachedBlockState(world,
+                fluidPos.getX(), fluidPos.getY(), fluidPos.getZ()), world, fluidPos);
     }
 
     // --- Helpers ---
@@ -908,8 +1039,7 @@ public final class BlockQuadEmitter {
             return faceCullResults[slot] == FACE_CULL_DRAWN;
         }
 
-        neighborPos.set(neighborX, neighborY, neighborZ);
-        boolean drawn = Block.shouldRenderFace(state, world, mutablePos, side, neighborPos);
+        boolean drawn = Block.shouldRenderFace(state, neighbor, side);
         faceCullKeys[slot] = key;
         faceCullResults[slot] = drawn ? FACE_CULL_DRAWN : FACE_CULL_HIDDEN;
         return drawn;
@@ -974,35 +1104,65 @@ public final class BlockQuadEmitter {
 
     private int getBlockTint(BlockState state, BlockAndTintGetter world, int colorIndex) {
         if (colorIndex < 0 || colorIndex >= TINT_CACHE_SIZE) {
-            return blockColors.getColor(state, world, mutablePos, colorIndex);
+            return computeBlockTint(state, world, colorIndex);
         }
 
         int bit = 1 << colorIndex;
         if ((tintValidMask & bit) == 0) {
-            tintCache[colorIndex] = blockColors.getColor(state, world, mutablePos, colorIndex);
+            tintCache[colorIndex] = computeBlockTint(state, world, colorIndex);
             tintValidMask |= bit;
         }
         return tintCache[colorIndex];
+    }
+
+    /** Vanilla's tint for one tint index, white where the block has no source for it. */
+    private int computeBlockTint(BlockState state, BlockAndTintGetter world, int colorIndex) {
+        BlockTintSource tintSource = blockColors.getTintSource(state, colorIndex);
+        return tintSource != null ? tintSource.colorInWorld(state, world, mutablePos) : 0xFFFFFFFF;
+    }
+
+    /**
+     * The terrain layer every quad of a block is bucketed under regardless of its
+     * own, or null when each quad keeps its own layer.
+     *
+     * <p>Vanilla draws clear glass as a cutout: the texture is alpha 0 between
+     * the frame pixels and the GL path simply discards those. Remix can refract
+     * through it instead, so clear glass takes its own layer and a translucent
+     * material with the frame as a diffuse layer. Stained glass is already
+     * translucent and keeps vanilla's layer. Leaves follow vanilla's Cutout
+     * Leaves option, which draws them solid when off.
+     */
+    static @Nullable String blockLayerOverride(BlockState state, boolean cutoutLeaves) {
+        if (state.is(Blocks.GLASS) || state.is(Blocks.GLASS_PANE)) return "glass";
+        if (ModelBlockRenderer.forceOpaque(cutoutLeaves, state)) return "solid";
+        return null;
+    }
+
+    /** The {@link BlockTextureManager#layerType} name a quad on a vanilla chunk layer takes. */
+    static String layerName(ChunkSectionLayer layer) {
+        return switch (layer) {
+            case SOLID -> "solid";
+            case CUTOUT -> "cutout";
+            case TRANSLUCENT -> "translucent";
+        };
     }
 
     /**
      * The terrain layer a block's quads are bucketed under, by
      * {@link BlockTextureManager#layerType} name. A held block item asks the same
      * question, so it shades as its placed counterpart does.
+     *
+     * <p>Vanilla picks a layer per quad from its sprite since 26.1, so a whole
+     * block is translucent when any of its quads is, otherwise cutout when its
+     * particle sprite has transparent pixels, and solid otherwise.
      */
     public static String classifyBlockLayer(BlockState state) {
-        // Vanilla draws clear glass as a cutout: the texture is alpha 0 between
-        // the frame pixels and the GL path simply discards those. Remix can
-        // refract through it instead, so clear glass takes its own layer and a
-        // translucent material with the frame as a diffuse layer.
-        // Stained glass is already translucent and keeps vanilla's layer.
-        if (state.is(Blocks.GLASS) || state.is(Blocks.GLASS_PANE)) return "glass";
-        RenderType layer = ItemBlockRenderTypes.getChunkRenderType(state);
-        if (layer == RenderType.solid()) return "solid";
-        if (layer == RenderType.cutoutMipped()) return "cutout_mipped";
-        if (layer == RenderType.cutout()) return "cutout";
-        if (layer == RenderType.translucent()) return "translucent";
-        if (layer == RenderType.tripwire()) return "cutout";
+        Minecraft client = Minecraft.getInstance();
+        String override = blockLayerOverride(state, client.options.cutoutLeaves().get());
+        if (override != null) return override;
+        BlockStateModel model = client.getModelManager().getBlockStateModelSet().get(state);
+        if (model.hasMaterialFlag(BakedQuad.FLAG_TRANSLUCENT)) return "translucent";
+        if (model.particleMaterial().sprite().transparency().hasTransparent()) return "cutout";
         return "solid";
     }
 

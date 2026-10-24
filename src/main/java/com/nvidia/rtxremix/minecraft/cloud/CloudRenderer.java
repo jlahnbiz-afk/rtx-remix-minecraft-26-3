@@ -141,9 +141,9 @@ public final class CloudRenderer {
             completedPaletteMeshes.clear();
             clouds.clear();
             visibleKeys.clear();
-            int cloudTicks =
-                    ((WorldRendererCloudAccess) client.levelRenderer).rtxremix$getCloudTicks();
-            drawVanillaClouds(cameraPos, cloudHeight, cloudTicks + (double) tickDelta);
+            // Vanilla's clouds have run on world time since 26.1, so the Classic
+            // style shares its period and phase with them.
+            drawVanillaClouds(cameraPos, cloudHeight, world.getGameTime() + (double) tickDelta);
             return;
         }
 
@@ -391,7 +391,7 @@ public final class CloudRenderer {
                 for (int y = 0; y < vanillaTextureHeight; y++) {
                     for (int x = 0; x < vanillaTextureWidth; x++) {
                         vanillaOccupancy[y * vanillaTextureWidth + x] =
-                                ((image.getPixelRGBA(x, y) >>> 24) & 0xff) >= 128;
+                                ((image.getPixelABGR(x, y) >>> 24) & 0xff) >= 128;
                     }
                 }
             }

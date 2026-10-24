@@ -213,7 +213,7 @@ public class BlockTextureManager {
             BitSet transparent = null;
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++)
-                    if (((img.getPixelRGBA(x, y) >> 24) & 0xFF) < 255) {
+                    if (((img.getPixelABGR(x, y) >> 24) & 0xFF) < 255) {
                         if (transparent == null) transparent = new BitSet(w * h);
                         transparent.set(y * w + x);
                     }
@@ -1035,7 +1035,7 @@ public class BlockTextureManager {
             int sw = sprite.contents().width(), sh = sprite.contents().height();
             for (int y = 0; y < sh; y++)
                 for (int x = 0; x < sw; x++) {
-                    int abgr = img.getPixelRGBA(x, y);
+                    int abgr = img.getPixelABGR(x, y);
                     int idx = ((sy + y) * w + (sx + x)) * 4;
                     buf[idx]     = (byte) (abgr & 0xFF);
                     buf[idx + 1] = (byte) ((abgr >> 8) & 0xFF);

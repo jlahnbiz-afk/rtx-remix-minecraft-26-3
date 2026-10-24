@@ -596,8 +596,8 @@ public class ChunkManager {
     }
 
     public void onChunkUnloaded(ChunkPos p) {
-        BlockDataQueue.markChunkUnloaded(p.x, p.z);
-        chunkUnloadEvents.add(packChunkKey(p.x, p.z));
+        BlockDataQueue.markChunkUnloaded(p.x(), p.z());
+        chunkUnloadEvents.add(packChunkKey(p.x(), p.z()));
     }
 
     private static long packChunkKey(int cx, int cz) {
@@ -869,7 +869,7 @@ public class ChunkManager {
         }
 
         LevelChunk wc = currentWorld.getChunkSource().getChunk(cx, cz, false);
-        return wc != null && wc.isSectionEmpty(sy);
+        return wc != null && wc.getSection(wc.getSectionIndexFromSectionY(sy)).hasOnlyAir();
     }
 
     private int drainBlockData() {
@@ -1025,8 +1025,8 @@ public class ChunkManager {
      * border-sized burst of them.
      */
     private void cancelLightTasksForColumn(int cx, int cz) {
-        int topSection = currentWorld.getMaxSection();
-        for (int sy = currentWorld.getMinSection(); sy < topSection; sy++) {
+        int topSection = currentWorld.getMaxSectionY();
+        for (int sy = currentWorld.getMinSectionY(); sy <= topSection; sy++) {
             cancelLightTask(new LightSectionKey(cx, sy, cz));
         }
     }

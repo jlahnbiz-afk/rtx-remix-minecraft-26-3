@@ -4,37 +4,34 @@
  */
 package com.nvidia.rtxremix.minecraft.mixin;
 
-import com.nvidia.rtxremix.minecraft.terrain.capture.RenderRegionStoragePool;
-import net.minecraft.client.renderer.chunk.RenderChunk;
-import net.minecraft.world.level.chunk.LevelChunk;
-import com.nvidia.rtxremix.minecraft.terrain.capture.RegionSnapshotRelease;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.nvidia.rtxremix.minecraft.terrain.capture.RenderRegionStoragePool;
+import net.minecraft.client.renderer.chunk.SectionCopy;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.PalettedContainer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
 /**
- * Marks the render thread as taking a region snapshot while a {@code RenderedChunk} is
- * constructed, so its block-state copies draw pooled storage, and takes the builder's
- * reference on the new snapshot; see {@link RenderedChunkMixin} and
- * {@link ChunkRendererRegionBuilderMixin}.
+ * Marks the render thread as taking a region snapshot while a {@code SectionCopy} copies its
+ * section's block states, so the copy draws pooled storage; see {@link SectionCopyMixin}, which
+ * also takes the cache's reference on the new snapshot.
  */
-@Mixin(targets = "net.minecraft.client.renderer.chunk.RenderRegionCache$ChunkInfo")
+@Mixin(SectionCopy.class)
 public abstract class ClientChunkMixin {
 
     @WrapOperation(
-            method = "renderChunk",
-            at = @At(value = "NEW", target = "(Lnet/minecraft/world/level/chunk/LevelChunk;)Lnet/minecraft/client/renderer/chunk/RenderChunk;")
+            method = "<init>",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/chunk/PalettedContainer;copy()Lnet/minecraft/world/level/chunk/PalettedContainer;")
     )
-    private RenderChunk rtxremix$snapshotWithPooledStorage(LevelChunk chunk, Operation<RenderChunk> original) {
+    private PalettedContainer<BlockState> rtxremix$copyWithPooledStorage(
+            PalettedContainer<BlockState> states, Operation<PalettedContainer<BlockState>> original) {
         RenderRegionStoragePool.beginCopying();
-        RenderChunk snapshot;
         try {
-            snapshot = original.call(chunk);
+            return original.call(states);
         } finally {
             RenderRegionStoragePool.endCopying();
         }
-        ((RegionSnapshotRelease) snapshot).rtxremix$retain();
-        return snapshot;
     }
 }

@@ -144,7 +144,7 @@ sourceSets {
 }
 
 loom {
-    //AWTMP accessWidenerPath = file("src/main/resources/rtx-remix-renderer.accesswidener")
+    accessWidenerPath = file("src/main/resources/rtx-remix-renderer.accesswidener")
 
     runs {
         client {

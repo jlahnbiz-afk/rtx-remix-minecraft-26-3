@@ -679,7 +679,7 @@ public class SkyRenderer {
             pixels = new byte[width * height * 4];
             for (int y = 0; y < height; y++) {
                 for (int x = 0; x < width; x++) {
-                    int abgr = image.getPixelRGBA(x, y);
+                    int abgr = image.getPixelABGR(x, y);
                     int index = (y * width + x) * 4;
                     pixels[index] = (byte) (abgr & 0xFF);
                     pixels[index + 1] = (byte) ((abgr >>> 8) & 0xFF);
