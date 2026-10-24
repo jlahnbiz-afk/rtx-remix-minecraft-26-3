@@ -126,6 +126,20 @@ their distance.
 | `rtxremix.particles.fastAirCollision` | Take a fast path through particle collision when every swept cell is air. Set to false to disable the fast path | `ParticleStateMixin` |
 | `rtxremix.particles.fastAirCollisionMaxBlocks` | Largest sweep, in cells, that the fast path handles | `ParticleStateMixin` |
 
+## Rain Surfaces
+
+Rain pools on open ground and rings open water. Puddles are laid when a
+section is built, on the top face of each occluding block that is the highest
+to stop rain in its column, where it rains rather than snows; the puddle
+material then floods them outward while it rains and dries them after
+(`PuddleField`, `RainSurfaces`). Open water switches to raindrop rings while
+rain falls. Both read at startup.
+
+| Key | Effect | Owner |
+|---|---|---|
+| `rtxremix.rain.puddles` | Set to false to lay no puddles | `BlockQuadEmitter` |
+| `rtxremix.rain.ripples` | Set to false to keep open water's waves in the rain | `BlockTextureManager` |
+
 ## Profiling And Diagnostics
 
 | Key | Effect | Owner |

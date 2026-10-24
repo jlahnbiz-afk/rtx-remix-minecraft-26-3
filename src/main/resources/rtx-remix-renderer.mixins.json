@@ -58,6 +58,7 @@
         "ParticleStateMixin",
         "PreferredGraphicsApiMixin",
         "RebuildTaskMixin",
+        "RenderSectionRegionAccessor",
         "RenderStateOwnerMixin",
         "SectionBuilderMixin",
         "SectionCopyMixin",

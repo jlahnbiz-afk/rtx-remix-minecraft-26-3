@@ -34,6 +34,7 @@ import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.texture.ParticleAtlasManager;
 import com.nvidia.rtxremix.minecraft.particle.RemixParticleRenderer.PreparedFrame;
 import com.nvidia.rtxremix.minecraft.particle.RemixParticleRenderer;
+import com.nvidia.rtxremix.minecraft.weather.RainSurfaces;
 import com.nvidia.rtxremix.minecraft.weather.RemixWeatherRenderer;
 import com.nvidia.rtxremix.minecraft.camera.CameraController;
 import com.nvidia.rtxremix.minecraft.logic.ConfLayerDriver;
@@ -159,6 +160,7 @@ public class RemixRenderer {
     private ParticleAtlasManager particleAtlasManager;
     private RemixParticleRenderer particleRenderer;
     private RemixWeatherRenderer weatherRenderer;
+    private final RainSurfaces rainSurfaces = new RainSurfaces();
     private final ExecutorService particleExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "RTX Remix Particles");
         thread.setDaemon(true);
@@ -834,6 +836,9 @@ public class RemixRenderer {
                     chunkManager.updateVisibleChunks(world, cameraPos, perfTimer, perfChunkGen, perfChunkDraw);
                 } catch (Exception e) {
                     LOGGER.error("Error updating chunks", e);
+                }
+                if (textureManager != null) {
+                    rainSurfaces.update(world, tickDelta, textureManager);
                 }
             } else {
                 chunkManager.hideRetainedInstances();

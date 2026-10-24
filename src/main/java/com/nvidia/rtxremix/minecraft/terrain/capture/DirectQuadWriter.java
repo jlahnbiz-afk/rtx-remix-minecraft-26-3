@@ -45,6 +45,10 @@ public final class DirectQuadWriter {
     /** Quads one block may stage; past it the rest are dropped rather than grown into. */
     private static final int MAX_BLOCK_QUADS = 1 << 16;
     private static final float DECAL_NORMAL_DOT_EPSILON = 0.999f;
+    /** Bucket of water surfaces open to the sky, drawn with the rain-aware water material. */
+    public static final String SKY_WATER_BUCKET = "water_sky";
+    /** Bucket of puddle films, drawn with the puddle material. */
+    public static final String PUDDLE_BUCKET = "puddle";
     private static final float DECAL_PLANE_DISTANCE_EPSILON = 1.0E-3f;
     private static final float DECAL_OVERLAP_EPSILON = 1.0E-4f;
 
@@ -108,6 +112,15 @@ public final class DirectQuadWriter {
                         float[] uvs, int uvOff,
                         float nx, float ny, float nz,
                         int color, int boundsMin, int boundsMax) {
+            writeQuad(pos, posOff, uvs, uvOff, nx, ny, nz,
+                    color, color, color, color, boundsMin, boundsMax);
+        }
+
+        void writeQuad(float[] pos, int posOff,
+                        float[] uvs, int uvOff,
+                        float nx, float ny, float nz,
+                        int color0, int color1, int color2, int color3,
+                        int boundsMin, int boundsMax) {
             long requiredBytes = (long) (vertexCount + 4) * STRIDE;
             if (requiredBytes > MAX_VERT_BUF_SIZE) {
                 droppedQuads.incrementAndGet();
@@ -117,6 +130,7 @@ public final class DirectQuadWriter {
 
             for (int v = 0; v < 4; v++) {
                 int wo = (vertexCount + v) * STRIDE;
+                int color = v == 0 ? color0 : v == 1 ? color1 : v == 2 ? color2 : color3;
                 float x = pos[posOff + v * 3];
                 float y = pos[posOff + v * 3 + 1];
                 float z = pos[posOff + v * 3 + 2];
@@ -338,6 +352,25 @@ public final class DirectQuadWriter {
                                 : HardcodedVertex.packHalf2x16(su1, sv1);
 
         bb.writeQuad(positions, 0, uvs, 0, nx, ny, nz, color, boundsMin, boundsMax);
+    }
+
+    /** Writes a water surface quad open to the sky, which the rain-aware water material draws. */
+    public void writeSkyWaterQuad(float[] positions, float[] uvs,
+                                  float nx, float ny, float nz, int color) {
+        getBucket(ChunkManager.CAT_TRANSLUCENT, SKY_WATER_BUCKET).writeQuad(positions, 0, uvs, 0,
+                nx, ny, nz, color, HardcodedVertex.packHalf2x16(0, 0), HardcodedVertex.packHalf2x16(1, 1));
+    }
+
+    /**
+     * Writes a puddle film over a block's top face: the ground's own sprite with a colour
+     * per vertex, whose alpha is the puddle depth at that corner.
+     */
+    public void writePuddleQuad(float[] positions, float[] uvs,
+                                int color0, int color1, int color2, int color3,
+                                float su0, float sv0, float su1, float sv1) {
+        getBucket(ChunkManager.CAT_SOLID, PUDDLE_BUCKET).writeQuad(positions, 0, uvs, 0,
+                0f, 1f, 0f, color0, color1, color2, color3,
+                HardcodedVertex.packHalf2x16(su0, sv0), HardcodedVertex.packHalf2x16(su1, sv1));
     }
 
     /**

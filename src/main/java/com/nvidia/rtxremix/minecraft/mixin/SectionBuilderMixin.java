@@ -118,7 +118,8 @@ public class SectionBuilderMixin {
         }
 
         BlockQuadEmitter.threadLocal().beginSection(
-                sectionPos, tex, this.blockModelSet, this.fluidModelSet, this.cutoutLeaves);
+                sectionPos, tex, this.blockModelSet, this.fluidModelSet, this.cutoutLeaves,
+                ((RenderSectionRegionAccessor) renderRegion).rtxremix$level());
         rtxremix$tracyBlockLoop.set(ProfileScope.begin("block loop"));
     }
 

@@ -9,6 +9,7 @@ import com.nvidia.rtxremix.MeshInfoSurfaceTriangles;
 import com.nvidia.rtxremix.minecraft.asset.RemixMaterial;
 import com.nvidia.rtxremix.minecraft.asset.RemixMesh;
 import com.nvidia.rtxremix.minecraft.asset.RemixMeshSurface;
+import com.nvidia.rtxremix.minecraft.terrain.capture.DirectQuadWriter;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.terrain.capture.SectionMeshData;
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
@@ -386,6 +387,8 @@ public final class BlockMeshBuilder {
         String baseName = isSss ? bucketKey.substring(0, bucketKey.length() - 4) : bucketKey;
 
         if ("water".equals(baseName)) return tex.getWaterSurfaceMaterial();
+        if (DirectQuadWriter.SKY_WATER_BUCKET.equals(baseName)) return tex.getSkyWaterSurfaceMaterial();
+        if (DirectQuadWriter.PUDDLE_BUCKET.equals(baseName)) return tex.getPuddleMaterial();
 
         int layerType = BlockTextureManager.layerType(baseName);
         return isSss ? tex.getAtlasMaterialSSS(layerType)

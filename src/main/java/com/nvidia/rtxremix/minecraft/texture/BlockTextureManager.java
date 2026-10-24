@@ -22,6 +22,7 @@ import com.nvidia.rtxremix.minecraft.asset.RemixTextureStore;
 import com.nvidia.rtxremix.minecraft.mixin.SpriteAtlasAccessor;
 import com.nvidia.rtxremix.minecraft.mixin.SpriteContentsAccessor;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
+import com.nvidia.rtxremix.minecraft.terrain.capture.PuddleField;
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -106,6 +107,16 @@ public class BlockTextureManager {
     private final List<RemixTexture> managedTextures = new ArrayList<>();
     private final List<RemixMaterial> managedMaterials = new ArrayList<>();
     private RemixMaterial waterSurfaceMaterial;
+    /**
+     * Water open to the sky; the same as {@link #waterSurfaceMaterial} until it rains,
+     * when its normals switch to raindrop rings. See {@link #applyRainSurfaces}.
+     */
+    private RemixMaterial skyWaterSurfaceMaterial;
+    private RemixTexture waterRippleTexture;
+    /** Flooded ground; see {@link com.nvidia.rtxremix.minecraft.terrain.capture.PuddleField}. */
+    private RemixMaterial puddleMaterial;
+    private int puddleAlphaReference = PuddleField.reference(0f);
+    private boolean waterRippling;
     private RemixMaterial waterCameraMediumMaterial;
     private long waterNormalHandle;
     private boolean initialized, initFailed;
@@ -590,6 +601,7 @@ public class BlockTextureManager {
                         sssTex, sssAlbedoTex) : null;
             }
         }
+        puddleMaterial = createMaterialViaStore(puddleMaterialInfo(puddleAlphaReference));
         int sssCount = 0;
         StringBuilder sssSprites = new StringBuilder();
         for (SpriteEntry se : sprites) {
@@ -753,6 +765,14 @@ public class BlockTextureManager {
 
     private static final String WATER_NORMALS_DDS = "textures/water_normals_flipbook.dds";
     private static final float WATER_TILE_SIZE = 10.0f;
+    /** Ripple frame size: sixteen texels a block over one water tile, Minecraft's own density. */
+    private static final int WATER_RIPPLE_FRAME_PX = 160;
+    private static final long WATER_RIPPLE_SEED = 0x52414E44L;
+    private static final String WATER_RIPPLE_TEXTURE_NAME = "water_rain_ripples";
+    private static final float PUDDLE_ROUGHNESS = 0.04f;
+    /** Kill switch for raindrop rings on open water ({@code -Drtxremix.rain.ripples=false}). */
+    public static final boolean RAIN_RIPPLES_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("rtxremix.rain.ripples"));
     private static final float DEFAULT_WATER_IOR = 1.33f;
     private static final float DEFAULT_WATER_TRANSMITTANCE_R = 0.6f;
     private static final float DEFAULT_WATER_TRANSMITTANCE_G = 0.9f;
@@ -792,6 +812,10 @@ public class BlockTextureManager {
     private void destroyWaterResources(RemixAPI api) {
         destroyManagedMaterial(waterSurfaceMaterial);
         waterSurfaceMaterial = null;
+        destroyManagedMaterial(skyWaterSurfaceMaterial);
+        skyWaterSurfaceMaterial = null;
+        destroyManagedTexture(waterRippleTexture);
+        waterRippleTexture = null;
         destroyManagedMaterial(waterCameraMediumMaterial);
         waterCameraMediumMaterial = null;
 
@@ -826,20 +850,16 @@ public class BlockTextureManager {
                 return;
             }
 
-            waterSurfaceMaterial = createMaterialViaStore(MaterialInfo.builder()
-                    .albedoTexture(waterWhiteTexture.getHandle())
-                    .normalTexture(waterNormalHandle)
-                    .filterMode(1)
-                    .spriteSheetRow(10)
-                    .spriteSheetCol(12)
-                    .spriteSheetFps(20)
-                    .translucentExt(MaterialInfoTranslucentEXT.builder()
-                            .refractiveIndex(waterIor)
-                            .transmittanceColor(waterTransmittanceR, waterTransmittanceG, waterTransmittanceB)
-                            .transmittanceMeasurementDistance(waterTransmittanceDistance)
-                            .useDiffuseLayer(false)
-                            .build())
-                    .build());
+            waterSurfaceMaterial = createMaterialViaStore(waterSurfaceInfo(false));
+            if (RAIN_RIPPLES_ENABLED) {
+                byte[] ripples = RainRipples.normalSheet(
+                        WATER_RIPPLE_FRAME_PX, WATER_TILE_SIZE, WATER_RIPPLE_SEED);
+                waterRippleTexture = upload(api, WATER_RIPPLE_TEXTURE_NAME, ripples,
+                        RainRipples.COLS * WATER_RIPPLE_FRAME_PX, RainRipples.ROWS * WATER_RIPPLE_FRAME_PX,
+                        TextureFormat.RGBA8_UNORM, TexturePurpose.NORMAL_OGL);
+            }
+            skyWaterSurfaceMaterial = createMaterialViaStore(
+                    waterSurfaceInfo(waterRippling && waterRippleTexture != null));
 
             waterCameraMediumMaterial = createMaterialViaStore(MaterialInfo.builder()
                     .albedoTexture(waterWhiteTexture.getHandle())
@@ -874,6 +894,84 @@ public class BlockTextureManager {
     }
 
     public RemixMaterial getWaterSurfaceMaterial() { return waterSurfaceMaterial; }
+
+    /** Water open to the sky, or the ordinary water surface when it was not created. */
+    public RemixMaterial getSkyWaterSurfaceMaterial() {
+        return skyWaterSurfaceMaterial != null ? skyWaterSurfaceMaterial : waterSurfaceMaterial;
+    }
+
+    public RemixMaterial getPuddleMaterial() { return puddleMaterial; }
+
+    /**
+     * The water surface: a white albedo under the animated wave normals, or under
+     * raindrop rings when {@code rippling}. The sprite sheet remaps every texture's UVs,
+     * which is why the albedo is a single texel.
+     */
+    private MaterialInfo waterSurfaceInfo(boolean rippling) {
+        MaterialInfo.Builder builder = MaterialInfo.builder()
+                .albedoTexture(waterWhiteTexture.getHandle())
+                .filterMode(1);
+        if (rippling) {
+            builder.normalTexture(waterRippleTexture.getHandle())
+                    .spriteSheetRow(RainRipples.ROWS)
+                    .spriteSheetCol(RainRipples.COLS)
+                    .spriteSheetFps(RainRipples.FPS);
+        } else {
+            builder.normalTexture(waterNormalHandle)
+                    .spriteSheetRow(10)
+                    .spriteSheetCol(12)
+                    .spriteSheetFps(20);
+        }
+        return builder.translucentExt(MaterialInfoTranslucentEXT.builder()
+                        .refractiveIndex(waterIor)
+                        .transmittanceColor(waterTransmittanceR, waterTransmittanceG, waterTransmittanceB)
+                        .transmittanceMeasurementDistance(waterTransmittanceDistance)
+                        .useDiffuseLayer(false)
+                        .build())
+                .build();
+    }
+
+    /**
+     * Flooded ground: the block atlas under a still water film, smooth and flat, cut where
+     * the puddle quad's vertex depth does not exceed {@code alphaReference}. The draw-call
+     * alpha state is not used, so the cut is the material's and one update moves every
+     * puddle's shoreline.
+     */
+    private MaterialInfo puddleMaterialInfo(int alphaReference) {
+        MaterialInfoOpaqueEXT.Builder opaque = MaterialInfoOpaqueEXT.builder()
+                .albedoConstant(1f, 1f, 1f)
+                .roughnessConstant(PUDDLE_ROUGHNESS)
+                .metallicConstant(0f)
+                .alphaTestType(4)
+                .alphaReferenceValue(alphaReference);
+        return MaterialInfo.builder()
+                .albedoTexture(atlasAlbedo.getHandle())
+                .filterMode(0)
+                .opaqueExt(opaque.build())
+                .build();
+    }
+
+    /**
+     * Applies the weather to the rain surfaces: the puddles' shoreline as an alpha
+     * reference ({@link PuddleField#reference}) and whether open water shows raindrop
+     * rings. Only a change reaches the runtime, as an in-place material update, so no
+     * terrain is rebuilt.
+     */
+    public void applyRainSurfaces(int puddleReference, boolean rippling) {
+        if (puddleReference != puddleAlphaReference) {
+            puddleAlphaReference = puddleReference;
+            if (puddleMaterial != null && !puddleMaterial.isDeleted() && atlasAlbedo != null) {
+                RemixMaterialStore.get().update(puddleMaterial, puddleMaterialInfo(puddleReference));
+            }
+        }
+        boolean ripples = rippling && waterRippleTexture != null;
+        if (ripples != waterRippling) {
+            waterRippling = ripples;
+            if (skyWaterSurfaceMaterial != null && !skyWaterSurfaceMaterial.isDeleted()) {
+                RemixMaterialStore.get().update(skyWaterSurfaceMaterial, waterSurfaceInfo(ripples));
+            }
+        }
+    }
     public RemixMaterial getWaterCameraMediumMaterial() { return waterCameraMediumMaterial; }
     public static float getWaterTileSize() { return WATER_TILE_SIZE; }
     public float getWaterIor() { return waterIor; }
@@ -1376,6 +1474,7 @@ public class BlockTextureManager {
         materials.clear(); sprites.clear(); spriteById.clear(); spriteLightColors.clear();
         Arrays.fill(atlasMaterials, null);
         Arrays.fill(atlasMaterialsSSS, null);
+        puddleMaterial = null;
         atlasNormalTex = null;
         atlasHeightTex = null;
         atlasRoughnessTex = null;
@@ -1387,6 +1486,8 @@ public class BlockTextureManager {
             destroyWaterResources(api);
         } else {
             waterSurfaceMaterial = null;
+            skyWaterSurfaceMaterial = null;
+            waterRippleTexture = null;
             waterCameraMediumMaterial = null;
             waterWhiteTexture = null;
             waterNormalHandle = 0;

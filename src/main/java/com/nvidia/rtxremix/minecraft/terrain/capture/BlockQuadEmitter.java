@@ -15,6 +15,7 @@ import net.fabricmc.fabric.api.client.renderer.v1.mesh.MutableQuadView;
 import net.fabricmc.fabric.api.client.renderer.v1.mesh.QuadEmitter;
 import net.fabricmc.fabric.api.client.renderer.v1.sprite.SpriteFinder;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.model.geom.builders.UVPair;
 import net.minecraft.client.color.block.BlockTintSource;
@@ -41,6 +42,10 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.SingleThreadedRandomSource;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
@@ -83,6 +88,20 @@ public final class BlockQuadEmitter {
      * it meets; see {@link #meetsNeighbourFace}.
      */
     static final float SHARED_FACE_PUSH = 1f / 512f;
+
+    /** Kill switch for rain puddles ({@code -Drtxremix.rain.puddles=false}). */
+    static final boolean RAIN_PUDDLES_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("rtxremix.rain.puddles"));
+    /**
+     * Block units a puddle film sits above the ground. A ray through a dry stretch of the
+     * film restarts a little beyond it, so the gap must stay wider than that restart for
+     * the ground below to be met.
+     */
+    static final float PUDDLE_LIFT = 1f / 64f;
+    /** Ground colour under water: wet ground reads darker than dry. */
+    private static final float PUDDLE_DARKEN = 0.55f;
+    private static final int HEIGHT_NOT_READ = Integer.MIN_VALUE;
+    private static final int HEIGHT_UNKNOWN = Integer.MIN_VALUE + 1;
 
     private static final ThreadLocal<BlockQuadEmitter> INSTANCE = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> threadNamed =
@@ -175,6 +194,20 @@ public final class BlockQuadEmitter {
     private int sharedSidesTested, sharedSides;
     /** Added to every position staged for the current face; non-zero only on a shared side. */
     private float facePushX, facePushY, facePushZ;
+    /** The cull face of the quads being staged, null for unculled ones. */
+    private @Nullable Direction stagingCullFace;
+
+    // Rain surfaces: see PuddleField and BlockTextureManager.applyRainSurfaces.
+    /** The level the build reads, for heightmaps and biomes; null when it is unknown. */
+    private @Nullable ClientLevel level;
+    /** The top motion-blocking block per column of this section, read on first use. */
+    private final int[] motionBlockingTops = new int[SECTION_SIZE * SECTION_SIZE];
+    private boolean motionBlockingTopsCleared;
+    /** Whether the current block holds a puddle: 0 undecided, 1 yes, 2 no. */
+    private int puddleDecision;
+    private boolean puddleEmitted;
+    private final BlockPos.MutableBlockPos rainPos = new BlockPos.MutableBlockPos();
+    private final float[] puddlePositions = new float[12];
     private int waterColorKnownMask;
     private FluidState waterTopCellCacheFluid;
     private BlockAndTintGetter waterTopCullWorld;
@@ -212,7 +245,8 @@ public final class BlockQuadEmitter {
                              BlockTextureManager tex,
                              BlockStateModelSet blockModelSet,
                              FluidStateModelSet fluidModelSet,
-                             boolean cutoutLeaves) {
+                             boolean cutoutLeaves,
+                             @Nullable ClientLevel level) {
         if (!threadNamed.get()) {
             RemixAPI.tracyThreadName("Worker " + Thread.currentThread().getName());
             threadNamed.set(Boolean.TRUE);
@@ -225,6 +259,8 @@ public final class BlockQuadEmitter {
         this.blockModelSet = blockModelSet;
         this.fluidModelSet = fluidModelSet;
         this.cutoutLeaves = cutoutLeaves;
+        this.level = level;
+        this.motionBlockingTopsCleared = false;
         this.baseX = sectionPos.minBlockX();
         this.baseY = sectionPos.minBlockY();
         this.baseZ = sectionPos.minBlockZ();
@@ -344,6 +380,8 @@ public final class BlockQuadEmitter {
         sharedSidesTested = 0;
         sharedSides = 0;
         setFacePush(null);
+        puddleDecision = 0;
+        puddleEmitted = false;
 
         // Vanilla derives model randomisation from the block position, in the
         // same ModelBlockRenderer.tesselateBlock this emitter replaces, and
@@ -450,9 +488,11 @@ public final class BlockQuadEmitter {
                     continue;
                 }
                 setFacePush(meetsNeighbourFace(world, state, dir) ? dir : null);
+                stagingCullFace = dir;
                 for (int q = 0, quadCount = culledQuads.size(); q < quadCount; q++) {
                     stageBakedQuad(culledQuads.get(q), layerOverride, state, world, lx, ly, lz);
                 }
+                stagingCullFace = null;
                 setFacePush(null);
             }
             List<BakedQuad> unculledQuads = part.getQuads(null);
@@ -506,8 +546,127 @@ public final class BlockQuadEmitter {
         float su1 = sprite != null ? sprite.getU1() : 1;
         float sv1 = sprite != null ? sprite.getV1() : 1;
 
+        if (stagingCullFace == Direction.UP) {
+            emitPuddleUnder(state, world, color, su0, sv0, su1, sv1);
+        }
         writer.stageQuad(tempPositions, tempUvs, nx, ny, nz, color,
                 spriteId, su0, sv0, su1, sv1, layerName);
+    }
+
+    /**
+     * Lays a puddle film over the top-face quad staged in {@code tempPositions}, when the
+     * block may hold rain: see {@link #holdsRain}. The film is the same quad lifted by
+     * {@link #PUDDLE_LIFT}, painted with the ground's own sprite, darkened, with the
+     * puddle depth at each corner as its alpha. Whether any of it shows is the puddle
+     * material's, which follows the weather; the geometry is laid once.
+     */
+    private void emitPuddleUnder(BlockState state, BlockAndTintGetter world, int color,
+                                 float su0, float sv0, float su1, float sv1) {
+        if (puddleEmitted || !isFullTopQuad() || !holdsRain(state, world)) return;
+        puddleEmitted = true;
+        int r = Math.round(((color >> 16) & 0xFF) * PUDDLE_DARKEN);
+        int g = Math.round(((color >> 8) & 0xFF) * PUDDLE_DARKEN);
+        int b = Math.round((color & 0xFF) * PUDDLE_DARKEN);
+        int rgb = (r << 16) | (g << 8) | b;
+        int c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+        for (int v = 0; v < 4; v++) {
+            float x = tempPositions[v * 3], z = tempPositions[v * 3 + 2];
+            puddlePositions[v * 3] = x;
+            puddlePositions[v * 3 + 1] = tempPositions[v * 3 + 1] + PUDDLE_LIFT;
+            puddlePositions[v * 3 + 2] = z;
+            int depth = PuddleField.depth(baseX + Math.round(x), baseZ + Math.round(z));
+            int corner = (depth << 24) | rgb;
+            switch (v) {
+                case 0 -> c0 = corner;
+                case 1 -> c1 = corner;
+                case 2 -> c2 = corner;
+                default -> c3 = corner;
+            }
+        }
+        writer.writePuddleQuad(puddlePositions, tempUvs, c0, c1, c2, c3, su0, sv0, su1, sv1);
+    }
+
+    /** Whether the quad in {@code tempPositions} covers the whole top of its block, flat. */
+    private boolean isFullTopQuad() {
+        int lx = mutablePos.getX() - baseX, ly = mutablePos.getY() - baseY, lz = mutablePos.getZ() - baseZ;
+        float minX = Float.POSITIVE_INFINITY, maxX = Float.NEGATIVE_INFINITY;
+        float minZ = Float.POSITIVE_INFINITY, maxZ = Float.NEGATIVE_INFINITY;
+        for (int v = 0; v < 4; v++) {
+            float x = tempPositions[v * 3], y = tempPositions[v * 3 + 1], z = tempPositions[v * 3 + 2];
+            if (Math.abs(y - (ly + 1)) > 1.0E-4f) return false;
+            minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+            minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+        }
+        return Math.abs(minX - lx) < 1.0E-4f && Math.abs(maxX - (lx + 1)) < 1.0E-4f
+                && Math.abs(minZ - lz) < 1.0E-4f && Math.abs(maxZ - (lz + 1)) < 1.0E-4f;
+    }
+
+    /**
+     * Whether rain can pool on the current block: an occluding block with a sturdy top,
+     * the highest that stops rain in its column (vanilla's {@code MOTION_BLOCKING}
+     * heightmap, the one rain falls to), in a spot where it rains rather than snows,
+     * and somewhere {@link PuddleField} ever floods. Decided once per block, the cheap
+     * tests first.
+     */
+    private boolean holdsRain(BlockState state, BlockAndTintGetter world) {
+        if (puddleDecision == 0) {
+            int x = mutablePos.getX(), y = mutablePos.getY(), z = mutablePos.getZ();
+            boolean holds = RAIN_PUDDLES_ENABLED
+                    && level != null
+                    && state.canOcclude()
+                    && state.getFluidState().isEmpty()
+                    && PuddleField.mayHoldWater(x, z)
+                    && motionBlockingTop(x - baseX, z - baseZ) == y
+                    && state.isFaceSturdy(world, mutablePos, Direction.UP)
+                    && rainsAt(x, y + 1, z);
+            puddleDecision = holds ? 1 : 2;
+        }
+        return puddleDecision == 1;
+    }
+
+    /**
+     * The y of the highest block that stops rain in column {@code (lx, lz)} of this
+     * section, or {@link #HEIGHT_UNKNOWN}. Read from the client chunk's heightmap, which
+     * vanilla keeps from the server's chunk data, and never primed here: a missing map
+     * reads as unknown rather than being computed on a worker.
+     */
+    private int motionBlockingTop(int lx, int lz) {
+        if (!motionBlockingTopsCleared) {
+            Arrays.fill(motionBlockingTops, HEIGHT_NOT_READ);
+            motionBlockingTopsCleared = true;
+        }
+        int column = lz * SECTION_SIZE + lx;
+        int top = motionBlockingTops[column];
+        if (top == HEIGHT_NOT_READ) {
+            top = HEIGHT_UNKNOWN;
+            ClientLevel current = level;
+            int x = baseX + lx, z = baseZ + lz;
+            LevelChunk chunk = current == null ? null
+                    : current.getChunkSource().getChunk(
+                            SectionPos.blockToSectionCoord(x), SectionPos.blockToSectionCoord(z),
+                            ChunkStatus.FULL, false);
+            if (chunk != null && chunk.hasPrimedHeightmap(Heightmap.Types.MOTION_BLOCKING)) {
+                top = chunk.getHeight(Heightmap.Types.MOTION_BLOCKING, x & 15, z & 15);
+            }
+            motionBlockingTops[column] = top;
+        }
+        return top;
+    }
+
+    /** Whether precipitation at the given block falls as rain, as vanilla decides it per biome and height. */
+    private boolean rainsAt(int x, int y, int z) {
+        ClientLevel current = level;
+        if (current == null) return false;
+        rainPos.set(x, y, z);
+        return current.getBiome(rainPos).value().getPrecipitationAt(rainPos, current.getSeaLevel())
+                == Biome.Precipitation.RAIN;
+    }
+
+    /** Whether the water surface of block {@code (lx, ly, lz)} lies under open sky where it rains. */
+    private boolean waterOpenToRain(int lx, int ly, int lz) {
+        if (!BlockTextureManager.RAIN_RIPPLES_ENABLED || level == null) return false;
+        int y = baseY + ly;
+        return motionBlockingTop(lx, lz) == y && rainsAt(baseX + lx, y + 1, baseZ + lz);
     }
 
     /**
@@ -654,6 +813,9 @@ public final class BlockQuadEmitter {
         float su1 = sprite != null ? sprite.getU1() : 1;
         float sv1 = sprite != null ? sprite.getV1() : 1;
 
+        if (cull == Direction.UP) {
+            emitPuddleUnder(frapiState, frapiWorld, color, su0, sv0, su1, sv1);
+        }
         writer.stageQuad(tempPositions, tempUvs, nx, ny, nz, color,
                 spriteId, su0, sv0, su1, sv1, layerName);
     }
@@ -758,12 +920,22 @@ public final class BlockQuadEmitter {
                 float u0 = wx / tileSize, v0 = wz / tileSize;
                 float u1 = (wx + 1) / tileSize, v1 = (wz + 1) / tileSize;
                 setUv4(tempUvs, u0, v0, u1, v0, u1, v1, u0, v1);
-                writer.writeFluidQuad(tempPositions, tempUvs, 0, 1, 0, color,
-                        null, 0, 0, 1, 1, layer, texManager);
+                // Both sides of open water ripple in the rain, seen from above or below.
+                boolean openToRain = waterOpenToRain(lx, ly, lz);
+                if (openToRain) {
+                    writer.writeSkyWaterQuad(tempPositions, tempUvs, 0, 1, 0, color);
+                } else {
+                    writer.writeFluidQuad(tempPositions, tempUvs, 0, 1, 0, color,
+                            null, 0, 0, 1, 1, layer, texManager);
+                }
                 setPos4(tempPositions, lx, ly + h01, lz + 1, lx + 1, ly + h11, lz + 1,
                         lx + 1, ly + h10, lz, lx, ly + h00, lz);
-                writer.writeFluidQuad(tempPositions, tempUvs, 0, -1, 0, color,
-                        null, 0, 0, 1, 1, layer, texManager);
+                if (openToRain) {
+                    writer.writeSkyWaterQuad(tempPositions, tempUvs, 0, -1, 0, color);
+                } else {
+                    writer.writeFluidQuad(tempPositions, tempUvs, 0, -1, 0, color,
+                            null, 0, 0, 1, 1, layer, texManager);
+                }
             } else {
                 // Vanilla FluidRenderer: a still surface shows the still sprite in
                 // full; a moving one shows the centre quarter of the flowing sprite
