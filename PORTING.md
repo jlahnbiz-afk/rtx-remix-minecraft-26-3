@@ -457,3 +457,5 @@ cd tools && uv run --frozen pytest -q && uv run --frozen ruff check . && uv run 
 | `acdd91e` | 雨の水たまりと、空に面した水面の雨の波紋 |
 | `9f85097` | `26.3` ブランチへのプッシュで Actions のビルドとチェックを走らせ、JAR を保存 |
 | `fdfbddf` | 日本語化 (`ja_jp.json`) |
+| `03aa5ec` | 雨の水たまりと波紋を作り直す (丸くぼかした水たまり、波紋の膜、晴れたら止まる波紋) |
+| `bf601f7` | ブロックの光の倍率を地形を作り直さずにその場で反映する (VRAM が膨らむ件) |
