@@ -315,7 +315,7 @@ public class RtxRemixMod implements ClientModInitializer {
         Minecraft client = Minecraft.getInstance();
         if (client != null && client.player != null) {
             client.player.sendSystemMessage(
-                    Component.literal("[RTX Remix] Menu unavailable: renderer is not initialized. Run /rtx status."));
+                    Component.translatable("rtxremix.message.menuUnavailable"));
         }
         LOGGER.warn("Remix menu request ignored because the renderer is not initialized");
         return false;
@@ -459,7 +459,8 @@ public class RtxRemixMod implements ClientModInitializer {
                     toggleRtx();
                     if (client.player != null) {
                         client.player.sendOverlayMessage(
-                                Component.literal("RTX Rendering: " + (rtxEnabled ? "ON" : "OFF")));
+                                Component.translatable(rtxEnabled
+                                        ? "rtxremix.message.rtxOn" : "rtxremix.message.rtxOff"));
                     }
                 }
             }

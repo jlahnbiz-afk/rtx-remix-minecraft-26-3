@@ -3,6 +3,10 @@
   "key.rtxremix.toggleRtx": "Toggle RTX Rendering",
   "key.category.rtx-remix-renderer.rtxremix": "RTX Remix",
 
+  "rtxremix.message.rtxOn": "RTX Rendering: ON",
+  "rtxremix.message.rtxOff": "RTX Rendering: OFF",
+  "rtxremix.message.menuUnavailable": "[RTX Remix] Menu unavailable: renderer is not initialized. Run /rtx status.",
+
   "block.rtx-remix-renderer.copper_beacon": "Copper Beacon",
   "container.rtx-remix-renderer.copper_beacon": "Copper Beacon Controls",
   "container.rtx-remix-renderer.copper_beacon.dye": "Dye",
