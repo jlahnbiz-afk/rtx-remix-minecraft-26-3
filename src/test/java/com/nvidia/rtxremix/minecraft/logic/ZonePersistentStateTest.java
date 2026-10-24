@@ -15,6 +15,7 @@ import net.minecraft.world.level.storage.SavedDataStorage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -174,6 +175,49 @@ class ZonePersistentStateTest {
         CompoundTag root = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap());
         ZonePersistentState loaded = ZonePersistentState.fromNbt(root.getCompoundOrEmpty("data"));
         assertEquals(List.of(zone), new ArrayList<>(loaded.snapshot()));
+    }
+
+    @Test
+    void movesALegacySaveFileIntoPlaceAndLoadsIt(@TempDir Path dataFolder) throws Exception {
+        ZoneDefinition zone = ZoneDefinition.parse(
+                "rtx zone define lighthouse --center 4 5 6 --inner 7 --outer 11 --channel mc.zone.lighthouse",
+                0, 0, 0);
+        // What 1.21.1 wrote: the same contents under data/, stamped with that release's data version.
+        CompoundTag legacy = new CompoundTag();
+        legacy.put("data", writeState(zone));
+        legacy.putInt("DataVersion", 3955);
+        NbtIo.writeCompressed(legacy, dataFolder.resolve(ZonePersistentState.LEGACY_FILE_NAME));
+
+        assertTrue(ZonePersistentState.moveLegacyFile(dataFolder));
+
+        assertFalse(Files.exists(dataFolder.resolve(ZonePersistentState.LEGACY_FILE_NAME)));
+        ensureGameVersionForPersistentStateSave();
+        try (SavedDataStorage storage = new SavedDataStorage(
+                dataFolder, DataFixers.getDataFixer(), HolderLookup.Provider.create(Stream.empty()))) {
+            ZonePersistentState loaded = storage.get(ZonePersistentState.TYPE);
+            assertEquals(List.of(zone), new ArrayList<>(loaded.snapshot()));
+        }
+    }
+
+    @Test
+    void keepsTheCurrentFileOverALegacyOne(@TempDir Path dataFolder) throws Exception {
+        Path legacy = dataFolder.resolve(ZonePersistentState.LEGACY_FILE_NAME);
+        Path current = dataFolder.resolve("rtx-remix-renderer").resolve("zones.dat");
+        Files.createDirectories(current.getParent());
+        Files.write(legacy, new byte[] {1});
+        Files.write(current, new byte[] {2});
+
+        assertFalse(ZonePersistentState.moveLegacyFile(dataFolder));
+
+        assertEquals(1, Files.readAllBytes(legacy)[0]);
+        assertEquals(2, Files.readAllBytes(current)[0]);
+        assertFalse(ZonePersistentState.moveLegacyFile(dataFolder.resolve("missing")));
+    }
+
+    private static CompoundTag writeState(ZoneDefinition zone) {
+        ZonePersistentState state = new ZonePersistentState();
+        state.put(zone);
+        return state.save(new CompoundTag());
     }
 
     private static ZonePersistentState roundTrip(ZoneDefinition zone) {

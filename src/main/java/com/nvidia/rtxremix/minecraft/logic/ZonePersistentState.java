@@ -12,9 +12,13 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.datafix.DataFixTypes;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
+import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -33,10 +37,15 @@ import java.util.Optional;
  * a dimension's, so all definitions live in one
  * {@code data/rtx-remix-renderer/zones.dat} file, and a zone is global to the
  * save rather than scoped to a dimension.</p>
+ *
+ * <p>Releases for Minecraft 1.21.1 kept the same contents in
+ * {@code data/rtx_remix_zones.dat}, and the 26.x world upgrade leaves a file it does
+ * not know where it was, so the first lookup on a save moves that file into place.</p>
  */
 public final class ZonePersistentState extends SavedData {
     private static final Logger LOGGER = LoggerFactory.getLogger(ZonePersistentState.class);
     private static final int SCHEMA_VERSION = 1;
+    static final String LEGACY_FILE_NAME = "rtx_remix_zones.dat";
 
     private static final String VERSION_KEY = "version";
     private static final String ZONES_KEY = "zones";
@@ -51,6 +60,9 @@ public final class ZonePersistentState extends SavedData {
             ZonePersistentState::new,
             CompoundTag.CODEC.xmap(ZonePersistentState::fromNbt, state -> state.save(new CompoundTag())),
             DataFixTypes.SAVED_DATA_COMMAND_STORAGE);
+
+    // The data folder whose legacy file has been dealt with; lookups run on the server thread.
+    private static Path migratedDataFolder;
 
     private final Map<String, ZoneDefinition> zonesByName = new HashMap<>();
     private final boolean writable;
@@ -73,6 +85,7 @@ public final class ZonePersistentState extends SavedData {
      * object it does not need.</p>
      */
     public static ZonePersistentState getOrCreate(MinecraftServer server) {
+        migrateLegacyFile(server);
         return server.getDataStorage().computeIfAbsent(TYPE);
     }
 
@@ -88,7 +101,44 @@ public final class ZonePersistentState extends SavedData {
      * depends on that behavior staying as it is.</p>
      */
     public static ZonePersistentState getIfPresent(MinecraftServer server) {
+        migrateLegacyFile(server);
         return server.getDataStorage().get(TYPE);
+    }
+
+    /**
+     * Moves a 1.21.1 save's zone file to where {@link #TYPE} is stored, once per data
+     * folder and before the storage first looks for it, because the storage remembers a
+     * miss. A save that already has the new file keeps it and the old one stays put.
+     */
+    private static void migrateLegacyFile(MinecraftServer server) {
+        Path dataFolder = server.getWorldPath(LevelResource.DATA);
+        if (dataFolder.equals(migratedDataFolder)) {
+            return;
+        }
+        migratedDataFolder = dataFolder;
+        moveLegacyFile(dataFolder);
+    }
+
+    /** Returns whether a legacy file in {@code dataFolder} was moved into place. */
+    static boolean moveLegacyFile(Path dataFolder) {
+        Path legacy = dataFolder.resolve(LEGACY_FILE_NAME);
+        if (!Files.isRegularFile(legacy)) {
+            return false;
+        }
+        Path current = TYPE.id().withSuffix(".dat").resolveAgainst(dataFolder);
+        if (Files.exists(current)) {
+            LOGGER.warn("Leaving {} in place: the zones are already stored in {}", legacy, current);
+            return false;
+        }
+        try {
+            Files.createDirectories(current.getParent());
+            Files.move(legacy, current);
+        } catch (IOException e) {
+            LOGGER.error("Could not move RTX Remix zones from {} to {}", legacy, current, e);
+            return false;
+        }
+        LOGGER.info("Moved RTX Remix zones from {} to {}", legacy, current);
+        return true;
     }
 
     /** Immutable, name-sorted copy safe to publish to the client/render registry. */
