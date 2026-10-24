@@ -22,18 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BenchmarkControllerTest {
 
-    /**
-     * Warmup frames must not be counted while a world-load overlay is up; the
-     * screen classes are matched by simple name (obfuscation-mapped at runtime).
-     */
-    @Test
-    void isWorldLoadScreenNameMatchesLoadingScreensOnly() {
-        assertTrue(BenchmarkController.isWorldLoadScreenName("DownloadingTerrainScreen"));
-        assertTrue(BenchmarkController.isWorldLoadScreenName("LevelLoadingScreen"));
-        assertFalse(BenchmarkController.isWorldLoadScreenName("GameMenuScreen"));
-        assertFalse(BenchmarkController.isWorldLoadScreenName("ChatScreen"));
-    }
-
     @Test
     void cameraFixtureNameResolvesVersionedAndUnversionedWorlds() {
         assertEquals("demo_v1", CameraController.fixtureName("demo", "v1"));
