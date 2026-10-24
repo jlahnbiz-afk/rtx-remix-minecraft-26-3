@@ -205,6 +205,84 @@ class DirectQuadWriterTest {
         assertTrue(BlockTextureManager.layerType("glass") < BlockTextureManager.LAYER_COUNT);
     }
 
+    @Test
+    void bucketGrowsPastSixFacesForEveryBlockInTheSection() {
+        // A fence emits about thirty quads and a detailed resource-pack model hundreds,
+        // so a section's bucket can hold far more than 4096 blocks times six faces.
+        int quads = 16 * 16 * 16 * 6 + 1000;
+        DirectQuadWriter writer = new DirectQuadWriter();
+        DirectQuadWriter.drainDroppedQuads();
+        writer.beginSection();
+        for (int i = 0; i < quads; i++) {
+            writeQuad(writer, i % 16, 0xFF00AA55);
+        }
+
+        SectionMeshData meshData = writer.buildMeshData();
+        try {
+            assertEquals(1, meshData.surfaces().size());
+            assertEquals(quads * 4, meshData.surfaces().get(0).vertexCount());
+            assertEquals(quads * 6, meshData.surfaces().get(0).indexCount());
+            assertEquals(0, DirectQuadWriter.drainDroppedQuads());
+        } finally {
+            meshData.release();
+            writer.releaseBuffers();
+        }
+    }
+
+    @Test
+    void blockStagesMoreQuadsThanItsInitialSlots() {
+        int quads = 300;
+        DirectQuadWriter writer = new DirectQuadWriter();
+        DirectQuadWriter.drainDroppedQuads();
+        writer.beginSection();
+        for (int i = 0; i < quads; i++) {
+            stageQuad(writer, offset(FRONT_POSITIONS, i * 0.01f), FRONT_UVS, 1.0f,
+                    CUTOUT_SPRITE, 0xFFFFFFFF, "solid");
+        }
+        writer.flushBlock(null);
+        // The next block reuses the grown slots from the start.
+        stageQuad(writer, FRONT_POSITIONS, FRONT_UVS, 1.0f, CUTOUT_SPRITE, 0xFFFFFFFF, "solid");
+        writer.flushBlock(null);
+
+        SectionMeshData meshData = writer.buildMeshData();
+        try {
+            assertEquals((quads + 1) * 4, totalVertices(meshData));
+            assertEquals(0, DirectQuadWriter.drainDroppedQuads());
+        } finally {
+            meshData.release();
+        }
+    }
+
+    @Test
+    void blockPastItsStagingCeilingDropsAndCountsTheRest() {
+        int ceiling = 1 << 16;
+        DirectQuadWriter writer = new DirectQuadWriter();
+        DirectQuadWriter.drainDroppedQuads();
+        writer.beginSection();
+        for (int i = 0; i < ceiling + 3; i++) {
+            stageQuad(writer, offset(FRONT_POSITIONS, i), FRONT_UVS, 1.0f,
+                    CUTOUT_SPRITE, 0xFFFFFFFF, "solid");
+        }
+        writer.flushBlock(null);
+
+        SectionMeshData meshData = writer.buildMeshData();
+        try {
+            assertEquals(ceiling * 4, totalVertices(meshData));
+            assertEquals(3, DirectQuadWriter.drainDroppedQuads());
+        } finally {
+            meshData.release();
+            writer.releaseBuffers();
+        }
+    }
+
+    private static float[] offset(float[] positions, float dx) {
+        float[] moved = positions.clone();
+        for (int vertex = 0; vertex < 4; vertex++) {
+            moved[vertex * 3] += dx;
+        }
+        return moved;
+    }
+
     private static SectionMeshData.Surface surface(SectionMeshData meshData, String bucketKey) {
         return meshData.surfaces().stream()
                 .filter(s -> bucketKey.equals(s.bucketKey()))

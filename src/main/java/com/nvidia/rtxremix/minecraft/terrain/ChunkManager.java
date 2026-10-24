@@ -460,7 +460,7 @@ public class ChunkManager {
     }
 
     private int cntCap = -1, cntLightsCulled, cntLightsDrawn, cntLightsBeyondReach, cntReachable, cntWorkerMem, cntPooledDirectMB,
-            cntBucketGrows, cntBucketGrowKB, cntPendingBuilds, cntPendingMeshMB, cntCaptureQueue,
+            cntBucketGrows, cntBucketGrowKB, cntDroppedQuads, cntPendingBuilds, cntPendingMeshMB, cntCaptureQueue,
             cntCaptureQueueMB, cntCaptureBackpressure, cntCaptureEvicted, cntLightRebuildsSkipped, cntPacedChunks,
             cntPacedBacklog, cntChunkApplyUs, cntPacedUnloads, cntPacedUnloadBacklog, cntChunkUnloadUs,
             cntSurfaceScansSeeded, cntReadyMeshes, cntMeshRetireQueue,
@@ -631,6 +631,7 @@ public class ChunkManager {
                 cntPooledDirectMB = timer.registerCounter("Chunk.PooledDirectMB");
                 cntBucketGrows = timer.registerCounter("Chunk.BucketGrows");
                 cntBucketGrowKB = timer.registerCounter("Chunk.BucketGrowKB");
+                cntDroppedQuads = timer.registerCounter("Chunk.DroppedQuads");
                 cntPendingBuilds = timer.registerCounter("Chunk.PendingBuilds");
                 cntPendingMeshMB = timer.registerCounter("Chunk.PendingMeshMB");
                 cntReadyMeshes = timer.registerCounter("Chunk.ReadyMeshes");
@@ -692,6 +693,7 @@ public class ChunkManager {
                 timer.count(cntPooledDirectMB, DirectBufferPool.allocatedBytes() / (1024 * 1024));
                 timer.count(cntBucketGrows, DirectQuadWriter.drainGrowthEvents());
                 timer.count(cntBucketGrowKB, DirectQuadWriter.drainGrowthCopiedBytes() / 1024);
+                timer.count(cntDroppedQuads, DirectQuadWriter.drainDroppedQuads());
                 timer.count(cntPendingBuilds, pendingResults.get());
                 timer.count(cntPendingMeshMB, pendingMeshBytes.get() / (1024 * 1024));
                 timer.count(cntReadyMeshes, countCompletedBuilds());

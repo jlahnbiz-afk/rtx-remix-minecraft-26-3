@@ -40,17 +40,21 @@ public final class DirectQuadWriter {
 
     private static final int STRIDE = HardcodedVertex.STRIDE; // 64
     private static final int INDICES_PER_QUAD = 6;
-    private static final int MAX_BLOCK_QUADS = 128;
+    /** Staging slots a worker starts with; a block with more quads grows them. */
+    private static final int INITIAL_BLOCK_QUADS = 128;
+    /** Quads one block may stage; past it the rest are dropped rather than grown into. */
+    private static final int MAX_BLOCK_QUADS = 1 << 16;
     private static final float DECAL_NORMAL_DOT_EPSILON = 0.999f;
     private static final float DECAL_PLANE_DISTANCE_EPSILON = 1.0E-3f;
     private static final float DECAL_OVERLAP_EPSILON = 1.0E-4f;
 
     /**
-     * Worst-case quads per 16x16x16 section.  4096 blocks x 6 faces = 24576.
-     * Used as the growth ceiling for bucket buffers, not for initial sizing.
+     * Ceiling on one bucket's vertex bytes in one section, which keeps the doubling inside
+     * a heap buffer's int capacity. Six full faces per block is no bound: a fence emits
+     * about thirty quads and a detailed resource-pack model hundreds, so a section's
+     * bucket grows to whatever its blocks emit below this.
      */
-    private static final int MAX_SECTION_QUADS = 24576;
-    private static final int MAX_VERT_BUF_SIZE = MAX_SECTION_QUADS * 4 * STRIDE;
+    private static final int MAX_VERT_BUF_SIZE = 1 << 30;
     /** Initial bucket capacity: 128 quads keeps small section buckets compact. */
     private static final int INITIAL_QUADS    = 128;
     private static final int INITIAL_VERT_SIZE = INITIAL_QUADS * 4 * STRIDE;       // 32 KB
@@ -59,11 +63,14 @@ public final class DirectQuadWriter {
     private static final AtomicLong totalAllocatedBytes = new AtomicLong();
     private static final AtomicLong totalGrowthEvents = new AtomicLong();
     private static final AtomicLong totalGrowthCopiedBytes = new AtomicLong();
+    private static final AtomicLong droppedQuads = new AtomicLong();
 
     /** Returns total bucket buffer memory in bytes across all worker threads. */
     public static long getTotalAllocatedBytes() { return totalAllocatedBytes.get(); }
     public static long drainGrowthEvents() { return totalGrowthEvents.getAndSet(0); }
     public static long drainGrowthCopiedBytes() { return totalGrowthCopiedBytes.getAndSet(0); }
+    /** Quads dropped at a ceiling since the last call: a block's staging or a bucket's bytes. */
+    public static long drainDroppedQuads() { return droppedQuads.getAndSet(0); }
 
     // --- per-bucket output ---
 
@@ -101,7 +108,12 @@ public final class DirectQuadWriter {
                         float[] uvs, int uvOff,
                         float nx, float ny, float nz,
                         int color, int boundsMin, int boundsMax) {
-            ensureVertexCapacity((vertexCount + 4) * STRIDE);
+            long requiredBytes = (long) (vertexCount + 4) * STRIDE;
+            if (requiredBytes > MAX_VERT_BUF_SIZE) {
+                droppedQuads.incrementAndGet();
+                return;
+            }
+            ensureVertexCapacity((int) requiredBytes);
 
             for (int v = 0; v < 4; v++) {
                 int wo = (vertexCount + v) * STRIDE;
@@ -133,8 +145,7 @@ public final class DirectQuadWriter {
             if (requiredBytes <= vertices.capacity()) return;
             int oldCap = vertices.capacity();
             int newCap = oldCap;
-            while (newCap < requiredBytes) newCap *= 2;
-            if (newCap > MAX_VERT_BUF_SIZE) newCap = MAX_VERT_BUF_SIZE;
+            while (newCap < requiredBytes) newCap = (int) Math.min((long) newCap * 2, MAX_VERT_BUF_SIZE);
             ByteBuffer grown = ByteBuffer.allocate(newCap).order(ByteOrder.LITTLE_ENDIAN);
             ByteBuffer src = vertices.duplicate().order(ByteOrder.LITTLE_ENDIAN);
             src.position(0).limit(vertexCount * STRIDE);
@@ -189,24 +200,48 @@ public final class DirectQuadWriter {
     // --- per-block staging (flat arrays, zero alloc) ---
 
     private int stageCount;
-    private final float[] stagePos = new float[MAX_BLOCK_QUADS * 12];
-    private final float[] stageUvs = new float[MAX_BLOCK_QUADS * 8];
-    private final float[] stageNx  = new float[MAX_BLOCK_QUADS];
-    private final float[] stageNy  = new float[MAX_BLOCK_QUADS];
-    private final float[] stageNz  = new float[MAX_BLOCK_QUADS];
-    private final int[]   stageColor = new int[MAX_BLOCK_QUADS];
-    private final Identifier[] stageSpriteId = new Identifier[MAX_BLOCK_QUADS];
-    private final float[] stageSU0 = new float[MAX_BLOCK_QUADS];
-    private final float[] stageSV0 = new float[MAX_BLOCK_QUADS];
-    private final float[] stageSU1 = new float[MAX_BLOCK_QUADS];
-    private final float[] stageSV1 = new float[MAX_BLOCK_QUADS];
-    private final String[] stageLayer = new String[MAX_BLOCK_QUADS];
-    private final boolean[] stageOverlay = new boolean[MAX_BLOCK_QUADS];
-    private final boolean[] stageNeedsAlphaBlend = new boolean[MAX_BLOCK_QUADS];
-    private final BlockTextureManager.SpriteEntry[] stageSpriteEntry =
-            new BlockTextureManager.SpriteEntry[MAX_BLOCK_QUADS];
-    private final int[] stageCategory = new int[MAX_BLOCK_QUADS];
-    private final boolean[] stageDiscarded = new boolean[MAX_BLOCK_QUADS];
+    private int stageCapacity = INITIAL_BLOCK_QUADS;
+    private float[] stagePos = new float[INITIAL_BLOCK_QUADS * 12];
+    private float[] stageUvs = new float[INITIAL_BLOCK_QUADS * 8];
+    private float[] stageNx  = new float[INITIAL_BLOCK_QUADS];
+    private float[] stageNy  = new float[INITIAL_BLOCK_QUADS];
+    private float[] stageNz  = new float[INITIAL_BLOCK_QUADS];
+    private int[]   stageColor = new int[INITIAL_BLOCK_QUADS];
+    private Identifier[] stageSpriteId = new Identifier[INITIAL_BLOCK_QUADS];
+    private float[] stageSU0 = new float[INITIAL_BLOCK_QUADS];
+    private float[] stageSV0 = new float[INITIAL_BLOCK_QUADS];
+    private float[] stageSU1 = new float[INITIAL_BLOCK_QUADS];
+    private float[] stageSV1 = new float[INITIAL_BLOCK_QUADS];
+    private String[] stageLayer = new String[INITIAL_BLOCK_QUADS];
+    private boolean[] stageOverlay = new boolean[INITIAL_BLOCK_QUADS];
+    private boolean[] stageNeedsAlphaBlend = new boolean[INITIAL_BLOCK_QUADS];
+    private BlockTextureManager.SpriteEntry[] stageSpriteEntry =
+            new BlockTextureManager.SpriteEntry[INITIAL_BLOCK_QUADS];
+    private int[] stageCategory = new int[INITIAL_BLOCK_QUADS];
+    private boolean[] stageDiscarded = new boolean[INITIAL_BLOCK_QUADS];
+
+    /** Doubles every staging array; the worker keeps the larger size for later blocks. */
+    private void growStaging() {
+        int capacity = Math.min(stageCapacity * 2, MAX_BLOCK_QUADS);
+        stagePos = Arrays.copyOf(stagePos, capacity * 12);
+        stageUvs = Arrays.copyOf(stageUvs, capacity * 8);
+        stageNx = Arrays.copyOf(stageNx, capacity);
+        stageNy = Arrays.copyOf(stageNy, capacity);
+        stageNz = Arrays.copyOf(stageNz, capacity);
+        stageColor = Arrays.copyOf(stageColor, capacity);
+        stageSpriteId = Arrays.copyOf(stageSpriteId, capacity);
+        stageSU0 = Arrays.copyOf(stageSU0, capacity);
+        stageSV0 = Arrays.copyOf(stageSV0, capacity);
+        stageSU1 = Arrays.copyOf(stageSU1, capacity);
+        stageSV1 = Arrays.copyOf(stageSV1, capacity);
+        stageLayer = Arrays.copyOf(stageLayer, capacity);
+        stageOverlay = Arrays.copyOf(stageOverlay, capacity);
+        stageNeedsAlphaBlend = Arrays.copyOf(stageNeedsAlphaBlend, capacity);
+        stageSpriteEntry = Arrays.copyOf(stageSpriteEntry, capacity);
+        stageCategory = Arrays.copyOf(stageCategory, capacity);
+        stageDiscarded = Arrays.copyOf(stageDiscarded, capacity);
+        stageCapacity = capacity;
+    }
 
     // --- public API ---
 
@@ -252,7 +287,13 @@ public final class DirectQuadWriter {
                            int color, Identifier spriteId,
                            float su0, float sv0, float su1, float sv1,
                            String renderLayer) {
-        if (stageCount >= MAX_BLOCK_QUADS) return;
+        if (stageCount == stageCapacity) {
+            if (stageCapacity == MAX_BLOCK_QUADS) {
+                droppedQuads.incrementAndGet();
+                return;
+            }
+            growStaging();
+        }
         int i = stageCount++;
         System.arraycopy(positions, 0, stagePos, i * 12, 12);
         System.arraycopy(uvs, 0, stageUvs, i * 8, 8);
