@@ -87,16 +87,16 @@ final class RtxBlockLightsScreen extends OptionsSubScreen {
     private void confirmReset() {
         boolean pendingChanged = commitPendingValues();
         this.minecraft.gui.setScreen(new ConfirmScreen(confirmed -> {
-            boolean rebuild = pendingChanged;
+            boolean refresh = pendingChanged;
             if (confirmed) {
-                rebuild |= settings.hasOverrides(SettingGroup.BLOCK_LIGHTS);
+                refresh |= settings.hasOverrides(SettingGroup.BLOCK_LIGHTS);
                 settings.resetGroup(SettingGroup.BLOCK_LIGHTS);
             }
             if (saveSettings != null) {
                 saveSettings.run();
             }
-            if (rebuild) {
-                RtxRemixMod.rebuildLoadedTerrain();
+            if (refresh) {
+                RtxRemixMod.refreshBlockLightIntensities();
             }
             this.minecraft.gui.setScreen(new RtxBlockLightsScreen(this.lastScreen, settings, saveSettings));
         }, Component.translatable(
@@ -114,7 +114,7 @@ final class RtxBlockLightsScreen extends OptionsSubScreen {
             saveSettings.run();
         }
         if (changed) {
-            RtxRemixMod.rebuildLoadedTerrain();
+            RtxRemixMod.refreshBlockLightIntensities();
         }
         this.minecraft.gui.setScreen(this.lastScreen);
     }

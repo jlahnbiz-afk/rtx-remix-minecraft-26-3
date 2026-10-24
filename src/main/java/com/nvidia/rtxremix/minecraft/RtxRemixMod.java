@@ -1764,8 +1764,10 @@ public class RtxRemixMod implements ClientModInitializer {
      * Drops every Remix terrain page and recaptures the sections the player had
      * seen. A clear on its own leaves the scene empty until vanilla happens to
      * rebuild a section, so it is always paired with the vanilla reload and the
-     * explicit queue. A full rebuild is expensive: settings screens call this
-     * once per committed transaction, never per slider step.
+     * explicit queue. A full rebuild is expensive and holds old and new terrain
+     * in the runtime at once, so a setting that only changes light radiance uses
+     * {@link #refreshBlockLightIntensities()} instead; anything that does call
+     * this calls it once per committed transaction, never per slider step.
      *
      * @return whether an active Remix world was there to rebuild
      */
@@ -1780,6 +1782,22 @@ public class RtxRemixMod implements ClientModInitializer {
         LongSet built = builtSections(client);
         client.levelExtractor.allChanged();
         recaptureTerrainForRemix(client, built);
+        return true;
+    }
+
+    /**
+     * Applies committed block-light multipliers to the loaded terrain lights in
+     * place. Nothing is recaptured: the multiplier only scales each light's
+     * radiance, and held and entity lights read it as they are rebuilt each frame.
+     *
+     * @return whether an active Remix world was there to refresh
+     */
+    public static boolean refreshBlockLightIntensities() {
+        if (!isWorldActive() || renderer == null || renderer.getChunkManager() == null) {
+            return false;
+        }
+        int queued = renderer.getChunkManager().refreshBlockLightIntensities();
+        LOGGER.debug("Queued {} terrain light updates for changed block-light multipliers", queued);
         return true;
     }
 

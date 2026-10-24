@@ -258,8 +258,7 @@ public class ChunkManager {
             RemixLight light = new RemixLight(info, null);
             RemixLightStore.get().create(light);
             TerrainLight record = new TerrainLight(light);
-            record.place(incoming.x(), incoming.y(), incoming.z(),
-                    LightPower.of(incoming, radiance.r(), radiance.g(), radiance.b()));
+            record.place(incoming, LightPower.of(incoming, radiance.r(), radiance.g(), radiance.b()));
             entry.putLight(mutation.key(), record);
             entry.lightFingerprints().put(mutation.key(), mutation.fingerprint());
             terrain.adjustSectionLightCount(
@@ -273,8 +272,7 @@ public class ChunkManager {
             BlockLightRadiance radiance = blockLightRadiance(incoming, textures);
             LightInfo info = buildBlockLightInfo(incoming, radiance);
             RemixLightStore.get().update(mutation.existing(), info);
-            record.place(incoming.x(), incoming.y(), incoming.z(),
-                    LightPower.of(incoming, radiance.r(), radiance.g(), radiance.b()));
+            record.place(incoming, LightPower.of(incoming, radiance.r(), radiance.g(), radiance.b()));
             entry.lightFingerprints().put(mutation.key(), mutation.fingerprint());
         }
 
@@ -292,6 +290,86 @@ public class ChunkManager {
         public void onFinished() {
             activeLightTasks.remove(section, this);
         }
+    }
+
+    private record LightRefreshTarget(TerrainState.SectionEntry entry, BlockLightKey key, TerrainLight record) {}
+
+    /**
+     * Re-derives the radiance of existing terrain lights after a block-light
+     * multiplier changed, as in-place updates: each native light keeps its
+     * handle and the terrain keeps its meshes. A light whose section was
+     * replaced or removed since is skipped; the multiplier is part of
+     * {@link #lightFingerprint}, so the replacement's reconcile sees the change.
+     */
+    private final class LightRefreshTask implements LightWorkItem {
+        private final List<LightRefreshTarget> targets;
+        private final BlockTextureManager textures;
+        private int cursor;
+
+        LightRefreshTask(List<LightRefreshTarget> targets, BlockTextureManager textures) {
+            this.targets = targets;
+            this.textures = textures;
+        }
+
+        @Override
+        public int remaining() {
+            return targets.size() - cursor;
+        }
+
+        @Override
+        public int nextNativeCallCost() {
+            return 2;
+        }
+
+        @Override
+        public void runOne() {
+            LightRefreshTarget target = targets.get(cursor);
+            TerrainState.SectionEntry entry = target.entry();
+            TerrainLight record = target.record();
+            LightEntry source = record.source();
+            if (source != null
+                    && !record.light.isDeleted()
+                    && entry.lights().get(target.key()) == record
+                    && terrain.isCurrentSectionEntry(entry.xOff >> 4, entry.sy, entry.zOff >> 4, entry)) {
+                int fingerprint = lightFingerprint(source);
+                Integer applied = entry.lightFingerprints().get(target.key());
+                if (applied == null || applied != fingerprint) {
+                    BlockLightRadiance radiance = blockLightRadiance(source, textures);
+                    RemixLightStore.get().update(record.light, buildBlockLightInfo(source, radiance));
+                    record.place(source, LightPower.of(source, radiance.r(), radiance.g(), radiance.b()));
+                    entry.lightFingerprints().put(target.key(), fingerprint);
+                }
+            }
+            cursor++;
+        }
+    }
+
+    /**
+     * Applies committed block-light multipliers to the terrain lights that
+     * exist, as in-place updates under the light budget, without touching a
+     * terrain mesh. Lights still waiting in a reconcile read the multipliers
+     * when they run. Render thread only.
+     *
+     * @return the number of lights queued for an update
+     */
+    public int refreshBlockLightIntensities() {
+        List<LightRefreshTarget> targets = new ArrayList<>();
+        for (TerrainState.ChunkColumn column : terrain.columns()) {
+            for (TerrainState.SectionEntry entry : column.sectionEntries()) {
+                for (Map.Entry<BlockLightKey, TerrainLight> light : entry.lights().entrySet()) {
+                    LightEntry source = light.getValue().source();
+                    if (source == null) continue;
+                    Integer applied = entry.lightFingerprints().get(light.getKey());
+                    if (applied != null && applied == lightFingerprint(source)) continue;
+                    targets.add(new LightRefreshTarget(entry, light.getKey(), light.getValue()));
+                }
+            }
+        }
+        if (!targets.isEmpty()) {
+            enqueueLightTask(new LightRefreshTask(targets,
+                    renderer != null ? renderer.getTextureManager() : null));
+        }
+        return targets.size();
     }
 
     private static final class LightRetireTask implements LightWorkItem {
@@ -1152,10 +1230,12 @@ public class ChunkManager {
     /**
      * Full light-parameter fingerprint for deciding whether a stable
      * {@link BlockLightKey} can keep its existing native light without an
-     * update round-trip.
+     * update round-trip. It includes the rule's user multiplier, so a capture
+     * after a multiplier change updates the light it would otherwise keep.
      */
     private static int lightFingerprint(LightEntry le) {
         return Objects.hash(
+                bits(BlockLightIntensityControls.apply(le.key().ruleId(), 1f)),
                 BuiltInRegistries.BLOCK.getId(le.block()),
                 le.key().ruleId(),
                 le.key().lightIndex(),

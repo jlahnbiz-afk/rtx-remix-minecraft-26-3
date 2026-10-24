@@ -111,7 +111,7 @@
 
   "rtxremix.setting.blockLights.candles": "Candles",
   "rtxremix.setting.blockLights.candleCakes": "Candle Cakes",
-  "rtxremix.setting.blockLights.multiplier.tip": "Multiplies this block light's normal brightness. Off disables it; 1.00\u00d7 keeps the intended brightness. Changes apply when you leave this screen and rebuild loaded terrain once.",
+  "rtxremix.setting.blockLights.multiplier.tip": "Multiplies this block light's normal brightness. Off disables it; 1.00\u00d7 keeps the intended brightness. Changes apply when you leave this screen.",
 
   "rtxremix.setting.materials.terrainEmission": "Block Glow Intensity",
   "rtxremix.setting.materials.terrainEmission.tip": "Multiplies the light emitted by glowing block surfaces. Off disables their glow; 1.00\u00d7 keeps the intended brightness. This does not change block lights such as torches.",

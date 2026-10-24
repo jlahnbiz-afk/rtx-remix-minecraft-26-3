@@ -100,7 +100,7 @@ public final class RtxSettingsScreen extends Screen {
     private void confirmReset() {
         this.minecraft.gui.setScreen(new ConfirmScreen(confirmed -> {
             if (confirmed) {
-                boolean rebuildBlockLights =
+                boolean refreshBlockLights =
                         settings.hasOverrides(SettingGroup.BLOCK_LIGHTS);
                 settings.resetAll();
                 BlockTextureManager textures = BlockTextureManager.get();
@@ -111,8 +111,8 @@ public final class RtxSettingsScreen extends Screen {
                 }
                 if (rebuildMaterials) {
                     RtxRemixMod.rebuildTerrainForMaterialSettings();
-                } else if (rebuildBlockLights) {
-                    RtxRemixMod.rebuildLoadedTerrain();
+                } else if (refreshBlockLights) {
+                    RtxRemixMod.refreshBlockLightIntensities();
                 }
             }
             this.minecraft.gui.setScreen(new RtxSettingsScreen(parent, settings, saveSettings));

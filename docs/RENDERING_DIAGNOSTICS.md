@@ -59,6 +59,16 @@ section light set and connectivity flood; `ChunkManager.draw` applies the
 culls and counts their outcomes. The [resource-pack guide](RESOURCE_PACKS.md)
 describes authoring rules.
 
+A Block Lights multiplier only scales radiance, so committing one never
+recaptures terrain. `ChunkManager.refreshBlockLightIntensities()` queues an
+in-place update for each existing light whose fingerprint no longer matches,
+under the same light budget as creation. Each `TerrainLight` keeps the
+`LightEntry` it was built from for this. The multiplier is part of the light
+fingerprint, so a section captured after the change updates the lights it
+would otherwise keep. A full rebuild for this used to destroy and recreate
+every terrain mesh and BLAS at once, and repeated commits were reported to
+push video memory to about 20 GB.
+
 Keep `BlockLightDefaults` and `BlockLightIntensityControls` in lockstep.
 `validateBuiltInRules` requires the built-in rule ids and slider control ids to
 match when the catalog is built during resource reload. A mismatch throws from

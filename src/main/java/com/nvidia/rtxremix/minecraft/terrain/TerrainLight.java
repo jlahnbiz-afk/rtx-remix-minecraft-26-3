@@ -5,7 +5,9 @@
 package com.nvidia.rtxremix.minecraft.terrain;
 
 import com.nvidia.rtxremix.minecraft.asset.RemixLight;
+import com.nvidia.rtxremix.minecraft.light.LightEntry;
 import com.nvidia.rtxremix.minecraft.light.LightPower;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * One terrain block light as the draw loop sees it: the native handle plus
@@ -27,6 +29,8 @@ public final class TerrainLight {
     private static final float HYSTERESIS = 1.5f;
 
     public final RemixLight light;
+    /** The rule output the native light was last built from, so its radiance can be re-derived. */
+    private @Nullable LightEntry source;
     private float x, y, z;
     private float power;
     private long lastDrawnFrame = Long.MIN_VALUE;
@@ -41,6 +45,16 @@ public final class TerrainLight {
         this.y = y;
         this.z = z;
         this.power = power;
+    }
+
+    /** Records the rule output the native light was built from, where it is and how much it emits. */
+    public void place(LightEntry source, float power) {
+        this.source = source;
+        place(source.x(), source.y(), source.z(), power);
+    }
+
+    public @Nullable LightEntry source() {
+        return source;
     }
 
     public float power() {

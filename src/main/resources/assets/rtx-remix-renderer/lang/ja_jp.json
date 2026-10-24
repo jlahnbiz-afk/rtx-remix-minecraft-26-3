@@ -111,7 +111,7 @@
 
   "rtxremix.setting.blockLights.candles": "ろうそく",
   "rtxremix.setting.blockLights.candleCakes": "ろうそく付きケーキ",
-  "rtxremix.setting.blockLights.multiplier.tip": "このブロックの光の通常の明るさに掛ける倍率です。オフで消え、1.00× で想定の明るさになります。変更はこの画面を閉じたときに反映され、読み込み済みの地形を一度作り直します。",
+  "rtxremix.setting.blockLights.multiplier.tip": "このブロックの光の通常の明るさに掛ける倍率です。オフで消え、1.00× で想定の明るさになります。変更はこの画面を閉じたときに反映されます。",
 
   "rtxremix.setting.materials.terrainEmission": "ブロックの発光の強さ",
   "rtxremix.setting.materials.terrainEmission.tip": "光るブロックの表面が出す光に掛ける倍率です。オフで発光が消え、1.00× で想定の明るさになります。松明などのブロックの光は変わりません。",

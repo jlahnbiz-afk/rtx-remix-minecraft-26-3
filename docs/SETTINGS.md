@@ -3,7 +3,8 @@
 The mod adds its own settings screen to the game. Open **Options**, then **RTX
 Remix Settings...**. It is available from the title screen and from the pause
 menu. Most controls apply as you move them. Block Lights and Block Glow
-Intensity apply when you leave their page, because they rebuild terrain.
+Intensity apply when you leave their page: Block Glow Intensity rebuilds
+terrain, and Block Lights updates every loaded light.
 
 Tooltips explain each control and mark a value you have changed as
 `(overridden)`.
@@ -45,8 +46,8 @@ lights, so **Block Glow Intensity** under Materials controls them. Emitting
 surfaces are not sampled directly, so a room lit only by them can be darker
 than one with separate lights.
 
-The table commits changed rows together when you leave and rebuilds the loaded
-terrain once, rather than rebuilding every block light at each drag position.
+The table commits changed rows together when you leave, then updates the
+loaded block lights in place over the next few frames; terrain is not rebuilt.
 It has its own Reset: the Lighting page's Reset does not reach into it, but
 Reset All on the landing page does.
 
