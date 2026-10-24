@@ -44,8 +44,6 @@
         "LevelExtractorAccessor",
         "LevelExtractorMixin",
         "LightStorageMixin",
-        "MatrixStackAccessor",
-        "MatrixStackEntryAccessor",
         "MinecraftClientMixin",
         "ModelPartMixin",
         "MouseMixin",
