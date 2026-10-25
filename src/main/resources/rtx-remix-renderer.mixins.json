@@ -66,6 +66,7 @@
         "SpriteAtlasTextureMixin",
         "SpriteBillboardParticleAccessor",
         "SpriteContentsAccessor",
+        "StitcherMixin",
         "TextureManagerMixin",
         "ThreadExecutorMixin",
         "TorchBlockAccessor",
