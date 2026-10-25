@@ -47,8 +47,6 @@ public final class DirectQuadWriter {
     private static final float DECAL_NORMAL_DOT_EPSILON = 0.999f;
     /** Bucket of the films over open water where raindrop rings show. */
     public static final String RIPPLE_FILM_BUCKET = "rain_ripple";
-    /** Bucket of puddle films over open ground. */
-    public static final String PUDDLE_BUCKET = "puddle";
     private static final float DECAL_PLANE_DISTANCE_EPSILON = 1.0E-3f;
     private static final float DECAL_OVERLAP_EPSILON = 1.0E-4f;
 
@@ -112,15 +110,6 @@ public final class DirectQuadWriter {
                         float[] uvs, int uvOff,
                         float nx, float ny, float nz,
                         int color, int boundsMin, int boundsMax) {
-            writeQuad(pos, posOff, uvs, uvOff, nx, ny, nz,
-                    color, color, color, color, boundsMin, boundsMax);
-        }
-
-        void writeQuad(float[] pos, int posOff,
-                        float[] uvs, int uvOff,
-                        float nx, float ny, float nz,
-                        int color0, int color1, int color2, int color3,
-                        int boundsMin, int boundsMax) {
             long requiredBytes = (long) (vertexCount + 4) * STRIDE;
             if (requiredBytes > MAX_VERT_BUF_SIZE) {
                 droppedQuads.incrementAndGet();
@@ -130,7 +119,6 @@ public final class DirectQuadWriter {
 
             for (int v = 0; v < 4; v++) {
                 int wo = (vertexCount + v) * STRIDE;
-                int color = v == 0 ? color0 : v == 1 ? color1 : v == 2 ? color2 : color3;
                 float x = pos[posOff + v * 3];
                 float y = pos[posOff + v * 3 + 1];
                 float z = pos[posOff + v * 3 + 2];
@@ -354,21 +342,13 @@ public final class DirectQuadWriter {
         bb.writeQuad(positions, 0, uvs, 0, nx, ny, nz, color, boundsMin, boundsMax);
     }
 
-    /** Writes the ripple film over an open water surface, in world-space UVs. */
-    public void writeRippleFilmQuad(float[] positions, float[] uvs) {
-        getBucket(ChunkManager.CAT_SOLID, RIPPLE_FILM_BUCKET).writeQuad(positions, 0, uvs, 0,
-                0f, 1f, 0f, 0xFFFFFFFF, HardcodedVertex.packHalf2x16(0, 0), HardcodedVertex.packHalf2x16(1, 1));
-    }
-
     /**
-     * Writes a puddle film over a block's top face, in world-space UVs, with a colour per
-     * vertex whose alpha is the wet zone at that corner.
+     * Writes an upward-facing rain film into {@code bucket}, in world-space UVs. Its opacity
+     * comes from its material's texture alone: the runtime ignores vertex alpha.
      */
-    public void writePuddleQuad(float[] positions, float[] uvs,
-                                int color0, int color1, int color2, int color3) {
-        getBucket(ChunkManager.CAT_SOLID, PUDDLE_BUCKET).writeQuad(positions, 0, uvs, 0,
-                0f, 1f, 0f, color0, color1, color2, color3,
-                HardcodedVertex.packHalf2x16(0, 0), HardcodedVertex.packHalf2x16(1, 1));
+    public void writeFilmQuad(String bucket, float[] positions, float[] uvs) {
+        getBucket(ChunkManager.CAT_SOLID, bucket).writeQuad(positions, 0, uvs, 0,
+                0f, 1f, 0f, 0xFFFFFFFF, HardcodedVertex.packHalf2x16(0, 0), HardcodedVertex.packHalf2x16(1, 1));
     }
 
     /**

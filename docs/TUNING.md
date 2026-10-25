@@ -125,22 +125,19 @@ their distance.
 | `rtxremix.waterRapids.spawnBudgetPerTick` | Foam and mist particles spawned per tick near fast water. 0 turns the effect off | `WaterRapidParticleSpawner` |
 | `rtxremix.particles.fastAirCollision` | Take a fast path through particle collision when every swept cell is air. Set to false to disable the fast path | `ParticleStateMixin` |
 | `rtxremix.particles.fastAirCollisionMaxBlocks` | Largest sweep, in cells, that the fast path handles | `ParticleStateMixin` |
+| `rtxremix.atlas.minPadding` | Smallest border, in texels, the stitcher leaves around each atlas sprite. The runtime mips the whole atlas, so a thin border lets distant faces blend in their atlas neighbours. 0 keeps vanilla's | `AtlasPadding` |
 
 ## Rain Surfaces
 
-Rain pools on open ground and rings open water. A section build lays a puddle
-film on the top face of each occluding block that is the highest to stop rain
-in its column, where it rains rather than snows, inside the wet zones
-`PuddleField` places; it lays a ripple film just over water open to the rain.
-The films never change after they are built: the weather reaches them as
-texture content (`RainSurfaceTextures`). The puddle mask floods over about 20
-seconds of rain and dries over about 30 once it stops (`RainSurfaces`), and
-raindrop rings play at the rain's strength and clear when it stops
-(`RainRipples`). Both keys read at startup.
+Rain rings open water. A section build lays a cut-out ripple film just over
+water open to the rain, where it rains rather than snows. The film never
+changes after it is built: the rain reaches it as texture content
+(`RainSurfaceTextures`), and only the texture sets its opacity, because the
+runtime ignores vertex alpha. Raindrop rings play at the rain's strength and
+clear when it stops (`RainSurfaces`, `RainRipples`). The key reads at startup.
 
 | Key | Effect | Owner |
 |---|---|---|
-| `rtxremix.rain.puddles` | Set to false to lay no puddles | `BlockTextureManager` |
 | `rtxremix.rain.ripples` | Set to false to lay no ripple films over open water | `BlockTextureManager` |
 
 ## Profiling And Diagnostics

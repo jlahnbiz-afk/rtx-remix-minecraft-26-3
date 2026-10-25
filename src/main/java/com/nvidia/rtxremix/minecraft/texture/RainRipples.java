@@ -37,7 +37,7 @@ public final class RainRipples {
     private static final float FULL_RING_SLOPE = 0.35f;
 
     private final int framePx;
-    /** Per frame, RGBA8 tangent-space normals at full strength. */
+    /** Per frame, octahedrally encoded tangent-space normals at full strength; see {@link #writeNormals}. */
     private final byte[][] normals;
     /** Per frame, how disturbed the water is at full strength, 0 to 255. */
     private final byte[][] disturbance;
@@ -74,8 +74,10 @@ public final class RainRipples {
     }
 
     /**
-     * Writes {@code frame} as RGBA8 tangent-space normals, the rings' slopes scaled by
-     * {@code strength}: x along U in red, y along V in green, up in blue.
+     * Writes {@code frame} as tangent-space normals, the rings' slopes scaled by
+     * {@code strength}, octahedrally encoded in the red and green of RGBA8 texels: the
+     * runtime's own normal encoding, which a texture update must already be in, because
+     * the runtime converts a normal map only when the texture is created.
      */
     public void writeNormals(int frame, float strength, byte[] rgba) {
         byte[] full = normals[frame];
@@ -85,14 +87,15 @@ public final class RainRipples {
         }
         float scale = Math.max(0f, strength);
         for (int i = 0; i < full.length; i += 4) {
-            // A normal (-sx, -sy, 1) / length at full strength scales its slopes to (-s sx, -s sy, 1).
-            float z = decode(full[i + 2]);
-            float nx = decode(full[i]) / z * scale;
-            float ny = decode(full[i + 1]) / z * scale;
-            float length = (float) Math.sqrt(nx * nx + ny * ny + 1f);
-            rgba[i] = encode(nx / length);
-            rgba[i + 1] = encode(ny / length);
-            rgba[i + 2] = encode(1f / length);
+            // An upper-hemisphere normal is proportional to (px, py, 1 - |px| - |py|); scaling its
+            // slopes by s scales px and py by s and re-projects onto the octahedron.
+            float px = decode(full[i]), py = decode(full[i + 1]);
+            float z = Math.max(0f, 1f - Math.abs(px) - Math.abs(py));
+            float sx = px * scale, sy = py * scale;
+            float norm = Math.abs(sx) + Math.abs(sy) + z;
+            rgba[i] = encode(sx / norm);
+            rgba[i + 1] = encode(sy / norm);
+            rgba[i + 2] = 0;
             rgba[i + 3] = (byte) 0xFF;
         }
     }
@@ -170,11 +173,12 @@ public final class RainRipples {
                 float down = height[Math.floorMod(z + 1, framePx) * framePx + x];
                 float sx = (right - left) / (2f * texel);
                 float sy = (down - up) / (2f * texel);
-                float length = (float) Math.sqrt(sx * sx + sy * sy + 1f);
+                // The normal (-sx, -sy, 1), projected onto the octahedron |x| + |y| + |z| = 1.
+                float norm = Math.abs(sx) + Math.abs(sy) + 1f;
                 int i = z * framePx + x;
-                normals[i * 4] = encode(-sx / length);
-                normals[i * 4 + 1] = encode(-sy / length);
-                normals[i * 4 + 2] = encode(1f / length);
+                normals[i * 4] = encode(-sx / norm);
+                normals[i * 4 + 1] = encode(-sy / norm);
+                normals[i * 4 + 2] = 0;
                 normals[i * 4 + 3] = (byte) 0xFF;
                 float disturbed = Math.min(1f, (float) Math.sqrt(sx * sx + sy * sy) / FULL_RING_SLOPE);
                 disturbance[i] = (byte) Math.round(disturbed * 255f);

@@ -106,7 +106,7 @@ public class BlockTextureManager {
     private final List<RemixTexture> managedTextures = new ArrayList<>();
     private final List<RemixMaterial> managedMaterials = new ArrayList<>();
     private RemixMaterial waterSurfaceMaterial;
-    /** Puddles and raindrop rings; null when both are switched off or failed to build. */
+    /** Raindrop rings on open water; null when switched off or failed to build. */
     private RainSurfaceTextures rainSurfaces;
     private RemixMaterial waterCameraMediumMaterial;
     private long waterNormalHandle;
@@ -340,7 +340,7 @@ public class BlockTextureManager {
             }
             buildAtlasMaterials(api, labPBRVariants);
             buildWaterMaterials(api);
-            if (RAIN_PUDDLES_ENABLED || RAIN_RIPPLES_ENABLED) {
+            if (RAIN_RIPPLES_ENABLED) {
                 rainSurfaces = RainSurfaceTextures.create(api,
                         (name, rgba, w, h, format, purpose) -> upload(api, name, rgba, w, h, format, purpose),
                         this::createMaterialViaStore);
@@ -760,9 +760,6 @@ public class BlockTextureManager {
 
     private static final String WATER_NORMALS_DDS = "textures/water_normals_flipbook.dds";
     private static final float WATER_TILE_SIZE = 10.0f;
-    /** Kill switch for rain puddles ({@code -Drtxremix.rain.puddles=false}). */
-    public static final boolean RAIN_PUDDLES_ENABLED =
-            !"false".equalsIgnoreCase(System.getProperty("rtxremix.rain.puddles"));
     /** Kill switch for raindrop rings ({@code -Drtxremix.rain.ripples=false}). */
     public static final boolean RAIN_RIPPLES_ENABLED =
             !"false".equalsIgnoreCase(System.getProperty("rtxremix.rain.ripples"));
@@ -888,19 +885,14 @@ public class BlockTextureManager {
 
     public RemixMaterial getWaterSurfaceMaterial() { return waterSurfaceMaterial; }
 
-    /** The puddle film's material, or null when there are no rain surfaces. */
-    public RemixMaterial getPuddleMaterial() {
-        return rainSurfaces != null ? rainSurfaces.puddleMaterial() : null;
-    }
-
-    /** The ripple film's material, or null when there are no rain surfaces. */
+    /** The ripple film's material, or null when there are no raindrop rings. */
     public RemixMaterial getRippleFilmMaterial() {
         return rainSurfaces != null ? rainSurfaces.rippleFilmMaterial() : null;
     }
 
-    /** Shows the weather on the rain surfaces; see {@link RainSurfaceTextures#update}. */
-    public void updateRainSurfaces(float wetness, float strength, double seconds) {
-        if (rainSurfaces != null) rainSurfaces.update(wetness, strength, seconds);
+    /** Shows the rain on open water; see {@link RainSurfaceTextures#update}. */
+    public void updateRainSurfaces(float strength, double seconds) {
+        if (rainSurfaces != null) rainSurfaces.update(strength, seconds);
     }
     public RemixMaterial getWaterCameraMediumMaterial() { return waterCameraMediumMaterial; }
     public static float getWaterTileSize() { return WATER_TILE_SIZE; }

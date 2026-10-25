@@ -7,6 +7,7 @@ package com.nvidia.rtxremix.minecraft.terrain.capture;
 import com.nvidia.rtxremix.RemixAPI;
 import com.nvidia.rtxremix.minecraft.light.BlockLightRuleManager;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
+import com.nvidia.rtxremix.minecraft.texture.RainSurfaceTextures;
 import com.nvidia.rtxremix.minecraft.light.LightEntry;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -90,12 +91,12 @@ public final class BlockQuadEmitter {
     static final float SHARED_FACE_PUSH = 1f / 512f;
 
     /**
-     * Block units a rain film sits above the ground or water. A ray through a clear
+     * Block units the ripple film sits above the water. A ray through a clear
      * stretch of the film restarts a little beyond it, so the gap must stay wider than
      * that restart for the surface below to be met.
      */
     static final float RAIN_FILM_LIFT = 1f / 64f;
-    /** World-space UVs wrap at this many blocks, a whole number of puddle tiles, to stay precise. */
+    /** World-space UVs wrap at this many blocks, a whole number of ripple tiles, to stay precise. */
     private static final int RAIN_UV_WRAP_BLOCKS = 4096;
     private static final int HEIGHT_NOT_READ = Integer.MIN_VALUE;
     private static final int HEIGHT_UNKNOWN = Integer.MIN_VALUE + 1;
@@ -191,18 +192,13 @@ public final class BlockQuadEmitter {
     private int sharedSidesTested, sharedSides;
     /** Added to every position staged for the current face; non-zero only on a shared side. */
     private float facePushX, facePushY, facePushZ;
-    /** The cull face of the quads being staged, null for unculled ones. */
-    private @Nullable Direction stagingCullFace;
 
-    // Rain surfaces: see PuddleField and RainSurfaceTextures.
+    // Raindrop rings on open water: see RainSurfaceTextures.
     /** The level the build reads, for heightmaps and biomes; null when it is unknown. */
     private @Nullable ClientLevel level;
     /** The top motion-blocking block per column of this section, read on first use. */
     private final int[] motionBlockingTops = new int[SECTION_SIZE * SECTION_SIZE];
     private boolean motionBlockingTopsCleared;
-    /** Whether the current block holds a puddle: 0 undecided, 1 yes, 2 no. */
-    private int puddleDecision;
-    private boolean puddleEmitted;
     private final BlockPos.MutableBlockPos rainPos = new BlockPos.MutableBlockPos();
     private final float[] filmPositions = new float[12];
     private final float[] filmUvs = new float[8];
@@ -378,8 +374,6 @@ public final class BlockQuadEmitter {
         sharedSidesTested = 0;
         sharedSides = 0;
         setFacePush(null);
-        puddleDecision = 0;
-        puddleEmitted = false;
 
         // Vanilla derives model randomisation from the block position, in the
         // same ModelBlockRenderer.tesselateBlock this emitter replaces, and
@@ -486,11 +480,9 @@ public final class BlockQuadEmitter {
                     continue;
                 }
                 setFacePush(meetsNeighbourFace(world, state, dir) ? dir : null);
-                stagingCullFace = dir;
                 for (int q = 0, quadCount = culledQuads.size(); q < quadCount; q++) {
                     stageBakedQuad(culledQuads.get(q), layerOverride, state, world, lx, ly, lz);
                 }
-                stagingCullFace = null;
                 setFacePush(null);
             }
             List<BakedQuad> unculledQuads = part.getQuads(null);
@@ -544,48 +536,19 @@ public final class BlockQuadEmitter {
         float su1 = sprite != null ? sprite.getU1() : 1;
         float sv1 = sprite != null ? sprite.getV1() : 1;
 
-        if (stagingCullFace == Direction.UP) {
-            emitPuddleUnder(state, world);
-        }
         writer.stageQuad(tempPositions, tempUvs, nx, ny, nz, color,
                 spriteId, su0, sv0, su1, sv1, layerName);
     }
 
     /**
-     * Lays a puddle film over the top-face quad staged in {@code tempPositions}, when the
-     * block may hold rain: see {@link #holdsRain}. The film is the same quad lifted by
-     * {@link #RAIN_FILM_LIFT}, in world-space UVs over the puddle mask, with the wet zone
-     * at each corner as its alpha. Whether any of it shows follows the weather through
-     * the mask; the geometry is laid once.
-     */
-    private void emitPuddleUnder(BlockState state, BlockAndTintGetter world) {
-        if (puddleEmitted || !isFullTopQuad() || !holdsRain(state, world)) return;
-        puddleEmitted = true;
-        int c0 = 0, c1 = 0, c2 = 0, c3 = 0;
-        for (int v = 0; v < 4; v++) {
-            int x = baseX + Math.round(tempPositions[v * 3]);
-            int z = baseZ + Math.round(tempPositions[v * 3 + 2]);
-            int corner = (PuddleField.zoneAlpha(x, z) << 24) | 0xFFFFFF;
-            switch (v) {
-                case 0 -> c0 = corner;
-                case 1 -> c1 = corner;
-                case 2 -> c2 = corner;
-                default -> c3 = corner;
-            }
-        }
-        liftFilm(tempPositions);
-        writer.writePuddleQuad(filmPositions, filmUvs, c0, c1, c2, c3);
-    }
-
-    /**
      * Copies the quad in {@code positions} into {@code filmPositions}, lifted by
-     * {@link #RAIN_FILM_LIFT}, and gives it world-space UVs over the rain tiles in
+     * {@link #RAIN_FILM_LIFT}, and gives it world-space UVs over the ripple tile in
      * {@code filmUvs}. The UVs start from the block's own corner, so a quad never spans
      * the wrap.
      */
     private void liftFilm(float[] positions) {
         int lx = mutablePos.getX() - baseX, lz = mutablePos.getZ() - baseZ;
-        float tile = PuddleField.TILE_BLOCKS;
+        float tile = RainSurfaceTextures.TILE_BLOCKS;
         float blockU = Math.floorMod(mutablePos.getX(), RAIN_UV_WRAP_BLOCKS) / tile;
         float blockV = Math.floorMod(mutablePos.getZ(), RAIN_UV_WRAP_BLOCKS) / tile;
         for (int v = 0; v < 4; v++) {
@@ -598,43 +561,6 @@ public final class BlockQuadEmitter {
         }
     }
 
-    /** Whether the quad in {@code tempPositions} covers the whole top of its block, flat. */
-    private boolean isFullTopQuad() {
-        int lx = mutablePos.getX() - baseX, ly = mutablePos.getY() - baseY, lz = mutablePos.getZ() - baseZ;
-        float minX = Float.POSITIVE_INFINITY, maxX = Float.NEGATIVE_INFINITY;
-        float minZ = Float.POSITIVE_INFINITY, maxZ = Float.NEGATIVE_INFINITY;
-        for (int v = 0; v < 4; v++) {
-            float x = tempPositions[v * 3], y = tempPositions[v * 3 + 1], z = tempPositions[v * 3 + 2];
-            if (Math.abs(y - (ly + 1)) > 1.0E-4f) return false;
-            minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-            minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
-        }
-        return Math.abs(minX - lx) < 1.0E-4f && Math.abs(maxX - (lx + 1)) < 1.0E-4f
-                && Math.abs(minZ - lz) < 1.0E-4f && Math.abs(maxZ - (lz + 1)) < 1.0E-4f;
-    }
-
-    /**
-     * Whether rain can pool on the current block: an occluding block with a sturdy top,
-     * the highest that stops rain in its column (vanilla's {@code MOTION_BLOCKING}
-     * heightmap, the one rain falls to), in a spot where it rains rather than snows,
-     * and somewhere {@link PuddleField} ever floods. Decided once per block, the cheap
-     * tests first.
-     */
-    private boolean holdsRain(BlockState state, BlockAndTintGetter world) {
-        if (puddleDecision == 0) {
-            int x = mutablePos.getX(), y = mutablePos.getY(), z = mutablePos.getZ();
-            boolean holds = BlockTextureManager.RAIN_PUDDLES_ENABLED
-                    && level != null
-                    && state.canOcclude()
-                    && state.getFluidState().isEmpty()
-                    && PuddleField.mayHoldWater(x, z)
-                    && motionBlockingTop(x - baseX, z - baseZ) == y
-                    && state.isFaceSturdy(world, mutablePos, Direction.UP)
-                    && rainsAt(x, y + 1, z);
-            puddleDecision = holds ? 1 : 2;
-        }
-        return puddleDecision == 1;
-    }
 
     /**
      * The y of the highest block that stops rain in column {@code (lx, lz)} of this
@@ -825,9 +751,6 @@ public final class BlockQuadEmitter {
         float su1 = sprite != null ? sprite.getU1() : 1;
         float sv1 = sprite != null ? sprite.getV1() : 1;
 
-        if (cull == Direction.UP) {
-            emitPuddleUnder(frapiState, frapiWorld);
-        }
         writer.stageQuad(tempPositions, tempUvs, nx, ny, nz, color,
                 spriteId, su0, sv0, su1, sv1, layerName);
     }
@@ -938,7 +861,7 @@ public final class BlockQuadEmitter {
                     // Raindrop rings show on a film just over the water, from above.
                     mutablePos.set(wx, wy, wz);
                     liftFilm(tempPositions);
-                    writer.writeRippleFilmQuad(filmPositions, filmUvs);
+                    writer.writeFilmQuad(DirectQuadWriter.RIPPLE_FILM_BUCKET, filmPositions, filmUvs);
                 }
                 setPos4(tempPositions, lx, ly + h01, lz + 1, lx + 1, ly + h11, lz + 1,
                         lx + 1, ly + h10, lz, lx, ly + h00, lz);

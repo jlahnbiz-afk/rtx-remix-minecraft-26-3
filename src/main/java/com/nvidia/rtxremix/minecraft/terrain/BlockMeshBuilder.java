@@ -388,7 +388,6 @@ public final class BlockMeshBuilder {
 
         if ("water".equals(baseName)) return tex.getWaterSurfaceMaterial();
         if (DirectQuadWriter.RIPPLE_FILM_BUCKET.equals(baseName)) return tex.getRippleFilmMaterial();
-        if (DirectQuadWriter.PUDDLE_BUCKET.equals(baseName)) return tex.getPuddleMaterial();
 
         int layerType = BlockTextureManager.layerType(baseName);
         return isSss ? tex.getAtlasMaterialSSS(layerType)

@@ -17,7 +17,7 @@ class RainRipplesTest {
     private static final RainRipples RIPPLES = RainRipples.generate(FRAME_PX, TILE_BLOCKS, 7L);
 
     @Test
-    void framesAreUnitNormalsOutOfTheWater() {
+    void framesAreOctahedralNormalsOutOfTheWater() {
         byte[] rgba = new byte[FRAME_PX * FRAME_PX * 4];
         int tilted = 0;
         for (int frame = 0; frame < RainRipples.FRAMES; frame++) {
@@ -25,14 +25,26 @@ class RainRipplesTest {
             for (int i = 0; i < rgba.length; i += 4) {
                 float x = (rgba[i] & 0xFF) / 127.5f - 1f;
                 float y = (rgba[i + 1] & 0xFF) / 127.5f - 1f;
-                float z = (rgba[i + 2] & 0xFF) / 127.5f - 1f;
-                assertEquals(1f, (float) Math.sqrt(x * x + y * y + z * z), 0.02f);
-                assertTrue(z > 0.5f, "normals point out of the water");
+                float z = 1f - Math.abs(x) - Math.abs(y);
+                assertTrue(z > 0.3f, "normals point out of the water");
                 assertEquals((byte) 0xFF, rgba[i + 3]);
-                if (z < 0.995f) tilted++;
+                if (z < 0.98f) tilted++;
             }
         }
         assertTrue(tilted > 0, "some rings disturb the surface");
+    }
+
+    @Test
+    void lighterRainTiltsTheNormalsLess() {
+        byte[] strong = new byte[FRAME_PX * FRAME_PX * 4];
+        byte[] light = new byte[FRAME_PX * FRAME_PX * 4];
+        RIPPLES.writeNormals(9, 1f, strong);
+        RIPPLES.writeNormals(9, 0.4f, light);
+        for (int i = 0; i < strong.length; i += 4) {
+            int strongTilt = Math.abs((strong[i] & 0xFF) - 128) + Math.abs((strong[i + 1] & 0xFF) - 128);
+            int lightTilt = Math.abs((light[i] & 0xFF) - 128) + Math.abs((light[i + 1] & 0xFF) - 128);
+            assertTrue(lightTilt <= strongTilt + 1, "tilt " + lightTilt + " against " + strongTilt);
+        }
     }
 
     @Test
@@ -45,7 +57,6 @@ class RainRipplesTest {
             for (int i = 0; i < normals.length; i += 4) {
                 assertEquals(128, normals[i] & 0xFF);
                 assertEquals(128, normals[i + 1] & 0xFF);
-                assertEquals(255, normals[i + 2] & 0xFF);
                 assertEquals(0, rings[i + 3]);
                 assertEquals((byte) 0x0A, rings[i]);
             }
