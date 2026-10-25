@@ -11,6 +11,29 @@ also part of every mod file name.
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-25
+
+The port to Minecraft 26.3. PORTING.md records the design changes.
+
+### Changed
+
+- Minecraft Java Edition 26.3 on Fabric, with Java 25.
+- The game heap defaults to a fixed 16 GB.
+- Changing a Block Lights multiplier updates the loaded lights in place
+  instead of rebuilding all terrain, which could fill video memory.
+
+### Added
+
+- Raindrop rings on open water while it rains.
+- Japanese translation.
+
+### Fixed
+
+- Distant terrain no longer shows purple tints and lines from neighbouring
+  atlas sprites; every atlas sprite gets at least an eight-texel border.
+- See-through sleeves on the first-person arm show the arm instead of black.
+- Slab sides next to leaves or glass no longer vanish depending on the view.
+
 ## 0.1.0 - 2026-10-23
 
 The first public release, a beta.
