@@ -68,3 +68,6 @@ nrc_session_log.txt
 /rtxremix-java/**/*.class
 /rtxremix-java/**/*.jar
 /rtxremix-java/**/*.log
+
+# The fork's porting notes; they hold machine-local paths
+/PORTING.md

@@ -33,8 +33,7 @@ in other worlds and resource packs.
 ## What This Fork Adds
 
 - **Minecraft 26.3.** The port follows vanilla's render-state and frame-graph
-  pipeline. [PORTING.md](PORTING.md) (in Japanese) records what changed, why,
-  and what is still open.
+  pipeline.
 - **A physically based sky.** The atmosphere is computed from measured values,
   aerosols and ozone included, with multiple scattering, so a clear sky
   deepens to blue overhead and pales to white at the horizon. Rainbows after
@@ -176,7 +175,6 @@ into the world with the pack on.
 | Build and run from source | [Getting Started](docs/GETTING_STARTED.md) |
 | Tune the developer knobs behind the renderer | [Tuning](docs/TUNING.md) |
 | Diagnose a rendering or native integration problem | [Rendering Diagnostics](docs/RENDERING_DIAGNOSTICS.md) |
-| Read what the 26.3 port changed (Japanese) | [PORTING.md](PORTING.md) |
 | Contribute a change | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Report a bug | [Reporting a Bug](docs/PLAYING.md#reporting-a-bug) |
 | Report a security vulnerability | [SECURITY.md](SECURITY.md) |

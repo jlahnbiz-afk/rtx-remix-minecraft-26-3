@@ -12,8 +12,9 @@ runtime and the Remix C API come from dxvk-remix. A change often spans all
 three layers.
 
 This branch (`26.3`) is a fork that ports the upstream 1.21.1 mod to Minecraft
-26.3 and adds its own rendering features. [PORTING.md](PORTING.md) (Japanese)
-records what the port changed and why, feature by feature.
+26.3 and adds its own rendering features. `PORTING.md` (Japanese) records what
+the port changed and why, feature by feature. It is ignored by git because it
+holds machine-local paths, so it exists only in the maintainer's checkout.
 
 ## Source Of Truth
 
@@ -22,7 +23,8 @@ Prefer these sources in this order:
 1. source under `src/main/java/`
 2. `build.gradle`
 3. the Architecture section below
-4. `PORTING.md`, `README.md` and the guides under `docs/`
+4. `README.md`, the guides under `docs/`, and the local `PORTING.md` where it
+   exists
 
 This file must describe the code as it is. When you find it disagreeing with the
 code, report the mismatch to the user and rewrite this file to the newer state
@@ -504,7 +506,7 @@ diluting the sampler's candidate pool.
 - [Getting Started](docs/GETTING_STARTED.md): runtime staging, initialization
   failures, debug views, and worktree setup. Debug-view indices belong to the
   matching dxvk-remix source, not this repository.
-- [PORTING.md](PORTING.md): what the 26.3 port changed, the fork's own
+- `PORTING.md` (local, untracked): what the 26.3 port changed, the fork's own
   features, and what the runtime was found to do (Japanese).
 
 ## Integrated JNI Wrapper

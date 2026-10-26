@@ -14,8 +14,7 @@ also part of every mod file name.
 ## 0.2.1 - 2026-10-26
 
 The fork's own look since 0.2.0: sky, clouds, lens, LOD terrain and rain, and
-a much lighter frame in places full of lights. PORTING.md records the design
-changes.
+a much lighter frame in places full of lights.
 
 ### Added
 
@@ -128,7 +127,7 @@ changes.
 
 ## 0.2.0 - 2026-10-25
 
-The port to Minecraft 26.3. PORTING.md records the design changes.
+The port to Minecraft 26.3.
 
 ### Changed
 
