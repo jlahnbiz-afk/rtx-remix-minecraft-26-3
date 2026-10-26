@@ -310,13 +310,13 @@ class ConfLayerDriverTest {
     // --- layer table invariants ---
 
     @Test
-    void staticTableHasNineUniqueRows() {
-        // 1 water + 1 view-distance controller + 1 volumetric settling
+    void staticTableHasTenUniqueRows() {
+        // 1 water + 2 view-distance controllers + 1 volumetric settling
         // controller + 2 weather + 4 time profiles. Optional biome and zone
         // rows are discovered from disk.
         assertEquals(67, ConfLayerDriver.vanillaBiomeNames().size(),
                 "vanilla 26.3 biome count (Biomes)");
-        assertEquals(9, ConfLayerDriver.STATIC_LAYER_TABLE.size());
+        assertEquals(10, ConfLayerDriver.STATIC_LAYER_TABLE.size());
         Set<String> names = new HashSet<>();
         Set<String> paths = new HashSet<>();
         for (var spec : ConfLayerDriver.STATIC_LAYER_TABLE) {
@@ -381,6 +381,8 @@ class ConfLayerDriverTest {
                 expected = 20000f;
             } else if (spec.name().equals(LogicChannels.VIEW_DISTANCE)) {
                 expected = 3000f;
+            } else if (spec.name().equals(LogicChannels.VIEW_DISTANCE_LOD)) {
+                expected = 3001f;
             } else if (spec.name().equals(LogicChannels.VOLUMETRICS_SETTLING)) {
                 expected = 3100f;
             } else if (spec.name().startsWith(LogicChannels.ZONE_PREFIX)) {

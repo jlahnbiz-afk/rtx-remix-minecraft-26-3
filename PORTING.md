@@ -181,12 +181,44 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
   ミップマップに黒が混ざり、遠くの地形がグリッド状に見えていました。
 - 余白の幅は vanilla では `1 << ミップレベル` で、パックに 2px の小さいテクスチャ
   があるとブロックのアトラスはミップ 1 (余白 2 テクセル) に下がります。Remix は
-  アトラス全体のミップを最後まで作るので、ミップ 2 以降で隣のスプライトの色が
-  混ざり、遠くの地形に紫などの色や線が出ていました。`StitcherMixin` で余白を
-  最低 8 テクセルに広げます (`AtlasPadding`、`-Drtxremix.atlas.minPadding`)。
-  16px のスプライトなら 32px のマスに収まり、スプライトが 1 テクセルより小さく
-  なるまで隣が混ざりません。ブロックのアトラスは 2048x1024 から 2048x2048 に
-  なります。
+  アトラス全体を半分ずつ縮めてミップを最後まで作るので、余白でずれたスプライトは
+  ミップ 2 以降で隣のスプライトの色が混ざり、遠くの地形に色や線が出ていました。
+  `StitcherMixin` で余白を 0 にしています (`AtlasPadding`、
+  `-Drtxremix.atlas.vanillaPadding` で vanilla の余白に戻る)。余白がなければ
+  stitcher は 2 の累乗のスプライトを大きい順に自分の大きさの倍数の位置へ並べるので、
+  ミップのテクセルはスプライトが 1 テクセルになるまで隣にまたがりません。
+  rotrBLOCKS 128x では 1340 個中 1 個だけが外れます (ブロックのアトラスのログ行に
+  数が出る、`AtlasSprites.offGrid`)。
+- 以前は余白を広げて混ざりを遅らせていました (最低 8 テクセル、高解像度パックでは
+  スプライトの半分で上限 64)。128px のパックではアトラスが縦横 2 倍、面積 4 倍の
+  16384x8192 になり、Remix 側のテクスチャ一式と合わせて VRAM を約 5.9 GB 余計に
+  使っていました (同じ場所で専用 VRAM 20.9 GB、余白 0 で 14.3 GB)。余白を
+  広げても最後の数段のミップでは結局混ざるので、整列させる方が安く確実です。
+- LabPBR のパックは `_n` (法線) と `_s` (スペキュラ) を元のテクスチャと同じ
+  `textures/block` に置くので、vanilla のアトラスはそれも全部スプライトとして
+  取り込み、名前順で `oak_leaves` の隣に青紫の `oak_leaves_n` が並んでいました。
+  遠くの葉が紫になっていた原因です。モッドはこれらをリソースから直接読むので、
+  `assets/minecraft/atlases/blocks.json` と `items.json` の filter で
+  `_n`、`_s`、`_sss` をアトラスから外しています (`PbrAtlasFilterTest`)。
+  rotrBLOCKS 128x ではスプライトが 3504 個から 1340 個に減り、ブロックのアトラスは
+  8192x8192 から 8192x4096 になります。
+- LabPBR の `_s` の青が 65 以上だと SSS (表面下散乱) になります。rotrBLOCKS では
+  葉、草、作物、氷塊と青氷、アメジスト、フロッグライトなど 138 枚に付いています。
+  夜や雨の日に、葉 (thin opaque) とアイススパイク (拡散プロファイル) が周りの
+  5 倍ほど明るく光っていました。原因は上流の `rtx.conf` の
+  `rtx.spatiallyHashedRadianceCache.queryForThinOpaquePrimaryView = True`
+  (葉のちらつきを減らす設定) で、画面に直接見える SSS の面の明るさを放射輝度
+  キャッシュから引いていました。`False` にすると SSS を切ったときと同じ明るさに
+  なります。葉のちらつきが戻らないかは動かして確かめる必要があります。
+  切り分けは、インスタンスの `user.conf` に一時的に
+  `rtx.subsurface.enableThinOpaque = False`、`rtx.subsurface.enableDiffusionProfile = False`、
+  この照会の `False` を順に足して撮り比べました (`checks` の撮影セット)。
+- 調べる途中で、材質側の SSS は次のようになっていると分かりました。直しても上の光り方は
+  変わらなかったので、どれも上流のままです。thin opaque の透過率は透過テクスチャの
+  色そのもので、灰色の葉テクスチャをそのまま渡しているため、逆光の葉は緑ではなく灰色の
+  光を通します (頂点カラーは SSS に届かない)。拡散プロファイルの平均自由行程は半径
+  テクスチャ (0〜1) と `radiusScale` (100) の積で、ブロック単位です (1 ブロック 1 m)。
+  `maxSampleRadius` (32) はランタイムが unorm8 で持つので 1 になります。
 - フォントのグリフは GPU 上で組み立てられるので、`CommandEncoderGlyphMirrorMixin`
   と `BitmapGlyphStagingMixin` で書き込みを CPU 側に写しています。
 - プレイヤースキンは `DynamicTexture` になったので、`PlayerSkinTextureMixin` は
@@ -225,8 +257,8 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
 
 ### 雨の波紋 (このフォークで追加)
 
-上流にはない機能です。空に面した水面に雨粒の輪を出します。水たまりも作り
-ましたが、見た目が良くなかったので削除しました。実機でわかったランタイムの
+上流にはない機能です。空に面した水面に雨粒の輪を出します。水たまりは一度
+削除し、下の「雨の水たまり」の作りで入れ直しました。実機でわかったランタイムの
 癖が 3 つあり、どれも設計に効いています。
 - 材質のその場更新 (`updateMaterial`) は法線などの変更を受け付けません
   (ログに `UpdateMaterial: updates affecting surfaces ... are not supported`)。
@@ -257,7 +289,508 @@ Java 25 は Mojang のバージョンメタデータ (`javaVersion`) と Prism �
   そのセクションが作り直されるまで膜は残ります。
 - `-Drtxremix.rain.ripples=false` で切れます。膜もテクスチャも作りません。
 
+### 雨の水たまり (このフォークで追加)
+
+雨が降ると、空に面した地面に水たまりができます (`Puddles`)。水たまりは
+地面の 1.25 cm 上に置いた薄い水面で、材質はマイクラの水と同じ半透明の水です。
+地面は水越しにそのまま見え、反射は水のフレネルで角度に応じて強くなり、
+雨の輪の波紋も水の法線マップからそのまま出ます。ブロックのテクスチャは使わない
+ので、ブロックが変わっても見た目は食い違いません。どこに水がたまるかは
+3 オクターブのノイズ (`PuddleMask`、32 ブロック周期) で決め、雨の降り始めの
+30 秒で広がり、止んでから 120 秒で乾きます。
+- 輪郭は、ブロック上面を 4×4 のマス目に分けてマーチングスクエアでなぞった
+  多角形です。ブロックの格子に沿わない形になります。
+- 屋根の下の列や、一段低い列 (水が流れ落ちる側) からは、1.25 ブロックかけて
+  水が引くようにノイズを下げています。屋根の際でまっすぐな境界ができません。
+- カメラが 8 ブロック動いたとき、10 秒ごと、近くのブロックが変わったとき
+  (`LevelExtractorMixin` の `setBlocksDirty` から、最短 0.5 秒おき) に置き直します。
+
+この形に落ち着くまでに、実機で次のことがわかりました。
+- 自前のメッシュに `DECAL_STATIC` を付けると、毎フレーム描く `drawInstance` でも
+  常駐インスタンスでも何も表示されませんでした。ランタイムのソースでは、デカールは
+  パーティクルと同じ「順不同」の TLAS に入り、下の不透明面の材質に混ぜ込まれます。
+  混ぜ方は色を不透明度ぶん暗くしてラフネスを混ぜるもので、色を保ったまま艶だけを
+  足すことはできません。表示されなかった理由は未確認です。
+- アルファブレンドの面は (デカール扱いでなくても) 反射しません。暗い色にすると
+  黒いしみ、金属にすると白い霞に見えるだけでした。
+- 頂点カラーのアルファではアルファテストもできません。輪郭はジオメトリで作ります。
+- ブロック上面の写し (地形のアトラスでラフネスだけ下げた面) を重ねる方式は、
+  反射は出ましたが、粗い段がミルクのように白く濁り、ブロックを壊すと写しが
+  食い違うのでやめました。
+- 水たまりの膜は屈折率 1.8 (直上からの反射 8%、水の 1.33 では 2%) で、透過は 0.85 です。
+  本物の水たまりが鏡に見えるのは下の地面が暗いからなので、下を少し暗くして反射を
+  目立たせています。雨の波紋は毎秒 1 平方ブロックあたり 16 滴、振幅 0.016 ブロック、
+  寿命 0.55 秒です (`RainRipples`)。
+- 川や海の水は、透過の色 (0.6, 0.9, 0.89) を 1 ブロックではなく 3 ブロックで測る
+  (`DEFAULT_WATER_TRANSMITTANCE_DISTANCE`) ので、川底が数ブロック先まで見えます。
+
+### LOD 地形 (Distant Horizons、このフォークで追加)
+
+Distant Horizons (DH) 3.3.4 が入っているときだけ、その遠景をパストレースします
+(`lod/`)。Voxy は見送りました (理由は次の節)。
+- DH が入っているときだけ適用されるミックスイン設定 (`lod/dh/`) で、DH が描画
+  セクションの頂点を GPU に送る前に CPU 側のバッファを写し、どのセクションを
+  描くかは DH の判断に従います。
+- `LodTerrain` が自前のスレッドでセクションごとに 1 つのメッシュを作り、常駐
+  インスタンスとして置きます。色は DH の頂点色のままの単色で、水は水の材質です。
+- Minecraft の描画距離より 2 チャンク内側は LOD から切り抜き、その切り抜きが
+  変わったセクションだけ作り直します。LOD 用の描画距離の conf レイヤー
+  (`view_distance_lod.conf`) が、Remix の遠景のフェードを DH の半径まで広げます。
+- 写している間、DH 自身は描画も面の陰影の焼き込みもしません。切り替えると DH が
+  全セクションを作り直します。DH はコンパイル時だけの依存で、配布物には入れません。
+- DH は最初に描くとき、LOD に雲がかぶらないよう Minecraft の雲の設定を OFF に
+  書き換えます (`overrideVanillaGraphicsSettings`)。このモッドの雲はその設定に
+  従うので全部消えていました。RTX が有効な間は `MinecraftClientWrapperMixin` で
+  この書き換えを止めています。
+
+### Voxy と Sodium (見送り、いずれ対応する)
+
+Voxy にはいずれ対応しますが、その前に Sodium への対応が要ります。Voxy は
+Sodium がないと動かず、Sodium を入れるとこのモッドの近景の地形が Remix に出なく
+なるためです。Sodium を入れて起動したことはまだなく、以下は Voxy 0.2.20-beta の
+ソースと、Sodium 0.9.2+mc26.3 のミックスインの注釈 (javap) を読んで分かったことです。
+
+- Voxy は `fabric.mod.json` で Sodium を必須にしています。描画の入口は Sodium の
+  `DefaultChunkRenderer.render` で、`VoxyRenderSystem` や `VoxyClientInstance`
+  などの本体も Sodium のクラスを使うので、依存を外して動かすことはできません。
+- Sodium は `LevelExtractor` の `setBlocksDirty` と `setSectionDirty` 系を
+  `@Overwrite` し、`extract` の地形カリングを `@Redirect` で外し、`ViewArea` を
+  区画のない `IgnoringViewArea` に置き換えます。vanilla のセクションがビルド
+  されないので、`SectionCompiler` に乗っているこのモッドの地形キャプチャ
+  (`SectionBuilderMixin`、`RebuildTaskMixin`、`BuiltChunkMixin`、
+  `WorldRendererMixin` の `compileSections`) には何も届きません。このモッドの `LevelExtractorMixin` は、
+  Sodium が書き換える `setBlocksDirty` にも inject しています。
+- エンティティ (`ModelPartMixin`、`CuboidMixin`) とバイオーム色 (`BiomeMixin`)
+  は Sodium のミックスインと同じメソッドを触りますが、このモッドのフックが先に
+  走るので、今のままで動く見込みです。雲と空は重なりません (次の節)。
+
+対応するときの順番:
+
+1. **Sodium 対応**: 地形キャプチャの入口を、Sodium のチャンクビルド
+   (`ChunkBuilderMeshingTask`) にもう一本作り、Sodium 自身の地形の描画は止め
+   ます。地形のミックスインは、DH と同じ方式 (モッドが入っているときだけ適用
+   する設定とプラグイン) で、Sodium がある場合とない場合に分けます。設計は次の
+   節にあります。
+2. **Voxy の取り込み**: 形は `BuiltSection.geometryBuffer` にあります。1 クアッド
+   8 バイトの独自形式で、32³ のセクション内の位置、面、幅と長さ、モデル ID が
+   入っています。色はモデル ID の先にあり、Voxy が GPU 側に焼くモデルデータにしか
+   ないので、`ModelFactory` からモデルごとの平均色の表を CPU 側に作ります。
+   どの LOD を描くかは、Voxy が GPU の階層トラバーサル
+   (`HierarchicalOcclusionTraverser`) で決めます。CPU 側には DH の
+   `setRenderingEnabled` に当たるものがなく、`NodeManager` が持つ読み込み済みの
+   ノード木には親と子の LOD が重なって残っています。そこから、距離で重ならない
+   切り口をこちらで選びます。Voxy 自身の描画は、`MixinDefaultChunkRenderer` が
+   呼ぶ `renderOpaque` を止めます。
+3. **使い回せるもの**: `LodTerrain` の取り込み、切り抜き、退役、
+   `view_distance_lod.conf` はそのまま使えます。`LodMeshBuilder` は DH の
+   16 バイト頂点専用なので、Voxy の形を読む部分を足します。DH と Voxy の両方が
+   入っているときは片方を選び、どちらにしたかをログに出します。
+
+Voxy は All Rights Reserved で、再配布できません。DH と同じくコンパイル時だけの
+依存にして、配布物には入れません。
+
+### Sodium 0.9.2 との両立 (調査と設計、未実装)
+
+Voxy (Sodium 必須) に対応する前に要る、Sodium 対応の調査と設計です。
+sodium-fabric-0.9.2+mc26.3 の jar にあるミックスイン 80 個の注釈を javap で読み、
+同じ版のソース (CaffeineMC/sodium のタグ `mc26.3-0.9.2`) と、このモッドの
+ミックスイン 69 個を突き合わせました。**Sodium を入れての起動はまだしていません**
+(2026-10-25 はインストール版 Prism が別のチェックアウトで使われていたので
+見送りました)。以下の「呼ばれない」「動く」はどれもコードを読んでの判断です。
+
+起動時の衝突は見つかりませんでした。両方が同じ呼び出しを `@Redirect` する所は
+ありません。Sodium が `@Overwrite` するメソッドにこのモッドが `@Inject` している
+3 か所 (`LevelExtractor.setBlocksDirty`、`ModelPart.translateAndRotate`、
+`Biome.getGrassColor` と `getFoliageColor`) は、Mixin が全部の上書きを済ませて
+からインジェクタを入れるので、Sodium の本体の先頭と戻りに入ります。予想される
+症状は「起動はするが、近景の地形が Remix に出ず、Remix のアニメーション
+テクスチャが止まる」です。
+
+**重なるミックスインと、Sodium があるときにどうなるか**
+
+地形:
+
+- `SectionBuilderMixin`、`RebuildTaskMixin`、`BuiltChunkMixin`: 呼ばれません。
+  Sodium は `LevelRenderer.invalidateCompiledGeometry` を HEAD で取り消して
+  `SodiumWorldRenderer.reload()` に置き換え、区画を持たない `IgnoringViewArea`
+  を置きます。vanilla の `visibleSections` が空のままなので `SectionCompiler` は
+  一度も走らず、地形は Sodium の `ChunkBuilderMeshingTask` だけで作られます。
+- `ChunkSectionsToRenderMixin`: 効きません。Sodium は `prepareChunkRenders` を
+  `@WrapOperation` して `SodiumChunkSection` を返し、これは `renderGroup` と
+  `renderOit` を上書きしていて `renderLayers` を通りません。Remix で描いている間も
+  Sodium の GL の地形描画 (`SodiumWorldRenderer.drawChunkLayer`) が走ります。
+- `WorldRendererMixin`: `invalidateCompiledGeometry` の RETURN (再キャプチャの
+  予約を流す所) は、Sodium が HEAD で取り消すので呼ばれません。
+  `builtSectionPositions` と `queueSectionsForRemix` は、`IgnoringViewArea` に区画が
+  ないので空になります。`compileSections` と `uploadTerrainBuffersToGpu` の計測は
+  空の処理を測るだけです。
+- `SectionCopyMixin`、`ClientChunkMixin`、`ChunkRendererRegionMixin`、
+  `ChunkRendererRegionBuilderMixin`、`PackedIntegerArrayMixin`、
+  `BlockBufferBuilderPoolMixin`: 呼ばれないか、空回りします。Sodium はセクションを
+  自前の `ClonedChunkSection` に写し、`RenderBuffersMixin` で vanilla の
+  `SectionBufferBuilderPool` を空のものに差し替えます。配列のプールは `SectionCopy`
+  の中でだけ使う作りなので、Sodium の写しに紛れ込むことはありません。
+- `LevelExtractorMixin`: `setBlocksDirty` は Sodium の上書きと同じメソッドですが、
+  RTX が有効なときは Sodium の本体を取り消して `setSectionDirty` を呼びます。その
+  先は Sodium が上書きした `setSectionDirty` から `scheduleRebuildForChunk` に届く
+  ので、水面の遮蔽のための広い作り直し範囲はそのまま効きます。`extract` の
+  `RenderRegionCache` のフックは、vanilla が毎フレーム空のキャッシュを作るので
+  今どおり動きます。
+- `ClientChunkManagerMixin`: Sodium の `ClientChunkCacheMixin` と同じメソッドの
+  別の位置に入るだけで、両立します。
+
+エンティティ:
+
+- `ModelPartMixin`: `translateAndRotate` は Sodium の `@Overwrite` と同じメソッド
+  ですが、こちらは HEAD で `RecyclingMatrixStack` のときだけ取り消すので、Remix の
+  パスは今どおり、それ以外は Sodium の速い変換になります。`compile` の
+  `List.iterator` の包みは Sodium が触りません。
+- `CuboidMixin`: Sodium の `CubeMixin` は同じ `ModelPart.Cube.compile` の `pose()`
+  呼び出しの位置で取り消すので、HEAD で先に走るこちらが Remix のパスで取り消せば
+  Sodium は走りません。Remix のパス以外で `RemixCapturingConsumer` が渡ることが
+  あれば、Sodium は対応していない consumer としてログに出します。
+- `EntityRenderDispatcherMixin`、`BlockEntityRenderDispatcherMixin`、
+  `RenderStateOwnerMixin`: 両立します。Sodium はブロックエンティティの抽出を
+  `SodiumWorldRenderer.extractBlockEntities` に置き換えますが、中で vanilla と同じ
+  `tryExtractRenderState` を呼んで `levelRenderState` に積みます。
+- Sodium の `features.render.entity.cull.EntityRendererMixin` は、見えていない
+  セクションにいるエンティティを `shouldRender` で落とします。落ちた分は
+  `RemixEntityPass` の視錐台外の掃き出し (予算付き) で拾うので消えはしませんが、
+  掃き出しの件数が増えます。
+
+バイオーム色:
+
+- `BiomeMixin`: Sodium の `BiomeMixin` が `getGrassColor` と `getFoliageColor` を
+  `@Overwrite` します。こちらの注入は Sodium の本体に入り、キャッシュに当たれば
+  本体を飛ばします。色は同じで、キャッシュが二重になるだけです。
+  `GrassColorsMixin` と `FoliageColorsMixin` は重なりません。
+- Sodium のチャンクビルドは `ClientLevel.calculateBlockTint` を通らず、
+  `LevelSlice.getBlockTint` が自前の `LevelColorCache` でバイオーム色を混ぜます。
+  `ClientWorldColorMixin` は地形には効かなくなり (アイテムやパーティクルには
+  今どおり効きます)、地形の色は Sodium の混ぜ方になります。
+
+雲:
+
+- Sodium の `CloudRendererMixin` は `CloudRenderer.buildMesh` を `@Overwrite`
+  しますが、このモッドは `LevelRenderer` 側で `CloudRenderer.render` と
+  `renderOit` の呼び出しを包んで vanilla の雲を描かせないだけなので、重なり
+  ません。`VanillaCloudPlacement` も `CloudRenderer` の中身を使っていません。
+
+空:
+
+- Sodium の空のミックスイン (`features.render.world.sky.LevelRendererMixin`、
+  対象は `Camera.extractRenderState`) は、カメラが流体の中にあるとき
+  `doesMobEffectBlockSky` を立てて vanilla の空を描かせません。これを読むのは
+  vanilla の `LevelRenderer` だけで、このモッドの空 (`SkyFrame` が
+  `SkyRenderState` から読む) には影響しません。
+
+その他で影響の大きいもの:
+
+- アニメーションテクスチャ: Sodium の `SpriteContentsTickerMixin`
+  (`features.textures.animations`) は、見えているセクションで使われたスプライト
+  以外の `AnimationState.needsToDraw` を偽にします (Sodium の「見えている
+  テクスチャだけ動かす」、既定でオン)。`AtlasAnimationForwarder.addAnimatedSprite`
+  は `needsToDraw` を見るので、Remix の水や溶岩や火のアニメーションは、Sodium が
+  描いた範囲でしか進みません。下の設計で Sodium に地形のメッシュを作らせなく
+  すると全部止まります。
+- FRAPI: Sodium は Fabric の既定のレンダラーに代わって FRAPI の実装になります
+  (`SodiumRenderer`)。`BlockQuadEmitter.emitFrapiBlock` は公開 API
+  (`Renderer.get().quadEmitter`) しか使わないので、そのまま動くはずです。
+- `GlSurfaceMixin` が `present` を HEAD で取り消すと、Sodium の
+  `workarounds.context_creation.GlSurfaceMixin` (`present` の RETURN) は走り
+  ません。`GlBackendMixin` と Sodium の `WindowMixin` は、`createWindow` の中の
+  別の呼び出しを触るので重なりません。
+
+Sodium の `features.*` のミックスインは、ほかのモッドが `fabric.mod.json` の
+`custom` に `"sodium:options": {"mixin.features.textures.animations": false}` の
+ように書くと、パッケージ単位で止められます (`FabricMixinOverrides`)。`core.*` は
+止められません (止めると Sodium が動きません)。
+
+**地形キャプチャの設計**
+
+1. **ミックスイン設定を 2 つに分ける**: DH と同じく、モッドの有無で適用を決める
+   プラグイン付きの設定にします (`lod/dh/DistantHorizonsMixinPlugin` と同じ形)。
+   - `rtx-remix-renderer.sodium.mixins.json`: Sodium があるときだけ。下の 2〜4 の
+     新しいミックスインを置きます。
+   - `rtx-remix-renderer.vanilla-terrain.mixins.json`: Sodium がないときだけ。
+     上の「地形」で呼ばれなくなるもの (`SectionBuilderMixin`、`RebuildTaskMixin`、
+     `BuiltChunkMixin`、`ChunkSectionsToRenderMixin`、プールの 5 つ) を今の設定から
+     移します。Sodium のもとでは空回りするだけで害はありませんが、こうすると
+     地形の入口がいつも一本だけになります。
+   - `LevelExtractorMixin`、`WorldRendererMixin`、エンティティ、バイオーム色の
+     ミックスインは両方で動くので、今の設定に残します。
+2. **入口 (`ChunkBuilderMeshingTask.execute`)**: Sodium のループは vanilla の
+   `SectionCompiler.compile` と同じ形です。1 ブロックずつ、`getRenderShape()` が
+   `MODEL` ならモデル、流体があれば `FluidRenderer.render`、最後に
+   `isSolidRender()` で遮蔽グラフに入れます。今の `SectionBuilderMixin` と同じ
+   4 つのフックで足ります。
+   - HEAD: 取り込むかどうかをビルドごとに 1 回だけ読んで固定し
+     (`rtxremix$captureForBuild` と同じ考え)、`BlockDataQueue.beginCapture` と
+     `BlockQuadEmitter.beginSection` を呼びます。位置は `RenderSection` の
+     `getChunkX/Y/Z`、モデルは `BlockRenderCache.getBlockModels()`、流体の
+     モデルは `ModelManager.getFluidStateModelSet()`、葉の切り抜きは
+     `options.cutoutLeaves()`、ワールドは `LevelSlice` (`BlockAndTintGetter` を
+     実装しています)。
+   - `getRenderShape()` を `@Redirect`: 取り込み中は `processBlock` と、`MODEL`
+     なら `emitBlock` を呼んで `INVISIBLE` を返し、Sodium の
+     `BlockRenderer.renderModel` を丸ごと飛ばします。Sodium は `isSolidRender` を
+     流体の後で呼ぶので、vanilla と違い、ブロックごとに最初に来る
+     `getRenderShape` で取ります。
+   - `FluidRenderer.render` を `@Redirect`: 取り込み中は `emitFluid` だけ。
+   - RETURN: 戻り値が null (ループ途中の取り消し) なら作りかけを捨てます
+     (`BlockQuadEmitter` に捨てる口を足します)。それ以外は `finishSection` して
+     `BlockDataQueue.enqueue`。
+   - `isSolidRender` とブロックエンティティの処理は Sodium のまま残すので、
+     Sodium の遮蔽グラフ (エンティティとブロックエンティティの間引き、ビルドの
+     順番に使う) とブロックエンティティの一覧は今までどおりできます。
+   - ビルドされる範囲: Sodium は、視錐台で切らずに遮蔽グラフだけを 1 区画分
+     広く辿った木 (`CullType.WIDE`) からビルドを積むので、背後の地形も作られます。
+     vanilla 26.3 は視錐台で切った後の `visibleSections` の中だけをビルドするので、
+     取り込む範囲は vanilla のとき以上になります。
+   - 光: Sodium は光の配列を `LevelSlice.prepare` (`createRebuildTask` の中、
+     描画スレッド) で写し、ワーカーは写ししか読みません。取り込み中は描画
+     スレッド以外がクライアントの光を読まないという決まり
+     (`ClientLightSnapshotPolicy`) は守られ、`VanillaSectionBuilds` のラッチは
+     Sodium の経路では要りません。
+3. **空になったセクション**: 中身が空のセクションでは
+   `RenderSectionManager.createRebuildTask` が null を返し、Sodium は `execute` を
+   通さずに空の結果を作ります。このままでは、ブロックを全部壊したセクションの
+   古い形が Remix に残ります。`createRebuildTask` の RETURN で null のとき
+   `SectionLeftRenderSetQueue.enqueueEmptyCandidate` を呼びます (vanilla で
+   `BuiltChunkMixin` がしていることです)。
+4. **Sodium の GL の地形描画を止める**: `isRemixWorldRendering()` の間、
+   `SodiumWorldRenderer.drawChunkLayer` を HEAD で取り消します。ビルドの予約と
+   `tickVisibleRenders` がある `setupTerrain` は止めません。2 の後は Sodium の
+   メッシュはほぼ空ですが、取り込みを切り替えた直後は古いメッシュが残っているので
+   止めておきます。
+5. **アニメーションテクスチャ**: `fabric.mod.json` の `custom` に
+   `"sodium:options": {"mixin.features.textures.animations": false}` を書き、
+   「見えているテクスチャだけ動かす」を外します。RTX を切っていても外れたままに
+   なるのが欠点です。代わりに、取り込んだセクションのアニメーションスプライトに
+   Sodium の公開 API (`SpriteUtil.INSTANCE.markSpriteActive`) で毎ティック印を
+   付ける手もありますが、どのスプライトが使われているかを持ち回る分だけ大きく
+   なります。
+6. **再キャプチャ**: `RtxRemixMod.rebuildLoadedTerrain` の
+   `levelExtractor.allChanged()` は、Sodium のもとでは `SodiumWorldRenderer.reload()`
+   に届きます。Sodium が全セクションを作り直し、どれも 2 を通るので、
+   `builtSections` と `queueSectionsForRemix` による明示の予約は要りません (今の
+   ままでも空の集合になるだけで、害はありません)。作り直した後の範囲は、一度
+   見えた範囲 (built set) ではなく WIDE の木に入る範囲になります。
+7. **依存と版**: Sodium は DH と同じくコンパイル時だけの依存 (Modrinth の maven)
+   にして、配布物には入れません (ライセンスは Polyform Shield 1.0.0)。フックする
+   `ChunkBuilderMeshingTask`、`RenderSectionManager`、`SodiumWorldRenderer` は
+   内部クラスで、0.9.3 で変わり得ます。外れると RTX で近景の地形が出なくなるだけで
+   気付きにくいので、Sodium 用の設定は `required: true` にし、`fabric.mod.json` の
+   `breaks` で、確かめていない版の Sodium を読み込みの時点で断ります。
+
+性能で確かめること: Sodium のビルドスレッドの数は Sodium の設定で決まり、
+`WorkerPoolCap` と `SectionBuildConcurrency` の上限は効きません。また、メッシュが
+空になると Sodium の見積もり (アップロードの大きさと時間) が小さくなり、1 フレーム
+に積むビルドが増えるので、`BlockDataQueue` と列の結合にかかる量が vanilla のとき
+より増えるかもしれません。
+
+実測の手順 (未実施): `.\tools\rtx.bat launch` で自分のチェックアウトの
+インスタンス (`rtx-remix-dev-<チェックアウト名>-*`) を作って閉じ、その
+`.minecraft\mods` に `sodium-fabric-0.9.2+mc26.3.jar` を入れてもう一度起動します。
+見るのは、ログの `Mixin apply failed`、`InjectionError`、Sodium の
+`Force-disabling mixin` の行と、近景の地形、エンティティ、アニメーション
+テクスチャ、空、雲が Remix に出るかどうかです。上の読みが正しければ、起動はして、
+近景の地形だけが出ません。
+
+### 雲 (Unbound、このフォークで追加)
+
+Unbound の雲は Bliss の空の作り方を参考に 3 層にしています (コードは使わず、
+手法だけ)。小さい積雲 (雲の高さの上、厚さは設定の半分)、大きい積雲 (その 260
+ブロック上、設定の厚さ)、高層雲 (1700 ブロック上の薄い一枚) で、
+`volumetric_clouds.comp` でパノラマに描き、空のドームに貼ります。
+- 積雲の形は層ごとに、広い気象セルと中くらいの塊の 2 つの平面ノイズで覆われ方を
+  決め、覆われ方が強い所ほど上まで伸びます (底は 20 ブロックで丸め、上はドーム)。
+  縁だけを、高さとともに風下へずらした 3D ノイズで削ります。
+- 光は太陽へ向けた 3 歩の透過に、上の層の影 (大きい積雲から小さい積雲へ、高層雲
+  から両方へ) を足します。位相は細い前方、中くらい、広い前方、後方の 4 つの
+  Henyey-Greenstein を、その場の密度 (パウダー) で混ぜ、内部で何度も散乱した光の
+  ほぼ等方的な項を加えます。空の光は上ほど強く、底ほど自分の雲と上の層に遮られます。
+- 各層をカメラから近い順に重ね、遠い雲はヘイズに沈めます。
+- 刻みが粗いと細かい 3D ノイズが視線方向に引き伸ばされて放射状の筋になったので、
+  積雲は 28 から 56 歩にしています。
+- マーチの開始位置のずらしは、テクセルとディスパッチごとの白色雑音です。以前の
+  Interleaved Gradient Noise は空間の模様がどのディスパッチでも同じで、走らせた
+  平均 (重み 0.4) に斜めの網目として残り、パノラマが拡大される真上で見えていました。
+  平均の重みは 0.15 (1 テクセルあたり約 7 回分、1 秒弱で光に追いつく) です。
+- 真上の放射状の筋は巻雲でした (巻雲を切った撮影で消える)。風に沿って 5 倍に伸ばした
+  平らな層の筋なので、下から見ると天頂と太陽 (前方散乱で明るい) に向かって集まり、
+  模様を細かくしても雨の筋のようになるだけでした。巻雲の量の既定値を 0 にしています
+  (`SkyLook.DEFAULT_CIRRUS_COVERAGE`)。設定の「巻雲」で戻せます。
+- 画面の雲はレンズのパス (`LensEffects`) が画素ごとに描きます。ドームのパノラマは
+  残し、太陽を雲で暗くする判定 (読み戻し) と、レンズが差し替える元に使います。パノラマは
+  1 テクセル約 0.18° (4K で 5〜6 画素) でぼけ、毎秒 7.5 回ずつ平均するので動くカメラに
+  遅れ、陸の前にある雲 (雲の上から見下ろす雲、雲の中、山にかかる雲) は陸に隠れて
+  映りません。以前は陸の前を、小さい積雲の上面の高さに置いた板 (シート) と、雲の中だけの
+  霧で補っていましたが、板は 2D のテクスチャが急に現れたように見え、雲に入る感じも
+  出ませんでした。
+  - 半分の解像度で、空の画素は雲を全部 (巻雲も)、陸の画素はカメラから陸までの雲を、
+    ドームと同じ密度・光・行進で進めます。密度、光、行進、巻雲は `cloud_field.glsl` に
+    1 つだけ書き、ドームの `volumetric_clouds.comp` とレンズが取り込みます (`CloudField`
+    がテクスチャと入力を渡す)。行進の刻みはレンズでは 20〜40 歩 (高層雲は 6 歩) です。
+  - 陸のテクセルは、下の 2×2 画素のうち近い陸と遠い陸を交互に代表にし、画面へ戻すときは
+    深度の近いテクセルを重く集めます。輪郭の外へ雲が滲まず、柵の柱のような細い物も周りの
+    雲を取れます。
+  - 毎フレーム、ずらし (Interleaved Gradient Noise) を黄金比で進め、前のフレームの結果を
+    カメラの動きで戻して混ぜます。新しい分は、止まっている所で 5%、画面上で 4 テクセル
+    以上動く所で 25% です (1 割固定のときは、頭上の厚い雲の底に細かい粒が残った)。戻す距離は雲の入口、雲がなければ陸まで
+    (空なら 1 万ブロック)。空と陸が入れ替わった所や陸の深さが違う所の履歴は使わず、
+    近傍 3×3 の範囲に収めて残像を防ぎます。64 ブロックより動いたら履歴を捨てます。
+  - 明るさ: ドームは空のラスタライズ (8 ビットで 1 に頭打ちし、sRGB として読む) を
+    通って露出とトーンマップがかかります。画面の空に映る、空を完全に隠す雲 (不透明度 0.95
+    以上) とパノラマの値を色ごとに比べ、明るさの帯 (8 段) ごとに倍率を求めて陸と空の雲の光に
+    掛けます (0.5 秒でならす)。最初は不透明度 0.8 以上で比べていましたが、暗い雲では縁から
+    透ける青空の割合が大きく、暗い帯が青く校正され、雲の底に青白い斑点が出ました。輝度だけで
+    比べると、夕方にトーンマップが色を寄せる分が合わず、雲の縁にマゼンタと黄色のにじみが
+    出ました。
+    Remix のトーンマップは局所なので、陸の上では完全には合いません。
+  - 空の画素では、ドームが描いた雲を画から差し引いて置き換えます。画 = 雲の光 +
+    (1 − 不透明度) × 後ろの空 とみなし、後ろの空は、ドームの雲がほぼ透けている所
+    (不透明度 0.1〜0.4 で切り替え) は画から逆算し (帯の色の 0.5〜2 倍に収める)、それ以外は
+    同じ高さの角度の帯 (正弦で 32 段) の平均で補います。ドームとレンズが一致する所は画が
+    変わりません。
+  - 雲の光は、ドームと同じく不透明度で割った色を色ごとに 1 で頭打ちにして求めます (陸の上の
+    雲と、後ろの空の逆算)。ドームとの差を取るところだけは、いちばん大きい成分が 1 になる
+    よう全体を縮めた色を使います。色ごとの頭打ちのままだと、夕焼けの明るい縁で赤と緑だけが
+    頭打ちになり、レンズの鋭い縁とドームのぼけた縁の差が黄色とマゼンタのにじみになりました。
+    頭打ちをやめる形 (発光を色の 2.2 乗として読む) と、乗算済みの値で頭打ちにする形も試し
+    ましたが、どちらも縁に白い線や虹色のにじみが出て、ドームと合いませんでした。
+  - レンズの雲がドームより厚い所で隠す空は、画の中でドームの雲の横にある空の分までにします。
+    雷の閃光で帯の空が一時的に明るくなると、引きすぎて地平線に黒い破れが出ました。
+  - 雨の強さに応じて空の差し替えを弱め、雨が降り切るとドームの雲をそのまま見せます。
+    雨と雷の空は輪郭のない曇天でドームでも同じに見え、雷の光の変化にドームの平均が
+    追いつかないので、差し引きの残りが斑になりました。陸の上の雲はそのまま描きます。差し引くパノラマは、Remix に今渡してある版の GL 側の写しです
+    (`VolumetricCloudGenerator.shownPanoramaTexture`、読み戻しのスロットごとに写す)。
+  - 費用 (4K、半分は 1920×1027、RTX 5090 で GPU のタイマー): 陸の前だけで約 1.0 ms、
+    空まで全部で約 1.7 ms です。
+  - 画素ごとに描くと、パノラマのぼけで隠れていた積雲の底の細かい穴が見えたので、底から
+    高さの 30% までは侵食を弱めます (`BASE_EROSION_HEIGHT`)。底が平らになります (15% では
+    底の縁の穴が、下から見て斑点の塊として残った)。
+  - ドームの平均は、カメラが動くと 1 回分の重みを足します (`MOTION_BLOCKS`、4 ブロック
+    動くと全部入れ替え)。パノラマの下の 64 行 (−4° から天底) は 2 乗の間隔にし、地平線の
+    すぐ下の縦の筋をなくしました (天底へ向かって粗い)。
+  - 中間の層 (大きい積雲の下、小さい積雲の上) から見下ろすと、小さい積雲が上の層の影で
+    灰色になりますが、Remix は雲の影を地面に落とさないので、日の当たる地面の上に灰色の
+    雲が乗って見えます (未対応)。
+  - 雲の中では、パノラマから見た太陽の方向の雲もほぼ自分の周りの雲なので、雲の影で
+    太陽を暗くしません (100 ブロックで遮る割合ぶん外す)。雲のシェーダーはパノラマの下に
+    もう 1 行出し、その最初のテクセルにカメラ位置の消散係数 (ブロックあたり) を書きます。
+- 以前の板と霧で分かったランタイムの振る舞い:
+  - `WORLD_MATTE` は面を少し奥へずらすだけで、照らさない面にはなりません。板は太陽で
+    照らされる白い壁になりました。
+  - 乗算済みのブレンド (ONE, ONE_MINUS_SRC_ALPHA) は、アルファ側の係数が合わないと
+    「反転した逆発光ブレンド」と読まれます (`rtx_instance_manager.cpp`)。
+  - パーティクル (`PARTICLE`) は順序なしの TLAS に入り、影や他の光線を遮りません。発光は
+    不透明度を掛けずに足され、後ろは (1 − 不透明度) で薄まります (`resolve.slangh`)。
+    発光テクスチャは色^2.2 × 強さとして読まれ、distant light の放射輝度 R は地面に πR の
+    照度で届きます。
+  - Remix の体積フォグで雲の中の霧を作ると、薄い値ではほとんど霞まず、濃くすると画面が
+    真っ黒になりました (光源からの一次散乱しか足さない)。
+- 雲の中で何度も散乱した光 (係数 3) と空の光 (0.8) が雲全体を均一に埋めていたので、
+  2.0 と 0.65 に下げ、多重散乱が奥で早めに減る (0.25 → 0.35) ようにしました。太陽側が
+  明るく、反対側と底が灰色になります。
+
+### 太陽の照り返しとレンズ (このフォークで追加)
+
+- 水 (Remix の半透明材質) の反射は完全な鏡面で、光源の太陽 (distant light) は映りません。
+  反射の光線が空に抜けると、ドームライトがあればそのテクスチャを読みます
+  (dxvk-remix の `geometry_resolver` / `integrator_indirect`)。空の層のメッシュ (vanilla の
+  太陽の板や雲のドーム) は読まないので、照り返しの元は大気のテクスチャだけです。
+  上流の 256×128 では太陽の円盤 (半径 0.27°) がテクセル (1.4°) より小さく、テクセルの
+  中心が円盤に入る位置でしか描かれていませんでした。今はテクスチャを 512×256 にし、
+  太陽の光を周り (σ 0.5°) にガウスで広げ (光量は保つ)、`LightManager.SUN_DISC_GAIN`
+  (4000) 倍にして書きます。平均 (環境光) には入れません。広げ方を細くするほど、同じ光量で
+  粒が明るくなります。空に抜けた光線がこの光を拾うので、distant light はその割合
+  (`SUN_DISC_SHARE`、半径² × 倍率、約 9%) を差し引きます。Remix の distant light は放射輝度 R
+  を円錐の中で R / sin²(半角) として配るので、照度は πR です。σ 1° で倍率 6000 のときは、
+  差し引いても地形が 2 割近く明るくなりました (未確認)。
+- 水の屈折率は 1.2 です (`DEFAULT_WATER_IOR`)。1.33 では真上からの反射が 2% あり、明るい
+  雲の映り込みで浅い川の底が見えなくなっていました。1.2 で 1% です。
+- `lens/LensEffects` は Remix の合成の直後、雨と雪の前に全画面の GL パスを描きます。
+  Remix の画 (LDR) とインターロップの深度 (Remix のカメラの近平面 0.05 と遠平面での
+  ウィンドウ深度) を読みます。飽和に近い部分だけを半分の解像度に取ったミップ、画面の
+  列ごとの地平線の空の色 (256 列)、Unbound の雲 (上の「雲」の節) を作ってから、深度で
+  ぼかした画を不透明で描き直し、空気遠近、雲、フレア、太陽の光芒を足します。
+  - 被写界深度: ピントは毎フレームの画面中央のワールドへの当たり判定 (256 ブロックまで)
+    を、ディオプターで 0.35 秒かけて追います。ぼけの半径は画面の高さ × 0.02 ×
+    ディオプター差 (上限 0.008) × 設定 (既定 0.5) で、1.5 ブロックより手前 (自分の手) は
+    ぼかしません。手前の鋭いものが奥のぼけに滲み出さないよう、標本の重みを距離で絞ります。
+  - フレア: 光源の位置に形だけを描きます。光源は太陽と、そのフレームに描いたブロックの光の
+    うちカメラで最も明るい 8 つ (`FlareSources`、地形の光の描画ループと手に持った光が
+    候補を出す) です。光源から画面中央を通る線の上に、縁が少し明るい 5 つの円 (色の縁が
+    ずれる) と、虹色の細い輪を 1 本置きます。強さはその位置の画の明るさなので、昼の
+    弱い光や物の陰の光は出ません。光源の位置にその光源と同じ距離の物 (ランプそのもの) が
+    映っていないときも出しません。手前に物があると隠れ、手を隠しているときの手持ちの光の
+    ように、奥の明るい雲だけで光ったことにはなりません。
+    最初は画の明るい部分を鏡像に写していましたが、地形の形がそのまま出てしまいました。
+    手に持った松明は、場面を照らす光がカメラの正面 0.72 ブロック (画面の中央) にあり、
+    画面右下に描かれる炎とずれていたので、フレアが出ませんでした。今は一人称の手の
+    取り込みから、パーティクルのアトラスに描いた炎の四角 (`HeldItemEffectsRenderer` が
+    手ごとに最初に出すもの) の中心をワールドに直して候補にします
+    (`RemixFirstPersonPass.offerHeldFlare`、`FlareSources.offerHeld`)。手は何より手前に
+    あるので、深度の確認はしません。手の取り込み (`GameRenderer.renderItemInHand`) は
+    フレームの中で Remix のカメラ更新より前に走るので、候補の一覧はカメラ更新ではなく
+    レンズを描いた後に空にします。カメラ更新で空にしていたときは、手の炎の候補が毎回
+    消えていました。
+  - 光芒: 太陽の画面上の位置に 6 本と間の 6 本の筋を描きます。
+  - 空気遠近 (`SkyLook.getAerialHaze`、設定は空の見た目の「空気遠近」): 地形を距離と高さに
+    応じて地平線の空の色へ溶かします。空気の濃さは海面 (y=63) から 300 ブロックごとに
+    1/e になり、経路に沿った平均を解析的に積分します。強さ 1 で海面の 800 ブロック先が
+    半分かすみます。もやの色は画面の各列で一番下に見える空の色で、空の見えない列は
+    隣の列から、どの列にも空がないときは前のフレームから取り、前後 24 列 (画面の約 5 分の 1)
+    を三角の重みでならします。ならさないと、雲の上で列ごとに雲と隙間が入れ替わって縦縞が
+    出ました。何列かおきに間引いて平均したときも、細い縞が残りました。Remix の体積フォグは froxel の
+    範囲 (256 m) の外ではもやの光を足さず暗くするだけ (`composite.comp.slang`) なので、
+    遠景の空気遠近には使えません。
+    - 雨の強さに応じて、高さに関係なく 1 ブロックあたり 0.002 (視程 2 km ほど) を足します。
+      雨の conf 層の体積フォグ (`rain.conf`、180 m で 1/e) はほとんど吸収だけで、遠くの陸が
+      曇り空より暗い影になっていました。足した分は空の灰色を散乱で戻すので、遠景が空に
+      溶けます。
+    - インターロップの深度はアンチエイリアスされていないので、輪郭の画素は画では陸と空が
+      混ざり、深度では毎フレームのジッターでどちらかになります。空と判定された画素に
+      もやがかからず、陸の暗い色がそのまま出て、遠い尾根に暗い縁が這うように動いて
+      いました (連続の画面写しの差で、地平線の線がいちばん大きく変わる)。陸の隣の空の
+      画素は、隣の陸のうち一番遠い距離でもやと雲をかけます (`landDistance`)。尾根の後ろの
+      空はほぼもやの色なので、空の分にもやがかかっても見た目は変わりません。
+- 雨粒 (`RemixWeatherRenderer`) は屈折と反射のために画面を読み、雨の範囲では不透明で
+  描きます。Remix の生の画を読んでいたので、雨の間はレンズのもや、陸の上の雲、被写界深度が
+  雨の当たる所ですべて消えていました。今はレンズを描いた後のメインターゲットを写して
+  読みます (雨のあるフレームだけ)。
+  - 設定は「レンズ」の被写界深度とレンズフレア (`LensLook`、0 でオフ)。ランタイムに
+    被写界深度もレンズフレアもなく (固定版の d3d9.dll にも設定名がない)、API のカメラにも
+    絞りや焦点の項目がないので、モッド側で描いています。
+
+### 時刻が飛んだときの放射輝度キャッシュ (このフォークで追加)
+
+- 正午から `/time set` で真夜中にすると、川底 (水越しの面) と木陰が昼の明るさのまま
+  30 秒ほど光り続けました。撮影ツールで昼のショットの直後に同じ場所で夜を撮ると、川底が
+  月明かりの雪の 3.6 倍の明るさになります。間接光を ReSTIR GI に替える
+  (`rtx.integrateIndirectMode = 1`) と出ないので、SHaRC (空間ハッシュの放射輝度
+  キャッシュ) が、更新の光線があまり届かない場所で昼の光を持ち越していました
+  (NEE キャッシュと体積フォグを切っても変わらない)。
+- 時刻が 1 フレームで 1 日の 1% (240 tick) より動いたら、
+  `rtx.spatiallyHashedRadianceCache.resetHistory` を書いてキャッシュを捨てます
+  (`LightManager.resetRadianceCacheOnTimeJump`)。この設定は次のフレームで全エントリを
+  消し、自分で false に戻ります (固定版の d3d9.dll にもある)。普段の時間の進み方
+  (1 tick あたり 1/24000) では起きず、コマンド、寝る、カメラ経路の時刻で起きます。
+
+### ベンチマークの 30 FPS 頭打ち (このフォークで修正)
+
+- 26.3 の vanilla は、入力が 1 分ないと `FramerateLimitTracker` が上限を 30 FPS に下げます
+  (オプションの `inactivityFpsLimit: afk`)。入力のないベンチマークは開始 50 秒ほどから
+  ちょうど 33.3 ms に張り付いていました。`UnfocusedFramerateMixin` は、ベンチマーク中は
+  フォーカスや放置に関係なく設定の上限 (`framerateLimit`) を返します。
+
 ### ブロックの光の倍率 (このフォークで変更)
+
+光の 1 段階あたりの放射輝度 `BlockLightRuleManager.RADIANCE_PER_LIGHT_LEVEL` を 5 から
+7.5 にしました (ルールのないアイテムの光とビーコンの光線も同じ基準)。光の届く範囲は
+松明の明るさ (`LightPower.torchReference`) を単位にしているので、判定は変わりません。
+
 
 上流では「ブロックの光」の倍率を変えて画面を閉じるたびに、読み込み済みの地形を
 全部作り直していました (`rebuildLoadedTerrain`)。倍率は光の明るさにしか効かない
@@ -316,6 +849,12 @@ VRAM が 20 GB ほどまで膨らむという報告があり、Java 側で解放
 
 ### パッケージとツール
 
+- 視点記録 (`*.shots.json`) を版 2 にし、雲のスタイルを `clouds` に 4 種類で
+  記録します。版 1 の `proceduralClouds` は Procedural か Classic として読みます。
+  撮影時に Unbound の雲が Classic に戻されていたためです。
+  `rtx screenshots list/refresh` に `--set` (別のセット)、`--world` (取り込んだ
+  セーブ)、`--resource-pack` を足したので、確認項目のセットを 1 枚ずつ撮り直せます
+  (`tools/assets/shots/checks.shots.json`、出力は `build/screenshots/checks/`)。
 - `packaging/installer.ps1`: 版の定数を更新し、`JAVA_MAJOR = 25` を導入。管理 JDK
   は `jdk-25` に置き、Microsoft ランチャー同梱の Java は
   `java-runtime-epsilon` を優先します。既存の Prism インスタンスを再利用する
@@ -370,10 +909,7 @@ VRAM が 20 GB ほどまで膨らむという報告があり、Java 側で解放
 
 優先度の高い順です。
 
-1. **アニメーションするスプライトの余白**: 水や溶岩などは毎フレーム本体だけを
-   差し替えるので、余白は最初のフレームの端の画素のままです。遠くで縁の色が
-   わずかにずれる程度で、黒い線にはなりません。
-2. **性能面で未移植のもの** (正しさには影響しない):
+1. **性能面で未移植のもの** (正しさには影響しない):
    - 可視性ウォークの割り当てなし版と粗い視錐台インデックス
      (`-Drtxremix.vanillaVisibilityWalk`、`-Drtxremix.logVisibleSet` も消えた)。
    - チャンク読み込み時の近傍の再ビルド抑制 (`NeighbourReflagFilter`)。26.3 では
@@ -387,7 +923,7 @@ VRAM が 20 GB ほどまで膨らむという報告があり、Java 側で解放
      なり、重み付きの選択は割り当てなし、multipart もブロックごとに `BitSet` と
      イテレータを作るだけになったので、移植していません。
 
-3. **排他フルスクリーンと DLSS フレーム生成**: Minecraft の「排他フルスクリーン」
+2. **排他フルスクリーンと DLSS フレーム生成**: Minecraft の「排他フルスクリーン」
    をオンにしたまま DLSS フレーム生成を有効にすると、スワップチェーンが作り
    直された十数秒後に `VK_ERROR_DEVICE_LOST` で落ちることがあります (実機で
    確認、ランタイムかドライバー側の問題)。排他フルスクリーンをオフにした
@@ -397,13 +933,13 @@ VRAM が 20 GB ほどまで膨らむという報告があり、Java 側で解放
 
 ## 上流のファイルへの変更と取り込み時の注意
 
-- `AGENTS.md` と `CLAUDE.md` は変えていません。そのため `AGENTS.md` には
-  1.21.1 時代の記述が残っています。例: Java 21、`WorldRenderer.render()` と
-  `setupTerrain`、`WeightedBakedModelMixin`、`MultipartBakedModelMixin`、
-  `ChunkRenderingDataPreparerMixin`、`FarChunkProbeTest`、
-  `NeighbourReflagFilter`、`-Drtxremix.vanillaVisibilityWalk`。このフォークでは
-  このファイルとソースの方を正としてください。
-- `CHANGELOG.md` は上流の履歴なので、移植の項目は足していません。
+- `AGENTS.md` は 2026-10-26 に今のコードに合わせて書き直しました (26.3、JDK 25、
+  SDL3 の入力、`LevelRenderer` と `LevelExtractor`、消えたクラスの削除、LOD・
+  レンズ・天気・アトラスの整列など)。以後、`AGENTS.md` やガイドとコードの食い違いを
+  見つけたら、食い違いを報告して新しい方に書き直します (`AGENTS.md` の Source Of
+  Truth に明記)。`CLAUDE.md` は変えていません。
+- `CHANGELOG.md` は上流の履歴に続けて、Unreleased にこのフォークで足した機能と
+  修正を書いています。移植そのもの (26.3 への置き換え) の項目は足していません。
 - Mixin のクラス名 (`WorldRendererMixin`、`BuiltChunkMixin` など) とプロファイラの
   スパン名は、上流との差分と記録の比較のために 1.21.1 時代の名前のままです。
   コメントとドキュメントの中の vanilla のクラス名は 26.3 の名前に直しました。

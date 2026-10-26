@@ -4,6 +4,7 @@
  */
 package com.nvidia.rtxremix.minecraft.sky;
 
+import com.nvidia.rtxremix.minecraft.light.LightManager;
 import com.nvidia.rtxremix.minecraft.light.LightManager.SkyLightState;
 import java.io.IOException;
 import java.io.InputStream;
@@ -35,8 +36,9 @@ import org.lwjgl.opengl.GL44;
  */
 final class AtmosphericSkyGenerator {
 
-    static final int WIDTH = 256;
-    static final int HEIGHT = 128;
+    /** Fine enough for the sun disc to glint on water as a sharp point; see sky_atmosphere.comp. */
+    static final int WIDTH = 512;
+    static final int HEIGHT = 256;
     static final int UPPER_HEIGHT = HEIGHT / 2;
     static final int OUTPUT_BYTES =
             WIDTH * HEIGHT * 4 * Short.BYTES;
@@ -69,10 +71,10 @@ final class AtmosphericSkyGenerator {
     private final long[] readbackFences =
             new long[READBACK_RING_SIZE];
     private final ByteBuffer skyParameters =
-            BufferUtils.createByteBuffer(5 * 4 * Float.BYTES);
+            BufferUtils.createByteBuffer(6 * 4 * Float.BYTES);
     /** Last parameter block actually dispatched, for skipping byte-identical regenerations. */
     private final ByteBuffer publishedSkyParameters =
-            BufferUtils.createByteBuffer(5 * 4 * Float.BYTES);
+            BufferUtils.createByteBuffer(6 * 4 * Float.BYTES);
     private boolean hasPublishedSkyParameters;
     private int readbackWriteIndex;
     private int readbackReadIndex;
@@ -163,16 +165,22 @@ final class AtmosphericSkyGenerator {
      *     parameters, which is what recovers a world rejoin or a dimension whose time never
      *     advances; without it a byte-constant parameter block would skip forever and the dome
      *     would stay black.
+     * @param look saturation, sunset warmth, sun glare and rainbow strength, as
+     *     {@link SkyLook} and the rainbow's current visibility give them
      * @return the completed readback, or null when there is nothing new to publish
      */
     ByteBuffer generate(
             SkyLightState lightState,
             float[] upperMean,
             float mieScatteringAnisotropy,
+            float[] look,
             boolean publishedOutputValid) {
         if (upperMean.length < 3) {
             throw new IllegalArgumentException(
                     "Upper-mean output requires three floats");
+        }
+        if (look.length < 4) {
+            throw new IllegalArgumentException("Sky look requires four floats");
         }
         if (!Float.isFinite(mieScatteringAnisotropy)
                 || mieScatteringAnisotropy < 0.0f
@@ -193,7 +201,7 @@ final class AtmosphericSkyGenerator {
             normalize(sunDirection);
             normalize(moonDirection);
             parametersChanged = fillSkyParameters(
-                    lightState, mieScatteringAnisotropy);
+                    lightState, mieScatteringAnisotropy, look);
         }
 
         // The parameters derive from the sky angle, which is tick-quantised, so most frames
@@ -412,12 +420,14 @@ final class AtmosphericSkyGenerator {
         GL11.glBindTexture(
                 GL11.GL_TEXTURE_2D,
                 finalSkyTexture);
-        GL11.glGetTexImage(
-                GL11.GL_TEXTURE_2D,
-                0,
-                GL11.GL_RGBA,
-                GL30.GL_HALF_FLOAT,
-                0L);
+        try (PixelStoreState ignored = PixelStoreState.tightPack()) {
+            GL11.glGetTexImage(
+                    GL11.GL_TEXTURE_2D,
+                    0,
+                    GL11.GL_RGBA,
+                    GL30.GL_HALF_FLOAT,
+                    0L);
+        }
         readbackFences[readbackWriteIndex] =
                 GL32.glFenceSync(
                         GL32.GL_SYNC_GPU_COMMANDS_COMPLETE,
@@ -458,7 +468,8 @@ final class AtmosphericSkyGenerator {
      */
     private boolean fillSkyParameters(
             SkyLightState lightState,
-            float mieScatteringAnisotropy) {
+            float mieScatteringAnisotropy,
+            float[] look) {
         putVectorAndScalar(
                 0,
                 sunDirection,
@@ -477,9 +488,13 @@ final class AtmosphericSkyGenerator {
                 lightState.moonSourceRadiance(),
                 0.0f);
         skyParameters.putFloat(64, mieScatteringAnisotropy);
-        skyParameters.putFloat(68, 0.0f);
-        skyParameters.putFloat(72, 0.0f);
-        skyParameters.putFloat(76, 0.0f);
+        // The sun disc follows the light it stands for, filtered by the air, the weather and the clouds.
+        float[] sunDirect = lightState.sunDirectRadiance();
+        float discScale = LightManager.cloudLightVisibility() * LightManager.SUN_DISC_GAIN;
+        skyParameters.putFloat(68, sunDirect[0] * discScale);
+        skyParameters.putFloat(72, sunDirect[1] * discScale);
+        skyParameters.putFloat(76, sunDirect[2] * discScale);
+        putVectorAndScalar(80, look, look[3]);
 
         return !hasPublishedSkyParameters || skyParameters.mismatch(publishedSkyParameters) >= 0;
     }

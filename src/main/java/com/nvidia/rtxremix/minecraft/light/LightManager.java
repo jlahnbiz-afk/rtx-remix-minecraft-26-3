@@ -77,7 +77,7 @@ public class LightManager {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LightManager.class);
 
-    private static final float RULELESS_ITEM_RADIANCE_PER_LIGHT_LEVEL = 5.0f;
+    private static final float RULELESS_ITEM_RADIANCE_PER_LIGHT_LEVEL = BlockLightRuleManager.RADIANCE_PER_LIGHT_LEVEL;
     private static final float ENTITY_LIGHT_RADIUS = 0.1f;
     private static final float HELD_LIGHT_FORWARD_OFFSET = 0.35f;
     private static final float HELD_LIGHT_SIDE_OFFSET = 0.38f;
@@ -93,9 +93,27 @@ public class LightManager {
     private static final float MOON_ANGULAR_DIAMETER_DEGREES = 0.52f;
     private static final float SUN_ANGULAR_RADIUS = (float) Math.toRadians(SUN_ANGULAR_DIAMETER_DEGREES * 0.5f);
     private static final float MOON_ANGULAR_RADIUS = (float) Math.toRadians(MOON_ANGULAR_DIAMETER_DEGREES * 0.5f);
+    /**
+     * How many times its own light the sun's disc carries in the sky texture. Reflections that
+     * leave the scene read that texture and a wave reflects a few percent of it, so only a disc
+     * this bright glints. Rays that escape into the texture pick its light up too, so the
+     * distant sun gives up the same share ({@link #SUN_DISC_SHARE}).
+     */
+    public static final float SUN_DISC_GAIN = 4000.0f;
+    /**
+     * The disc's share of the sun's irradiance: its solid angle times the gain, over the pi a
+     * distant light of the same radiance delivers (Remix spreads it as radiance / sin² over its cone).
+     */
+    static final float SUN_DISC_SHARE = SUN_ANGULAR_RADIUS * SUN_ANGULAR_RADIUS * SUN_DISC_GAIN;
     private static final float SUN_PATH_ROTATION_RAD = (float) Math.toRadians(SUN_PATH_ROTATION_DEG);
     private static final float MIN_DIRECT_RADIANCE = 1.0e-6f;
+    /** A day fraction no frame moves the time by, unless the time was set; see resetRadianceCacheOnTimeJump. */
+    private static final float TIME_JUMP_DAYS = 0.01f;
+    /** Clears the radiance cache on the next frame, then turns itself back off. */
+    private static final String RADIANCE_CACHE_RESET = "rtx.spatiallyHashedRadianceCache.resetHistory";
     private static final float BASE_SUN_LUMINANCE = 30.0f;
+    /** A slight warm tint on the direct sunlight, luminance kept; the sky keeps the neutral source. */
+    private static final float[] SUN_WARMTH = {1.03f, 1.0f, 0.92f};
     private static final float BASE_MOON_LUMINANCE = 0.06f;
     private static final float RAIN_SUN_LUMINANCE = 0.075f;
     private static final float THUNDER_SUN_LUMINANCE = 0.03f;
@@ -110,8 +128,13 @@ public class LightManager {
 
     private static float sunIntensity = DEFAULT_SUN_INTENSITY;
     private static float moonIntensity = DEFAULT_MOON_INTENSITY;
+    private static float cloudLightVisibility = 1.0f;
+    private static long cloudLightVisibilityNanos;
+    /** A visibility the clouds have not refreshed for this long is stale, as when the sky stops drawing. */
+    private static final long CLOUD_LIGHT_VISIBILITY_STALE_NANOS = 500_000_000L;
 
     private final RemixRenderer renderer;
+    private float lastTimeOfDay = Float.NaN;
 
     private final Map<EntityLightKey, RemixLight> entityLights = new HashMap<>();
     /** Reusable scratch set for {@link #updateEntityLights}; cleared per call. */
@@ -153,6 +176,22 @@ public class LightManager {
 
     public static void setSunIntensity(float value) {
         sunIntensity = value;
+    }
+
+    /**
+     * Share of the sun's and moon's direct light that the sky's clouds let through, 0 to 1.
+     * It dims only the distant lights, not the state the sky and clouds are lit from.
+     */
+    public static void setCloudLightVisibility(float value) {
+        cloudLightVisibility = Math.clamp(value, 0.0f, 1.0f);
+        cloudLightVisibilityNanos = System.nanoTime();
+    }
+
+    /** The share {@link #setCloudLightVisibility} last set, or 1 once the clouds stop refreshing it. */
+    public static float cloudLightVisibility() {
+        return System.nanoTime() - cloudLightVisibilityNanos < CLOUD_LIGHT_VISIBILITY_STALE_NANOS
+                ? cloudLightVisibility
+                : 1.0f;
     }
 
     public static float getMoonIntensity() {
@@ -1040,6 +1079,7 @@ public class LightManager {
         // Only an Overworld sky has a sun and a moon. The End and the Nether pin their time, so
         // evaluating them would light a permanent noon or midnight that vanilla never draws.
         SkyRenderState sky = SkyFrame.sky();
+        resetRadianceCacheOnTimeJump(SkyFrame.timeOfDay(sky));
         skyLightState = sky.skybox == DimensionType.Skybox.OVERWORLD
                 ? evaluateSkyLightState(
                         SkyFrame.timeOfDay(sky),
@@ -1048,9 +1088,11 @@ public class LightManager {
                 : SkyLightState.empty();
 
         try {
-            sunLight = updateDistantLight(sunLight, skyLightState.sunPosition(), skyLightState.sunDirectRadiance(),
+            sunLight = updateDistantLight(sunLight, skyLightState.sunPosition(),
+                    scaleRadiance(skyLightState.sunDirectRadiance(), cloudLightVisibility() * (1.0f - SUN_DISC_SHARE)),
                     SUN_ANGULAR_DIAMETER_DEGREES);
-            moonLight = updateDistantLight(moonLight, skyLightState.moonPosition(), skyLightState.moonDirectRadiance(),
+            moonLight = updateDistantLight(moonLight, skyLightState.moonPosition(),
+                    scaleRadiance(skyLightState.moonDirectRadiance(), cloudLightVisibility()),
                     MOON_ANGULAR_DIAMETER_DEGREES);
         } catch (RemixException e) {
             LOGGER.error("Failed to update sky light: {}", e.getMessage());
@@ -1087,6 +1129,32 @@ public class LightManager {
         return created;
     }
 
+    /**
+     * Clears the runtime's radiance cache when the time of day jumps, as a command, sleeping
+     * or a camera path's time does. The cache keeps what it has learned for many frames where
+     * few paths refresh it, under water above all: after a jump from noon to midnight, a
+     * riverbed went on glowing with the day's light for half a minute. Days pass at a
+     * 24000th per tick, so a frame that moves the time this far skipped it.
+     */
+    private void resetRadianceCacheOnTimeJump(float timeOfDay) {
+        boolean jumped = isTimeJump(lastTimeOfDay, timeOfDay);
+        lastTimeOfDay = timeOfDay;
+        if (!jumped) {
+            return;
+        }
+        try {
+            renderer.getRemixApi().setConfigVariable(RADIANCE_CACHE_RESET, "True");
+        } catch (RemixException e) {
+            LOGGER.warn("Failed to clear the radiance cache after a jump in the time of day: {}", e.getMessage());
+        }
+    }
+
+    /** Whether the time of day, as a fraction of a day, moved further than a frame lets it, either way round. */
+    static boolean isTimeJump(float previous, float current) {
+        float step = Math.abs(current - previous);
+        return !Float.isNaN(previous) && Math.min(step, 1.0f - step) > TIME_JUMP_DAYS;
+    }
+
     private static SkyLightState evaluateSkyLightState(
             float skyAngle,
             float rainGradient,
@@ -1098,7 +1166,8 @@ public class LightManager {
         float moonLuminance = BASE_MOON_LUMINANCE * moonIntensity;
         float[] sunSource = {sunLuminance, sunLuminance, sunLuminance};
         float[] moonSource = {moonLuminance * 0.85f, moonLuminance * 0.9f, moonLuminance};
-        float[] sunDirect = applyTransmittance(sunSource, directAtmosphereTransmittance(sunPosition[1]));
+        float[] sunDirect = applyTransmittance(
+                applyTransmittance(sunSource, SUN_WARMTH), directAtmosphereTransmittance(sunPosition[1]));
         float[] moonDirect = applyTransmittance(moonSource, directAtmosphereTransmittance(moonPosition[1]));
         sunDirect = scaleRadiance(sunDirect, weatherSunDirectScale(rainGradient, thunderGradient));
         moonDirect = scaleRadiance(moonDirect, weatherMoonDirectScale(rainGradient, thunderGradient));

@@ -18,7 +18,7 @@ import java.util.function.ToIntBiFunction;
  * mod opens and closes menus by writing it, and the menus' own controls and the runtime's hotkey
  * change it too, so {@link #followVisibility} reads it once per frame and opens or closes capture
  * with whatever is shown. Closing releases capture immediately; a key that remains physically held
- * may resume through vanilla's GLFW polling.
+ * may resume through vanilla's SDL event handling.
  *
  * <p>Remix resolves a written option a frame or more later, so after its own write the gate
  * ignores reads until one agrees with it. A stale read would otherwise undo the open or close the

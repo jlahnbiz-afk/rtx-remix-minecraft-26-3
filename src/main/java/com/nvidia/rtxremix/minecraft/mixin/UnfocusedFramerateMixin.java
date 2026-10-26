@@ -34,19 +34,20 @@ import org.spongepowered.asm.mixin.injection.At;
 public abstract class UnfocusedFramerateMixin {
 
     @Shadow @Final private Minecraft minecraft;
+    @Shadow private int framerateLimit;
 
     @ModifyReturnValue(method = "getFramerateLimit()I", at = @At("RETURN"))
     private int rtxremix$capWhileUnfocused(int limit) {
-        if (minecraft.isWindowActive()) {
-            return limit;
-        }
-        // A benchmark measures renderer throughput and must not be throttled
-        // because the user tabbed away while it ran.
         RemixRenderer renderer = RtxRemixMod.renderer;
-        if (renderer == null || !renderer.isInitialized()
-                || renderer.getBenchmarkController().isRunning()) {
+        if (renderer == null || !renderer.isInitialized()) {
             return limit;
         }
-        return UnfocusedFramerateLimit.apply(limit);
+        // A benchmark measures renderer throughput: neither the user tabbing away nor
+        // vanilla's inactivity limit, which drops a game nobody touches to 30 FPS after a
+        // minute, may throttle it.
+        if (renderer.getBenchmarkController().isRunning()) {
+            return framerateLimit;
+        }
+        return minecraft.isWindowActive() ? limit : UnfocusedFramerateLimit.apply(limit);
     }
 }

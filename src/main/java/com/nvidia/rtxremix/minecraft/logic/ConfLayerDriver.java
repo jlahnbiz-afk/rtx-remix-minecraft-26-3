@@ -46,8 +46,8 @@ import net.minecraft.world.phys.Vec3;
  * inherits the rest from the archetype. Single-player only: a remote server
  * gives this client no save directory.
  *
- * Water, automatic view distance, volumetric settling, weather, and four fixed
- * time-of-day layers come from a static table and are mod-owned. Optional
+ * Water, automatic view distance and its LOD extension, volumetric settling,
+ * weather, and four fixed time-of-day layers come from a static table and are mod-owned. Optional
  * biome and zone layers are discovered from confs/biomes/*.conf and
  * confs/zones/*.conf file names in either root, at acquire, join, and reload
  * time. The runtime resolves the layer stack per frame; temporal easing
@@ -60,8 +60,8 @@ import net.minecraft.world.phys.Vec3;
  * leaving water switches instantly. Time-of-day strengths are also
  * unsmoothed: the Minecraft clock and hardcoded smoothstep windows are the
  * curve, so commands and benchmark time jumps must take effect immediately.
- * Automatic view distance is unsmoothed as well, so each discrete Minecraft
- * render-distance change takes effect immediately. Weather follows vanilla's
+ * Automatic view distance and its LOD extension are unsmoothed as well, so
+ * each discrete render-distance change takes effect immediately. Weather follows vanilla's
  * rain and thunder gradients directly: they already ramp over about five
  * seconds, and a second smoothing pass would only lengthen the transition
  * the settling layer exists to cover. The volumetric settling strength is
@@ -144,17 +144,18 @@ public final class ConfLayerDriver {
     private static final float WORLD_ZONE_PRIORITY = 11500f;
 
     /**
-     * The fixed layer catalog: water, automatic view distance, volumetric
-     * settling, weather, and four fixed time-of-day profiles (9 rows, one per
+     * The fixed layer catalog: water, automatic view distance and its LOD
+     * extension, volumetric settling, weather, and four fixed time-of-day
+     * profiles (10 rows, one per
      * shipped conf; ConfLayerDriverTest cross-checks them against the shipped
      * confs). Biome and zone layers are NOT listed here: they are discovered
      * from their conf file names at acquire and reload time, so a new authored
      * look needs no code.
      * Priorities: water dominates everything, zones beat biomes, thunder
-     * beats rain, time supplies the environmental foundation, and the two
-     * integration-owned controllers (automatic view distance, volumetric
-     * settling) sit below every situational profile so authors can
-     * intentionally override their keys. The four time priorities must stay
+     * beats rain, time supplies the environmental foundation, and the
+     * integration-owned controllers (automatic view distance, its LOD
+     * extension just above it, volumetric settling) sit below every
+     * situational profile so authors can intentionally override their keys. The four time priorities must stay
      * ordered dawn/day/dusk/night so the hardcoded strengths compensate for the
      * runtime's nested LERP.
      * Avoid 10000 (the runtime's default dynamic-layer priority).
@@ -176,6 +177,8 @@ public final class ConfLayerDriver {
                 LayerSource.MOD));
         table.add(new LayerSpec(LogicChannels.VIEW_DISTANCE,
                 "confs/view_distance.conf", 3000f, 0.01f, false, LayerSource.MOD));
+        table.add(new LayerSpec(LogicChannels.VIEW_DISTANCE_LOD,
+                "confs/view_distance_lod.conf", 3001f, 0.01f, false, LayerSource.MOD));
         table.add(new LayerSpec(LogicChannels.VOLUMETRICS_SETTLING,
                 "confs/volumetrics/settling.conf", 3100f, 0.01f, false, LayerSource.MOD));
         table.add(new LayerSpec(LogicChannels.WEATHER_THUNDER, "confs/weather/thunder.conf", 5500f, 0.01f, false,
@@ -712,7 +715,8 @@ public final class ConfLayerDriver {
      * sends changed strengths to the runtime.
      */
     public void update(ClientLevel world, Vec3 cameraPos, boolean underwater,
-                       float viewDistanceStrength, float tickDelta, ZoneRegistry zones) {
+                       float viewDistanceStrength, float lodViewDistanceStrength,
+                       float tickDelta, ZoneRegistry zones) {
         if (!active) {
             return;
         }
@@ -720,6 +724,7 @@ public final class ConfLayerDriver {
 
         setTarget(LogicChannels.UNDERWATER, underwater ? 1.0f : 0.0f);
         setTarget(LogicChannels.VIEW_DISTANCE, Math.clamp(viewDistanceStrength, 0.0f, 1.0f));
+        setTarget(LogicChannels.VIEW_DISTANCE_LOD, Math.clamp(lodViewDistanceStrength, 0.0f, 1.0f));
         // Time layers follow the shared Overworld clock only; other dimensions
         // contribute no time-of-day strength.
         TimeLayerStrengths time = Level.OVERWORLD.equals(world.dimension())
@@ -972,7 +977,8 @@ public final class ConfLayerDriver {
                         time++;
                     } else if (channel.equals(LogicChannels.UNDERWATER)) {
                         water = true;
-                    } else if (channel.equals(LogicChannels.VIEW_DISTANCE)) {
+                    } else if (channel.equals(LogicChannels.VIEW_DISTANCE)
+                            || channel.equals(LogicChannels.VIEW_DISTANCE_LOD)) {
                         viewDistance++;
                     } else if (channel.equals(LogicChannels.VOLUMETRICS_SETTLING)) {
                         volumetricSettling++;

@@ -252,6 +252,7 @@ from several places with a shared channel.
 | `confs/time/day.conf` | Fixed Overworld schedule | 4001 | 0.50 | The clock curve below |
 | `confs/time/dawn.conf` | Fixed Overworld schedule | 4000 | 0.50 | The clock curve below |
 | `confs/volumetrics/settling.conf` | A weather gradient moving, or a smoothed profile still easing: 0 or 1 | 3100 | 0.01 | Immediate, held 0.75 s after the last movement |
+| `confs/view_distance_lod.conf` | LOD radius beyond the render distance, up to 4096 chunks: 0 to 1 | 3001 | 0.01 | Immediate on each change |
 | `confs/view_distance.conf` | Render distance, 2 to 32 chunks | 3000 | 0.01 | Immediate on each change |
 
 A smoothed strength halves its remaining distance to the target every half
@@ -402,7 +403,12 @@ fog adjustment nor a brighter light creates that missing above-water volume.
 the 2-chunk band, and the mod blends between them so the band is always 70 to
 80 percent of the render distance in use.
 
-It sits below every situational profile on purpose, so a zone, biome, weather,
+With Distant Horizons installed and LOD terrain on, `confs/view_distance_lod.conf`
+pushes the same band out to the LOD radius. Its endpoint is the 4096-chunk band,
+and the mod sets its strength to the fraction of the way from the render
+distance's band to that endpoint.
+
+Both sit below every situational profile on purpose, so a zone, biome, weather,
 or time profile can override the fade keys deliberately.
 
 Editing one endpoint without the other breaks that mapping. `/rtx viewdistance`

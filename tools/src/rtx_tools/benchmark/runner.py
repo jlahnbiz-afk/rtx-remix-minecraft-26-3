@@ -2301,8 +2301,11 @@ def remove_staged_resource_pack(root: Path, name: str) -> None:
 
 
 def copy_resource_pack(source: ResourcePackSource, root: Path) -> None:
-    remove_staged_resource_pack(root, source.name)
     dst = root / source.file_name
+    if dst.exists() and dst.resolve() == source.source_path.resolve():
+        # A local pack chosen from the instance's own resourcepacks is already in place.
+        return
+    remove_staged_resource_pack(root, source.name)
     if source.source_path.is_dir():
         shutil.copytree(source.source_path, dst)
         if source.name == "rtx-remix":

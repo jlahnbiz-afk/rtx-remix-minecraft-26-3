@@ -43,7 +43,7 @@ import net.minecraft.world.level.block.state.properties.Property;
  */
 public final class BlockLightRuleManager {
     public static final String RESOURCE_PATH = "rtx_remix/block_lights";
-    public static final float RADIANCE_PER_LIGHT_LEVEL = 5.0f;
+    public static final float RADIANCE_PER_LIGHT_LEVEL = 7.5f;
 
     private static final Logger LOGGER = LoggerFactory.getLogger(BlockLightRuleManager.class);
     private static final Gson GSON = new Gson();

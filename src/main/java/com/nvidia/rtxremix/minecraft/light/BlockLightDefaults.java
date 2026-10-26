@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -44,6 +45,18 @@ final class BlockLightDefaults {
     private static final LightEntry.ColorOverride REDSTONE_COLOR = LightEntry.ColorOverride.of(1.0f, 0.15f, 0.02f);
     private static final LightEntry.ColorOverride CONDUIT_COLOR = LightEntry.ColorOverride.of(0.45f, 0.9f, 1.0f);
     private static final LightEntry.ColorOverride AMETHYST_COLOR = LightEntry.ColorOverride.of(0.65f, 0.35f, 1.0f);
+    /** The green flame copper burns with, in copper torches and lanterns. */
+    private static final LightEntry.ColorOverride COPPER_FLAME_COLOR = LightEntry.ColorOverride.of(0.35f, 1.0f, 0.4f);
+    private static final LightEntry.ColorOverride FIRE_COLOR = LightEntry.ColorOverride.of(1.0f, 0.45f, 0.12f);
+    private static final LightEntry.ColorOverride ENDER_COLOR = LightEntry.ColorOverride.of(0.35f, 1.0f, 0.8f);
+    private static final LightEntry.ColorOverride CRYING_COLOR = LightEntry.ColorOverride.of(0.55f, 0.25f, 1.0f);
+    private static final LightEntry.ColorOverride SCULK_COLOR = LightEntry.ColorOverride.of(0.25f, 0.85f, 0.85f);
+    /**
+     * A full glowing cube hides a light at its centre behind its own faces, so its sphere is a
+     * little wider than the cube: the caps that stand out of each face are what shine.
+     */
+    private static final float GLOWING_CUBE_RADIUS = 0.62f;
+    private static final float LANTERN_FLAME_RADIUS = 0.12f;
 
     // Shared beacon geometry and path-specific radiance tuning live in
     // BeaconBeam; the block_display lighthouse remains independent.
@@ -98,6 +111,7 @@ final class BlockLightDefaults {
                 BlockLightDefaults::candles);
         add(rules, "candle_cakes", state -> candleCakes.contains(state.getBlock()) && state.getValue(BlockStateProperties.LIT),
                 (id, state, pos, centroid) -> List.of(thinSphere(id, 0, state, pos, 0.5f, 1.0f, 0.5f, 0.08f, null)));
+        addEmitterRules(rules);
         BlockLightIntensityControls.validateBuiltInRules(rules.keySet());
         return Collections.unmodifiableMap(new LinkedHashMap<>(rules));
     }
@@ -136,6 +150,136 @@ final class BlockLightDefaults {
 
     private static Predicate<BlockState> exact(Block block) {
         return state -> state.is(block);
+    }
+
+    /**
+     * Every other vanilla block that gives off light and has a place a light can sit, so the
+     * Block Lights table covers them all. Lava, magma, portals, glow lichen and sea pickles
+     * are left to glow through their surfaces: they come in fields of hundreds, where a light
+     * each would crowd out the lights that matter.
+     */
+    private static void addEmitterRules(Map<Identifier, BlockLightRuleManager.Rule> rules) {
+        add(rules, "copper_torch", blocks("copper_torch"),
+                (id, state, pos, centroid) -> List.of(thinSphere(id, 0, state, pos,
+                        0.5f, 0.7f, 0.5f, TORCH_RADIUS, COPPER_FLAME_COLOR)),
+                TORCH_AUTHORED_INTENSITY_MULTIPLIER);
+        add(rules, "copper_wall_torch", blocks("copper_wall_torch"),
+                (id, state, pos, centroid) -> List.of(wallTorch(id, state, pos, COPPER_FLAME_COLOR)),
+                TORCH_AUTHORED_INTENSITY_MULTIPLIER);
+        add(rules, "lantern", blocks("lantern"),
+                (id, state, pos, centroid) -> List.of(lanternFlame(id, state, pos, TORCH_COLOR)),
+                TORCH_AUTHORED_INTENSITY_MULTIPLIER);
+        add(rules, "soul_lantern", blocks("soul_lantern"),
+                (id, state, pos, centroid) -> List.of(lanternFlame(id, state, pos, SOUL_COLOR)),
+                TORCH_AUTHORED_INTENSITY_MULTIPLIER);
+        add(rules, "copper_lanterns", blocks("copper_lantern", "exposed_copper_lantern",
+                        "weathered_copper_lantern", "oxidized_copper_lantern", "waxed_copper_lantern",
+                        "waxed_exposed_copper_lantern", "waxed_weathered_copper_lantern",
+                        "waxed_oxidized_copper_lantern"),
+                (id, state, pos, centroid) -> List.of(lanternFlame(id, state, pos, COPPER_FLAME_COLOR)),
+                TORCH_AUTHORED_INTENSITY_MULTIPLIER);
+        add(rules, "fire", blocks("fire"),
+                (id, state, pos, centroid) -> List.of(sphere(id, 0, state, pos, 0.5f, 0.35f, 0.5f, 0.3f, FIRE_COLOR, null)),
+                CAMPFIRE_AUTHORED_INTENSITY_MULTIPLIER);
+        add(rules, "soul_fire", blocks("soul_fire"),
+                (id, state, pos, centroid) -> List.of(sphere(id, 0, state, pos, 0.5f, 0.35f, 0.5f, 0.3f, SOUL_COLOR, null)),
+                CAMPFIRE_AUTHORED_INTENSITY_MULTIPLIER);
+        add(rules, "end_rod", blocks("end_rod"),
+                (id, state, pos, centroid) -> List.of(endRod(id, state, pos)));
+        add(rules, "beacon", blocks("beacon"),
+                (id, state, pos, centroid) -> List.of(sphere(id, 0, state, pos, 0.5f, 0.5f, 0.5f, 0.3f,
+                        LightEntry.ColorOverride.of(0.8f, 0.95f, 1.0f), null)));
+
+        glowingCube(rules, "glowstone", blocks("glowstone"), LightEntry.ColorOverride.of(1.0f, 0.78f, 0.45f));
+        glowingCube(rules, "sea_lantern", blocks("sea_lantern"), LightEntry.ColorOverride.of(0.7f, 0.92f, 1.0f));
+        glowingCube(rules, "shroomlight", blocks("shroomlight"), LightEntry.ColorOverride.of(1.0f, 0.55f, 0.25f));
+        glowingCube(rules, "jack_o_lantern", blocks("jack_o_lantern"), LightEntry.ColorOverride.of(1.0f, 0.55f, 0.2f));
+        glowingCube(rules, "redstone_lamp", lit(blocks("redstone_lamp")), LightEntry.ColorOverride.of(1.0f, 0.7f, 0.4f));
+        glowingCube(rules, "copper_bulbs", lit(blocks("copper_bulb", "exposed_copper_bulb", "weathered_copper_bulb",
+                "oxidized_copper_bulb", "waxed_copper_bulb", "waxed_exposed_copper_bulb",
+                "waxed_weathered_copper_bulb", "waxed_oxidized_copper_bulb")),
+                LightEntry.ColorOverride.of(1.0f, 0.75f, 0.5f));
+        glowingCube(rules, "crying_obsidian", blocks("crying_obsidian"), CRYING_COLOR);
+        glowingCube(rules, "redstone_ores", lit(blocks("redstone_ore", "deepslate_redstone_ore")), REDSTONE_COLOR);
+        glowingCube(rules, "sculk_catalyst", blocks("sculk_catalyst"), SCULK_COLOR);
+        Map<Block, LightEntry.ColorOverride> froglights = Map.of(
+                block("ochre_froglight"), LightEntry.ColorOverride.of(1.0f, 0.85f, 0.5f),
+                block("verdant_froglight"), LightEntry.ColorOverride.of(0.65f, 1.0f, 0.6f),
+                block("pearlescent_froglight"), LightEntry.ColorOverride.of(1.0f, 0.72f, 0.95f));
+        add(rules, "froglights", state -> froglights.containsKey(state.getBlock()),
+                (id, state, pos, centroid) -> List.of(sphere(id, 0, state, pos, 0.5f, 0.5f, 0.5f,
+                        GLOWING_CUBE_RADIUS, froglights.get(state.getBlock()), null)));
+
+        add(rules, "glow_berries", blocks("cave_vines", "cave_vines_plant")
+                        .and(state -> state.getValue(BlockStateProperties.BERRIES)),
+                (id, state, pos, centroid) -> List.of(sphere(id, 0, state, pos, 0.5f, 0.4f, 0.5f, 0.15f,
+                        LightEntry.ColorOverride.of(1.0f, 0.7f, 0.3f), null)));
+        add(rules, "furnaces", lit(blocks("furnace", "smoker", "blast_furnace")),
+                BlockLightDefaults::furnaceMouth);
+        add(rules, "respawn_anchor", blocks("respawn_anchor")
+                        .and(state -> state.getValue(BlockStateProperties.RESPAWN_ANCHOR_CHARGES) > 0),
+                (id, state, pos, centroid) -> List.of(sphere(id, 0, state, pos, 0.5f, 1.0f, 0.5f, 0.3f, CRYING_COLOR, null)));
+        small(rules, "enchanting_table", blocks("enchanting_table"), 0.75f, 0.25f, LightEntry.ColorOverride.of(0.65f, 0.5f, 1.0f));
+        small(rules, "ender_chest", blocks("ender_chest"), 0.45f, 0.3f, ENDER_COLOR);
+        small(rules, "brewing_stand", blocks("brewing_stand"), 0.45f, 0.08f, LightEntry.ColorOverride.of(1.0f, 0.8f, 0.4f));
+        small(rules, "end_portal_frame", blocks("end_portal_frame"), 0.85f, 0.25f, ENDER_COLOR);
+        small(rules, "dragon_egg", blocks("dragon_egg"), 0.5f, 0.45f, CRYING_COLOR);
+        small(rules, "sculk_sensors", blocks("sculk_sensor", "calibrated_sculk_sensor"), 0.55f, 0.2f, SCULK_COLOR);
+        small(rules, "brown_mushroom", blocks("brown_mushroom"), 0.3f, 0.1f, LightEntry.ColorOverride.of(1.0f, 0.8f, 0.6f));
+        small(rules, "trial_spawner", blocks("trial_spawner"), 0.5f, 0.35f, LightEntry.ColorOverride.of(1.0f, 0.6f, 0.3f));
+        small(rules, "vault", blocks("vault"), 0.5f, 0.35f, LightEntry.ColorOverride.of(1.0f, 0.6f, 0.3f));
+        small(rules, "firefly_bush", blocks("firefly_bush"), 0.6f, 0.35f, LightEntry.ColorOverride.of(0.85f, 1.0f, 0.35f));
+        small(rules, "lava_cauldron", blocks("lava_cauldron"), 0.95f, 0.35f, FIRE_COLOR);
+    }
+
+    private static void glowingCube(Map<Identifier, BlockLightRuleManager.Rule> rules, String path,
+                                    Predicate<BlockState> matcher, LightEntry.ColorOverride color) {
+        add(rules, path, matcher, (id, state, pos, centroid) -> List.of(
+                sphere(id, 0, state, pos, 0.5f, 0.5f, 0.5f, GLOWING_CUBE_RADIUS, color, null)));
+    }
+
+    /** A light above the middle of the block, at {@code y} up it. */
+    private static void small(Map<Identifier, BlockLightRuleManager.Rule> rules, String path,
+                              Predicate<BlockState> matcher, float y, float radius, LightEntry.ColorOverride color) {
+        add(rules, path, matcher, (id, state, pos, centroid) -> List.of(
+                sphere(id, 0, state, pos, 0.5f, y, 0.5f, radius, color, null)));
+    }
+
+    /** Matches the blocks with these vanilla ids; looked up when the rules are built, after bootstrap. */
+    private static Predicate<BlockState> blocks(String... paths) {
+        Set<Block> set = new HashSet<>();
+        for (String path : paths) {
+            set.add(block(path));
+        }
+        return state -> set.contains(state.getBlock());
+    }
+
+    private static Block block(String path) {
+        Identifier id = Identifier.withDefaultNamespace(path);
+        if (!BuiltInRegistries.BLOCK.containsKey(id)) {
+            throw new IllegalStateException("No vanilla block " + id + " for a built-in light rule");
+        }
+        return BuiltInRegistries.BLOCK.getValue(id);
+    }
+
+    private static Predicate<BlockState> lit(Predicate<BlockState> matcher) {
+        return matcher.and(state -> state.getValue(BlockStateProperties.LIT));
+    }
+
+    /** The flame inside a lantern's body, which hangs a little higher than it stands. */
+    private static LightEntry lanternFlame(Identifier id, BlockState state, BlockPos pos,
+                                           LightEntry.ColorOverride color) {
+        float y = state.getValue(BlockStateProperties.HANGING) ? 0.3f : 0.22f;
+        return thinSphere(id, 0, state, pos, 0.5f, y, 0.5f, LANTERN_FLAME_RADIUS, color);
+    }
+
+    /** The fire seen through a lit furnace's front opening, just outside its face. */
+    private static List<LightEntry> furnaceMouth(Identifier id, BlockState state, BlockPos pos,
+                                                 BlockLightRuleManager.ModelSampler centroid) {
+        Direction facing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
+        return List.of(sphere(id, 0, state, pos,
+                0.5f + 0.52f * facing.getStepX(), 0.35f, 0.5f + 0.52f * facing.getStepZ(),
+                0.18f, FIRE_COLOR, null));
     }
 
     private static LightEntry sphere(Identifier id, int index, BlockState state, BlockPos pos,

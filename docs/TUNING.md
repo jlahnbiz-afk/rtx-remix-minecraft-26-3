@@ -43,7 +43,7 @@ long a worker may wait.
 | `rtxremix.chunk.localBacklogMaxChunks` | Ceiling that cap rises to while a backlog is waiting | `LocalChunkBatchPacing` |
 | `rtxremix.chunk.localUnloadPacing` | Pace the integrated server's chunk unload packets alongside its chunk data, so a crossing's trailing row does not land in the same drain as the new row. Set to false to send unloads the tick a column leaves the filter; off whenever `rtxremix.chunk.localBatchPacing` is off | `LocalChunkBatchPacing` |
 | `rtxremix.chunk.localUnloadBudgetMs` | Measured render-thread unload time, in milliseconds, the paced unloads may fill per tick | `LocalChunkBatchPacing` |
-| `rtxremix.light.vanillaSnapshot` | Set to true to make the client light engine clone its section map every pass as vanilla does. With false, while capture is on, the live map is published as the snapshot, which rests on nothing but the render thread reading client light | `ClientLightSnapshotPolicy` |
+| `rtxremix.light.vanillaSnapshot` | Set to true to make the light engines clone their section maps every pass as vanilla does. With false, while capture is on, the client engine publishes its live map as the snapshot, which rests on nothing but the render thread reading client light; the integrated server's engines publish an immutable layered view (`ServerLightSnapshot`) whether or not capture is on | `ClientLightSnapshotPolicy`, `LightStorageMixin` |
 | `rtxremix.light.vanillaSurfaceScan` | Set to true to start each column's sky-light surface walk at the top of the chunk as vanilla does. With false the walk is seeded at the packet's `WORLD_SURFACE` height, which skips the air-over-air pairs that were most of the render thread's chunk-apply cost; the remedy for a sender whose heightmaps do not match its blocks | `SkyLightSurfaceScanPolicy` |
 | `rtxremix.joinHold` | Keep vanilla's terrain-download screen up until frame times settle after a world join, with a short bounded hold, so the first-sight mesh, pipeline, and BLAS costs land behind the screen. Set to false to disable the hold | `JoinBurstHold` |
 
@@ -125,20 +125,20 @@ their distance.
 | `rtxremix.waterRapids.spawnBudgetPerTick` | Foam and mist particles spawned per tick near fast water. 0 turns the effect off | `WaterRapidParticleSpawner` |
 | `rtxremix.particles.fastAirCollision` | Take a fast path through particle collision when every swept cell is air. Set to false to disable the fast path | `ParticleStateMixin` |
 | `rtxremix.particles.fastAirCollisionMaxBlocks` | Largest sweep, in cells, that the fast path handles | `ParticleStateMixin` |
-| `rtxremix.atlas.minPadding` | Smallest border, in texels, the stitcher leaves around each atlas sprite. The runtime mips the whole atlas, so a thin border lets distant faces blend in their atlas neighbours. 0 keeps vanilla's | `AtlasPadding` |
+| `rtxremix.atlas.vanillaPadding` | Keeps vanilla's border around each atlas sprite. By default atlases are stitched without one, so every power-of-two sprite sits on a multiple of its own size and the runtime's halving mips keep it apart from its neighbours until it is one texel; vanilla's border moves sprites off that grid and lets distant faces blend in their neighbours. The block atlas log line counts sprites off their grid | `AtlasPadding` |
 
 ## Rain Surfaces
 
-Rain rings open water. A section build lays a cut-out ripple film just over
-water open to the rain, where it rains rather than snows. The film never
-changes after it is built: the rain reaches it as texture content
-(`RainSurfaceTextures`), and only the texture sets its opacity, because the
-runtime ignores vertex alpha. Raindrop rings play at the rain's strength and
-clear when it stops (`RainSurfaces`, `RainRipples`). The key reads at startup.
+Rain rings water. The water's normal map is one texture that tiles in world
+space, rewritten as the waves play from the shipped flipbook, with raindrop
+rings added to the waves' slopes at the rain's strength; the rings clear when
+the rain stops (`WaterNormals`, `RainSurfaces`, `RainRipples`). The material
+never changes after it is built, because the rain reaches the runtime as
+texture content. The key reads at startup.
 
 | Key | Effect | Owner |
 |---|---|---|
-| `rtxremix.rain.ripples` | Set to false to lay no ripple films over open water | `BlockTextureManager` |
+| `rtxremix.rain.ripples` | Set to false to keep raindrop rings off the water | `BlockTextureManager` |
 
 ## Profiling And Diagnostics
 

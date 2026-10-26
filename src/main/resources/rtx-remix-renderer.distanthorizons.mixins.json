@@ -1,0 +1,14 @@
+{
+    "required": false,
+    "minVersion": "0.8",
+    "package": "com.nvidia.rtxremix.minecraft.lod.dh.mixin",
+    "plugin": "com.nvidia.rtxremix.minecraft.lod.dh.DistantHorizonsMixinPlugin",
+    "compatibilityLevel": "JAVA_25",
+    "client": [
+        "LodRenderSectionMixin",
+        "MinecraftClientWrapperMixin"
+    ],
+    "injectors": {
+        "defaultRequire": 1
+    }
+}

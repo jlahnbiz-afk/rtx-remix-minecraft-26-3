@@ -4,6 +4,8 @@
  */
 package com.nvidia.rtxremix.minecraft.camera;
 
+import com.nvidia.rtxremix.minecraft.cloud.CloudStyle;
+
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -31,20 +33,26 @@ import static com.nvidia.rtxremix.minecraft.camera.CameraPathCodec.requireString
  * camera paths. Unknown fields and other versions are rejected, as for camera
  * paths, so a hand edit that misspells a key fails loudly instead of silently
  * dropping a shot's state.
+ *
+ * <p>Version 2 names the cloud style in {@code clouds}. Version 1 knew only a
+ * {@code proceduralClouds} flag, read as the procedural or the classic style.
  */
 final class StillShotCodec {
 
-    static final int VERSION = 1;
+    static final int VERSION = 2;
+    private static final int FLAG_VERSION = 1;
 
     private static final Set<String> ROOT_FIELDS = Set.of("version", "shots");
     private static final Set<String> SHOT_FIELDS = Set.of(
+            "name", "x", "y", "z", "yaw", "pitch", "timeOfDay", "weather", "rtx", "clouds");
+    private static final Set<String> FLAG_SHOT_FIELDS = Set.of(
             "name", "x", "y", "z", "yaw", "pitch", "timeOfDay", "weather", "rtx", "proceduralClouds");
     private static final Gson PRETTY_GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private StillShotCodec() {}
 
     /**
-     * Parses a version 1 shot set. Names must be unique within the set
+     * Parses a version 2 or version 1 shot set. Names must be unique within the set
      * regardless of letter case, since each one becomes an image file name.
      *
      * @throws JsonParseException if the JSON is malformed, uses another version,
@@ -66,7 +74,7 @@ final class StillShotCodec {
         JsonObject root = parsed.getAsJsonObject();
         rejectUnknownFields(root, ROOT_FIELDS, "shot set root");
         long version = requireLong(root, "version");
-        if (version != VERSION) {
+        if (version != VERSION && version != FLAG_VERSION) {
             throw new JsonParseException("unsupported shot set version: " + version);
         }
         JsonElement shotsElement = requireField(root, "shots");
@@ -83,7 +91,7 @@ final class StillShotCodec {
                 throw new JsonParseException("shot " + i + " must be an object");
             }
             JsonObject shot = element.getAsJsonObject();
-            rejectUnknownFields(shot, SHOT_FIELDS, "shot " + i);
+            rejectUnknownFields(shot, version == VERSION ? SHOT_FIELDS : FLAG_SHOT_FIELDS, "shot " + i);
             try {
                 StillShot parsedShot = new StillShot(
                         requireString(shot, "name"),
@@ -95,7 +103,9 @@ final class StillShotCodec {
                         requireLong(shot, "timeOfDay"),
                         StillShot.Weather.fromWireName(requireString(shot, "weather")),
                         requireBoolean(shot, "rtx"),
-                        requireBoolean(shot, "proceduralClouds"));
+                        version == VERSION
+                                ? CloudStyle.fromWireName(requireString(shot, "clouds"))
+                                : requireBoolean(shot, "proceduralClouds") ? CloudStyle.PROCEDURAL : CloudStyle.CLASSIC);
                 if (!names.add(parsedShot.name().toLowerCase(Locale.ROOT))) {
                     throw new JsonParseException("shot name repeated: " + parsedShot.name());
                 }
@@ -107,7 +117,7 @@ final class StillShotCodec {
         return shots;
     }
 
-    /** Serializes a shot set as pretty-printed version 1 JSON. */
+    /** Serializes a shot set as pretty-printed version 2 JSON. */
     static String toJson(List<StillShot> shots) {
         JsonObject root = new JsonObject();
         root.addProperty("version", VERSION);
@@ -123,7 +133,7 @@ final class StillShotCodec {
             object.addProperty("timeOfDay", shot.timeOfDay());
             object.addProperty("weather", shot.weather().wireName());
             object.addProperty("rtx", shot.rtxEnabled());
-            object.addProperty("proceduralClouds", shot.proceduralClouds());
+            object.addProperty("clouds", shot.clouds().wireName());
             array.add(object);
         }
         root.add("shots", array);

@@ -124,6 +124,17 @@ repositories {
         name = 'Fabric'
         url = 'https://maven.fabricmc.net/'
     }
+    // Distant Horizons publishes no Maven artifact; the LOD capture compiles
+    // against its release jar and never ships it.
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = 'Modrinth'
+                url = 'https://api.modrinth.com/maven'
+            }
+        }
+        filter { includeGroup 'maven.modrinth' }
+    }
 }
 
 // Minecraft 26.x requires Java 25
@@ -204,6 +215,9 @@ dependencies {
     implementation "net.fabricmc:fabric-loader:0.19.5"
 
     implementation fabricApiCoordinate
+
+    // Optional at runtime: the mixin config plugin skips the capture without it.
+    compileOnly "maven.modrinth:distanthorizons:3.3.4-26.3"
 
     // Testing
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'

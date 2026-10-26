@@ -9,10 +9,12 @@ public enum SettingGroup {
     RENDER_DISTANCE(SettingCategory.PERFORMANCE, "rtxremix.settings.group.renderDistance"),
     FRAMERATE(SettingCategory.PERFORMANCE, "rtxremix.settings.group.framerate"),
     SKY(SettingCategory.LIGHTING, "rtxremix.settings.group.sky"),
+    SKY_LOOK(SettingCategory.LIGHTING, "rtxremix.settings.group.skyLook"),
     CLOUDS(SettingCategory.LIGHTING, "rtxremix.settings.group.clouds"),
     BLOCK_LIGHTS(SettingCategory.LIGHTING, "rtxremix.settings.group.blockLights"),
     TONEMAPPING(SettingCategory.IMAGE, "rtxremix.settings.group.tonemapping"),
     EYE_ADAPTATION(SettingCategory.IMAGE, "rtxremix.settings.group.eyeAdaptation"),
+    LENS(SettingCategory.IMAGE, "rtxremix.settings.group.lens"),
     MATERIALS(SettingCategory.MATERIALS, "rtxremix.settings.group.materials");
 
     private final SettingCategory category;

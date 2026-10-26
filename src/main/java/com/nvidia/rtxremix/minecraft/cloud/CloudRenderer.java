@@ -68,6 +68,28 @@ public final class CloudRenderer {
     private static final float SSS_RADIUS_SCALE = 5000.0f;
     private static final float SSS_MAX_SAMPLE_RADIUS = 1.0f;
 
+    public static final float DEFAULT_COVERAGE = 0.4f;
+    public static final boolean DEFAULT_SECOND_LAYER = true;
+    public static final float DEFAULT_SPEED = 1.0f;
+    public static final float MAX_SPEED = 10.0f;
+    public static final float DEFAULT_UNBOUND_THICKNESS = 280.0f;
+    public static final float DEFAULT_UNBOUND_DENSITY = 1.0f;
+    public static final float DEFAULT_UNBOUND_BRIGHTNESS = 1.0f;
+    public static final float DEFAULT_UNBOUND_DETAIL = 1.0f;
+    public static final float DEFAULT_UNBOUND_RAIN_INFLUENCE = 0.6f;
+    public static final float DEFAULT_UNBOUND_SHADOW = 0.5f;
+    /** The Unbound layer sits higher than vanilla's thin clouds, so its tall clouds clear the hills. */
+    private static final float UNBOUND_BASE_LIFT = 64.0f;
+    /** Reimagined cells are wider than vanilla's twelve blocks, so a clump reads as one cloud. */
+    private static final float REIMAGINED_CELL_SIZE = 20.0f;
+    private static final float REIMAGINED_THICKNESS = 11.0f;
+    /** Height of the optional upper layer above the first. */
+    private static final float REIMAGINED_LAYER_GAP = 96.0f;
+    private static final long REIMAGINED_MASK_SEED = 0x5245494DL;
+    private static final double REIMAGINED_PERIOD = ReimaginedCloudMask.SIZE * REIMAGINED_CELL_SIZE;
+    /** The upper layer reads the same mask far along Z, so the two layers never line up. */
+    private static final double REIMAGINED_UPPER_PHASE = REIMAGINED_PERIOD * 0.37;
+
     private final RemixRenderer renderer;
     private final MeshCreator meshCreator;
     private final PaletteEntry[] palette = new PaletteEntry[PALETTE_SIZE];
@@ -95,7 +117,19 @@ public final class CloudRenderer {
     private boolean paletteGenerationScheduled;
     private CompletableFuture<?> paletteGenerationTask;
     private long vanillaGenerationEpoch;
-    private boolean proceduralClouds;
+    private CloudStyle style = CloudStyle.CLASSIC;
+    private float coverage = DEFAULT_COVERAGE;
+    private boolean secondLayer = DEFAULT_SECOND_LAYER;
+    private float speed = DEFAULT_SPEED;
+    private VanillaCloudPlacement.Layer reimaginedLower;
+    private VanillaCloudPlacement.Layer reimaginedUpper;
+    private float reimaginedLayersSpeed = Float.NaN;
+    private float unboundThickness = DEFAULT_UNBOUND_THICKNESS;
+    private float unboundDensity = DEFAULT_UNBOUND_DENSITY;
+    private float unboundBrightness = DEFAULT_UNBOUND_BRIGHTNESS;
+    private float unboundDetail = DEFAULT_UNBOUND_DETAIL;
+    private float unboundRainInfluence = DEFAULT_UNBOUND_RAIN_INFLUENCE;
+    private float unboundShadow = DEFAULT_UNBOUND_SHADOW;
     private float vanillaEdgeSmoothness = DEFAULT_VANILLA_EDGE_SMOOTHNESS;
     private float cloudSize = DEFAULT_CLOUD_SIZE;
     private float cloudsHeight = DEFAULT_CLOUDS_HEIGHT;
@@ -141,15 +175,38 @@ public final class CloudRenderer {
         if (!shouldSuppressVanillaClouds()) {
             return;
         }
+        // The sky renderer marches and draws the Unbound clouds, as part of the sky.
+        if (style == CloudStyle.UNBOUND) {
+            return;
+        }
         updateCloudColor(cloudArgb);
 
-        if (!proceduralClouds) {
+        if (style != CloudStyle.PROCEDURAL) {
             completedPaletteMeshes.clear();
             clouds.clear();
             visibleKeys.clear();
             // Vanilla's clouds have run on world time since 26.1, so the Classic
             // style shares its period and phase with them.
-            drawVanillaClouds(cameraPos, cloudHeight, world.getGameTime() + (double) tickDelta);
+            double worldTime = world.getGameTime() + (double) tickDelta;
+            if (style == CloudStyle.CLASSIC) {
+                drawVanillaClouds(cameraPos, VanillaCloudPlacement.CLASSIC,
+                        cloudHeight + cloudsHeight + VANILLA_LAYER_LIFT, worldTime);
+            } else {
+                // The slab is centred on the cloud height, as the classic layer sits on it.
+                float base = cloudHeight + cloudsHeight - REIMAGINED_THICKNESS * cloudSize * 0.5f;
+                if (Float.compare(reimaginedLayersSpeed, speed) != 0) {
+                    double drift = VanillaCloudPlacement.DRIFT_PER_TICK * speed;
+                    reimaginedLower = new VanillaCloudPlacement.Layer(REIMAGINED_PERIOD, drift, 0.0);
+                    // The upper layer runs a little faster in the stronger wind aloft.
+                    reimaginedUpper = new VanillaCloudPlacement.Layer(
+                            REIMAGINED_PERIOD, drift * 1.3, REIMAGINED_UPPER_PHASE);
+                    reimaginedLayersSpeed = speed;
+                }
+                drawVanillaClouds(cameraPos, reimaginedLower, base, worldTime);
+                if (secondLayer) {
+                    drawVanillaClouds(cameraPos, reimaginedUpper, base + REIMAGINED_LAYER_GAP, worldTime);
+                }
+            }
             return;
         }
 
@@ -384,6 +441,12 @@ public final class CloudRenderer {
         if (vanillaOccupancy != null) {
             return;
         }
+        if (style == CloudStyle.REIMAGINED) {
+            vanillaOccupancy = ReimaginedCloudMask.generate(coverage, REIMAGINED_MASK_SEED);
+            vanillaTextureWidth = ReimaginedCloudMask.SIZE;
+            vanillaTextureHeight = ReimaginedCloudMask.SIZE;
+            return;
+        }
         Minecraft client = Minecraft.getInstance();
         try {
             var resource = client.getResourceManager().getResource(VANILLA_CLOUD_TEXTURE)
@@ -420,7 +483,7 @@ public final class CloudRenderer {
         boolean[] occupancy = vanillaOccupancy;
         int textureWidth = vanillaTextureWidth;
         int textureHeight = vanillaTextureHeight;
-        float height = VANILLA_BASE_THICKNESS * cloudSize;
+        float height = (style == CloudStyle.REIMAGINED ? REIMAGINED_THICKNESS : VANILLA_BASE_THICKNESS) * cloudSize;
         float edgeSmoothness = vanillaEdgeSmoothness;
         CompletableFuture.supplyAsync(() -> VanillaCloudMeshGenerator.generate(
                         occupancy,
@@ -534,7 +597,7 @@ public final class CloudRenderer {
         } catch (RuntimeException e) {
             RuntimeException failure =
                     new IllegalStateException("Failed to update cloud material color", e);
-            if (proceduralClouds) {
+            if (style == CloudStyle.PROCEDURAL) {
                 paletteFailure = failure;
             } else {
                 vanillaFailure = failure;
@@ -580,7 +643,9 @@ public final class CloudRenderer {
         return (int) Math.round(adjustedColor * 255.0);
     }
 
-    private void drawVanillaClouds(Vec3 cameraPos, float cloudHeight, double worldTime) {
+    /** Draws the mask's visible chunks repeated as {@code layer} with their bases at {@code height}. */
+    private void drawVanillaClouds(
+            Vec3 cameraPos, VanillaCloudPlacement.Layer layer, float height, double worldTime) {
         ensureVanillaCloudMask();
 
         publishVanillaChunks();
@@ -591,6 +656,7 @@ public final class CloudRenderer {
                 worldTime,
                 vanillaTextureWidth,
                 vanillaTextureHeight,
+                layer,
                 placement -> {
                     PaletteEntry entry = vanillaChunks.get(placement.textureKey);
                     if (entry == null) {
@@ -608,7 +674,7 @@ public final class CloudRenderer {
                     matrix[4] = 0.0f;
                     matrix[5] = 1.0f;
                     matrix[6] = 0.0f;
-                    matrix[7] = cloudHeight + cloudsHeight + VANILLA_LAYER_LIFT;
+                    matrix[7] = height;
                     matrix[8] = 0.0f;
                     matrix[9] = 0.0f;
                     matrix[10] = 1.0f;
@@ -766,12 +832,125 @@ public final class CloudRenderer {
     }
 
     public boolean isProceduralClouds() {
-        return proceduralClouds;
+        return style == CloudStyle.PROCEDURAL;
     }
 
     /** Whether the active cloud mode is healthy enough to replace Minecraft's draw. */
     public boolean shouldSuppressVanillaClouds() {
-        return proceduralClouds ? paletteFailure == null : vanillaFailure == null;
+        return style == CloudStyle.PROCEDURAL ? paletteFailure == null : vanillaFailure == null;
+    }
+
+    public CloudStyle getCloudStyle() {
+        return style;
+    }
+
+    public void setCloudStyle(CloudStyle newStyle) {
+        if (style == newStyle) {
+            return;
+        }
+        style = newStyle;
+        releaseResources();
+    }
+
+    /** Share of the sky the Reimagined and Unbound clouds fill, 0 to 1. */
+    public float getCoverage() {
+        return coverage;
+    }
+
+    public void setCoverage(float value) {
+        float clamped = Math.clamp(value, 0.0f, 1.0f);
+        if (Float.compare(coverage, clamped) == 0) {
+            return;
+        }
+        coverage = clamped;
+        if (style == CloudStyle.REIMAGINED) {
+            invalidateVanillaChunks();
+            vanillaOccupancy = null;
+        }
+    }
+
+    public boolean isSecondLayer() {
+        return secondLayer;
+    }
+
+    public void setSecondLayer(boolean enabled) {
+        secondLayer = enabled;
+    }
+
+    /** How fast the Reimagined clouds drift, relative to vanilla's clouds. */
+    public float getSpeed() {
+        return speed;
+    }
+
+    public void setSpeed(float value) {
+        speed = Math.clamp(value, 0.0f, MAX_SPEED);
+    }
+
+    /**
+     * The base height of the Unbound clouds when they should show this frame, or NaN when
+     * another style is chosen or the clouds are off, as they are where vanilla draws none.
+     */
+    public float unboundBaseHeight() {
+        float cloudHeight = SkyFrame.level().cloudHeight;
+        if (style != CloudStyle.UNBOUND
+                || Minecraft.getInstance().options.getCloudStatus() == CloudStatus.OFF
+                || ARGB.alpha(SkyFrame.level().cloudColor) == 0
+                || Float.isNaN(cloudHeight)) {
+            return Float.NaN;
+        }
+        return cloudHeight + cloudsHeight + UNBOUND_BASE_LIFT;
+    }
+
+    /** Height in blocks from the Unbound layer's base to its top. */
+    public float getUnboundThickness() {
+        return unboundThickness;
+    }
+
+    public void setUnboundThickness(float value) {
+        unboundThickness = Math.clamp(value, 20.0f, 1000.0f);
+    }
+
+    public float getUnboundDensity() {
+        return unboundDensity;
+    }
+
+    public void setUnboundDensity(float value) {
+        unboundDensity = Math.clamp(value, 0.0f, 5.0f);
+    }
+
+    public float getUnboundBrightness() {
+        return unboundBrightness;
+    }
+
+    public void setUnboundBrightness(float value) {
+        unboundBrightness = Math.clamp(value, 0.0f, 5.0f);
+    }
+
+    /** How strongly fine noise erodes the Unbound clouds' edges; 0 leaves them smooth. */
+    public float getUnboundDetail() {
+        return unboundDetail;
+    }
+
+    public void setUnboundDetail(float value) {
+        unboundDetail = Math.clamp(value, 0.0f, 2.0f);
+    }
+
+    /** How far rain thickens the Unbound clouds toward an overcast sky, 0 to 1. */
+    public float getUnboundRainInfluence() {
+        return unboundRainInfluence;
+    }
+
+    public void setUnboundRainInfluence(float value) {
+        unboundRainInfluence = Math.clamp(value, 0.0f, 1.0f);
+    }
+
+    /** How much of the sun's direct light an Unbound cloud in front of it takes away, 0 to 1. */
+    public float getUnboundShadow() {
+        return unboundShadow;
+    }
+
+    public void setUnboundShadow(float value) {
+        unboundShadow = Math.clamp(value, 0.0f, 1.0f);
     }
 
     long paletteGenerationEpoch() {
@@ -782,12 +961,9 @@ public final class CloudRenderer {
         return vanillaGenerationEpoch;
     }
 
+    /** Picks the Procedural style or, off, the Classic one; still shots record only this choice. */
     public void setProceduralClouds(boolean enabled) {
-        if (proceduralClouds == enabled) {
-            return;
-        }
-        proceduralClouds = enabled;
-        releaseResources();
+        setCloudStyle(enabled ? CloudStyle.PROCEDURAL : CloudStyle.CLASSIC);
     }
 
     public float getVanillaEdgeSmoothness() {

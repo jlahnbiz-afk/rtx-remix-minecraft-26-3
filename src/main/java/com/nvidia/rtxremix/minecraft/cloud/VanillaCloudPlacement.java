@@ -6,7 +6,7 @@ package com.nvidia.rtxremix.minecraft.cloud;
 
 import java.util.function.Consumer;
 
-/** Stateless placement of streamed chunks from vanilla's repeating cloud texture. */
+/** Stateless placement of streamed chunks from a repeating cloud occupancy mask. */
 final class VanillaCloudPlacement {
     static final int PARTITIONS_PER_AXIS = 8;
     static final double WORLD_PERIOD = 256.0 * VanillaCloudMeshGenerator.CELL_SIZE;
@@ -14,7 +14,29 @@ final class VanillaCloudPlacement {
     static final double DRIFT_PER_TICK = 0.03;
     static final double Z_PHASE = 0.33;
 
+    /**
+     * How a mask repeats over the world: the distance one copy covers along each axis, how
+     * far it drifts along +X per tick, and its offset along Z.
+     */
+    record Layer(double period, double driftPerTick, double phaseZ) {
+    }
+
+    /** Vanilla's own layer, so the Classic style keeps vanilla's period and phase. */
+    static final Layer CLASSIC = new Layer(
+            WORLD_PERIOD, DRIFT_PER_TICK, Z_PHASE * VanillaCloudMeshGenerator.CELL_SIZE);
+
     private VanillaCloudPlacement() {
+    }
+
+    /** {@link #forEachVisible(double, double, double, int, int, Layer, Consumer)} on {@link #CLASSIC}. */
+    static void forEachVisible(
+            double cameraX,
+            double cameraZ,
+            double worldTime,
+            int textureWidth,
+            int textureHeight,
+            Consumer<Cursor> consumer) {
+        forEachVisible(cameraX, cameraZ, worldTime, textureWidth, textureHeight, CLASSIC, consumer);
     }
 
     /**
@@ -29,20 +51,22 @@ final class VanillaCloudPlacement {
             double worldTime,
             int textureWidth,
             int textureHeight,
+            Layer layer,
             Consumer<Cursor> consumer) {
         if (textureWidth <= 0 || textureHeight <= 0) {
             throw new IllegalArgumentException("Cloud texture dimensions must be positive");
         }
-        double driftX = worldTime * DRIFT_PER_TICK;
-        double phaseZ = Z_PHASE * VanillaCloudMeshGenerator.CELL_SIZE;
+        double period = layer.period();
+        double driftX = worldTime * layer.driftPerTick();
+        double phaseZ = layer.phaseZ();
         int partitionsX = Math.min(PARTITIONS_PER_AXIS, textureWidth);
         int partitionsZ = Math.min(PARTITIONS_PER_AXIS, textureHeight);
-        double cellSizeX = WORLD_PERIOD / textureWidth;
-        double cellSizeZ = WORLD_PERIOD / textureHeight;
-        int minRepeatX = floorRepeat(cameraX + driftX - VIEW_DISTANCE);
-        int maxRepeatX = floorRepeat(cameraX + driftX + VIEW_DISTANCE);
-        int minRepeatZ = floorRepeat(cameraZ + phaseZ - VIEW_DISTANCE);
-        int maxRepeatZ = floorRepeat(cameraZ + phaseZ + VIEW_DISTANCE);
+        double cellSizeX = period / textureWidth;
+        double cellSizeZ = period / textureHeight;
+        int minRepeatX = floorRepeat(cameraX + driftX - VIEW_DISTANCE, period);
+        int maxRepeatX = floorRepeat(cameraX + driftX + VIEW_DISTANCE, period);
+        int minRepeatZ = floorRepeat(cameraZ + phaseZ - VIEW_DISTANCE, period);
+        int maxRepeatZ = floorRepeat(cameraZ + phaseZ + VIEW_DISTANCE, period);
         Cursor cursor = new Cursor();
 
         for (int repeatZ = minRepeatZ; repeatZ <= maxRepeatZ; repeatZ++) {
@@ -51,7 +75,7 @@ final class VanillaCloudPlacement {
                 int nextTextureZ =
                         partitionBoundary(partitionZ + 1, textureHeight, partitionsZ);
                 int windowHeight = nextTextureZ - textureZ;
-                double worldZ = repeatZ * WORLD_PERIOD + textureZ * cellSizeZ - phaseZ;
+                double worldZ = repeatZ * period + textureZ * cellSizeZ - phaseZ;
                 double worldDepth = windowHeight * cellSizeZ;
 
                 for (int repeatX = minRepeatX; repeatX <= maxRepeatX; repeatX++) {
@@ -62,7 +86,7 @@ final class VanillaCloudPlacement {
                                 partitionBoundary(partitionX + 1, textureWidth, partitionsX);
                         int windowWidth = nextTextureX - textureX;
                         double worldX =
-                                repeatX * WORLD_PERIOD + textureX * cellSizeX - driftX;
+                                repeatX * period + textureX * cellSizeX - driftX;
                         double worldWidth = windowWidth * cellSizeX;
                         if (!intersectsView(
                                 worldX,
@@ -103,8 +127,8 @@ final class VanillaCloudPlacement {
         return dx * dx + dz * dz <= VIEW_DISTANCE * VIEW_DISTANCE;
     }
 
-    private static int floorRepeat(double coordinate) {
-        return (int) Math.floor(coordinate / WORLD_PERIOD);
+    private static int floorRepeat(double coordinate, double period) {
+        return (int) Math.floor(coordinate / period);
     }
 
     private static int partitionBoundary(int partition, int textureSize, int partitionCount) {

@@ -4,6 +4,8 @@
  */
 package com.nvidia.rtxremix.minecraft.camera;
 
+import com.nvidia.rtxremix.minecraft.cloud.CloudStyle;
+
 import java.util.Objects;
 
 /**
@@ -22,7 +24,7 @@ import java.util.Objects;
  * @param timeOfDay  world time of day in ticks, {@code 0} to {@code 23999}
  * @param weather    one of {@link Weather}
  * @param rtxEnabled whether path tracing was on
- * @param proceduralClouds whether the procedural cloud style was selected
+ * @param clouds     the cloud style that was showing
  */
 public record StillShot(
         String name,
@@ -34,7 +36,7 @@ public record StillShot(
         long timeOfDay,
         Weather weather,
         boolean rtxEnabled,
-        boolean proceduralClouds
+        CloudStyle clouds
 ) {
     /** Vanilla's three weather states. */
     public enum Weather {
@@ -71,6 +73,7 @@ public record StillShot(
 
     public StillShot {
         Objects.requireNonNull(weather, "weather");
+        Objects.requireNonNull(clouds, "clouds");
         // The name becomes <name>.png and <name>.jpg, so a value read from a
         // file is held to the file-name rule, not only one typed in chat.
         if (!CameraNames.isValid(name)) {

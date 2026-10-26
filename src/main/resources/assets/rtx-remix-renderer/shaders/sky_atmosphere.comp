@@ -19,6 +19,7 @@ layout(std140, binding = 0) uniform SkyParameters {
     vec4 SunRadianceAndAtmosphereScale;
     vec4 MoonRadianceValue;
     vec4 AtmosphereParameters;
+    vec4 LookParameters;
 };
 
 #define SunDirection SunDirectionAndRadius.xyz
@@ -29,6 +30,12 @@ layout(std140, binding = 0) uniform SkyParameters {
 #define AtmosphereScale SunRadianceAndAtmosphereScale.w
 #define MoonRadiance MoonRadianceValue.xyz
 #define MieScatteringAnisotropy AtmosphereParameters.x
+// The direct sunlight times LightManager.SUN_DISC_GAIN.
+#define SunDiscRadiance AtmosphereParameters.yzw
+#define Saturation LookParameters.x
+#define SunsetWarmth LookParameters.y
+#define SunGlare LookParameters.z
+#define RainbowStrength LookParameters.w
 
 shared vec3 Reduction[64];
 shared vec3 ReducedUpperMean;
@@ -58,10 +65,25 @@ const float MIE_HEIGHT = 1200.0;
 const vec3 BETA_R = vec3(5.5e-6, 13.0e-6, 22.4e-6);
 const float BETA_M = 21.0e-6;
 const float SUN_MIE_HALO_BOOST = 10.35;
+// The sun disc's light, spread over about a texel either way: the narrower, the brighter
+// each glint for the same light.
+const float SUN_DISC_SPREAD = radians(0.5);
 const float MOON_MIE_HALO_BOOST = 1.0;
 const float MULTIPLE_SCATTERING_SCALE = 0.65;
 const float GROUND_HORIZON_SCALE = 0.9;
 const float GROUND_NADIR_SCALE = 0.3;
+const vec3 LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
+// Roughly luminance-neutral, so warming the horizon recolours it without brightening it.
+const vec3 SUNSET_TINT = vec3(1.45, 0.86, 0.5);
+// A rainbow's primary bow spans about 40.6 to 42.3 degrees from the anti-solar point, red
+// outside; it is drawn a little wider so it reads at this texture's resolution. The
+// secondary bow sits at about 50 to 53.5 degrees with its colours reversed.
+const float PRIMARY_BOW_INNER = 40.0;
+const float PRIMARY_BOW_OUTER = 43.0;
+const float SECONDARY_BOW_INNER = 50.0;
+const float SECONDARY_BOW_OUTER = 54.0;
+const float SECONDARY_BOW_SCALE = 0.35;
+const float RAINBOW_SCALE = 1.6;
 
 float raySphere(vec3 origin, vec3 direction, float radius) {
     float b = 2.0 * dot(origin, direction);
@@ -231,7 +253,7 @@ void generateSingleScattering(ivec2 pixel) {
         SunRadiance,
         sunRayleigh,
         sunMie,
-        SUN_MIE_HALO_BOOST);
+        SUN_MIE_HALO_BOOST * SunGlare);
     singleScattering += finishScattering(
         viewDirection,
         MoonDirection,
@@ -240,10 +262,6 @@ void generateSingleScattering(ivec2 pixel) {
         moonMie,
         MOON_MIE_HALO_BOOST);
 
-    float sunCos = dot(viewDirection, SunDirection);
-    if (acos(clamp(sunCos, -1.0, 1.0)) < SunAngularRadius) {
-        singleScattering += SunRadiance * viewTransmittance;
-    }
     float moonCos = dot(viewDirection, MoonDirection);
     if (acos(clamp(moonCos, -1.0, 1.0)) < MoonAngularRadius) {
         singleScattering += MoonRadiance * viewTransmittance;
@@ -251,6 +269,57 @@ void generateSingleScattering(ivec2 pixel) {
 
     imageStore(UpperSingleImage, pixel, vec4(singleScattering, 1.0));
     imageStore(UpperViewImage, pixel, vec4(viewTransmittance, 1.0));
+}
+
+// Hue along a bow, 0 on its inner edge (violet) to 1 on its outer edge (red), fading out at both edges.
+vec3 bowColour(float t) {
+    float hue = (1.0 - t) * 0.75;
+    vec3 rgb = clamp(abs(fract(hue + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+    return rgb * smoothstep(0.0, 0.2, t) * smoothstep(1.0, 0.8, t);
+}
+
+vec3 rainbow(vec3 viewDirection) {
+    if (RainbowStrength <= 0.0 || viewDirection.y <= 0.0) {
+        return vec3(0.0);
+    }
+    float angle = degrees(acos(clamp(dot(viewDirection, -SunDirection), -1.0, 1.0)));
+    vec3 colour = bowColour((angle - PRIMARY_BOW_INNER) / (PRIMARY_BOW_OUTER - PRIMARY_BOW_INNER));
+    colour += SECONDARY_BOW_SCALE
+        * bowColour(1.0 - (angle - SECONDARY_BOW_INNER) / (SECONDARY_BOW_OUTER - SECONDARY_BOW_INNER));
+    return colour * smoothstep(0.0, 0.06, viewDirection.y) * RainbowStrength * RAINBOW_SCALE;
+}
+
+// The user's look over the physical sky: a warm band toward the sun near the horizon while
+// the sun is low, a rainbow lit by the sky behind it, then saturation.
+vec3 applyLook(vec3 radiance, vec3 viewDirection) {
+    float sunHeight = SunDirection.y;
+    float sunset = smoothstep(-0.12, 0.0, sunHeight) * (1.0 - smoothstep(0.05, 0.4, sunHeight));
+    float horizon = 1.0 - smoothstep(0.0, 0.45, max(viewDirection.y, 0.0));
+    vec2 viewFlat = viewDirection.xz;
+    vec2 sunFlat = SunDirection.xz;
+    float towardSun = 0.5;
+    if (dot(viewFlat, viewFlat) > 1e-6 && dot(sunFlat, sunFlat) > 1e-6) {
+        towardSun = 0.5 + 0.5 * max(dot(normalize(viewFlat), normalize(sunFlat)), 0.0);
+    }
+    float warmth = clamp(SunsetWarmth * sunset * horizon * towardSun, 0.0, 1.0);
+    radiance *= mix(vec3(1.0), SUNSET_TINT, warmth);
+
+    float luminance = dot(radiance, LUMINANCE);
+    radiance += luminance * rainbow(viewDirection);
+
+    luminance = dot(radiance, LUMINANCE);
+    return max(vec3(luminance) + (radiance - vec3(luminance)) * Saturation, vec3(0.0));
+}
+
+// The sun disc covers a fraction of a texel, so a test of each texel's centre showed it at
+// some sun positions and lost it at others. Its light is spread over the texels around it
+// instead, its total kept, and it stays out of the sky's means so it adds no ambient light.
+vec3 sunDisc(vec3 viewDirection) {
+    float angle = acos(clamp(dot(viewDirection, SunDirection), -1.0, 1.0));
+    float discSolidAngle = PI * SunAngularRadius * SunAngularRadius;
+    float spread = exp(-0.5 * angle * angle / (SUN_DISC_SPREAD * SUN_DISC_SPREAD))
+        / (2.0 * PI * SUN_DISC_SPREAD * SUN_DISC_SPREAD);
+    return SunDiscRadiance * (discSolidAngle * spread);
 }
 
 void reduceAndComposeSky() {
@@ -288,17 +357,17 @@ void reduceAndComposeSky() {
             imageLoad(UpperSingleImage, pixel).rgb;
         vec3 viewTransmittance =
             imageLoad(UpperViewImage, pixel).rgb;
-        vec3 radiance = max(
+        vec3 radiance = applyLook(max(
             singleScattering
             + ReducedUpperMean * (vec3(1.0) - viewTransmittance)
             * MULTIPLE_SCATTERING_SCALE,
-            vec3(0.0));
+            vec3(0.0)), skyDirection(pixel));
         vec2 quantizedRg =
             unpackHalf2x16(packHalf2x16(radiance.rg));
         vec2 quantizedBa =
             unpackHalf2x16(packHalf2x16(vec2(radiance.b, 1.0)));
         finalSum += vec3(quantizedRg, quantizedBa.x);
-        imageStore(FinalSkyImage, pixel, vec4(radiance, 1.0));
+        imageStore(FinalSkyImage, pixel, vec4(radiance + sunDisc(skyDirection(pixel)), 1.0));
     }
     memoryBarrierImage();
     Reduction[invocation] = finalSum;
@@ -321,11 +390,12 @@ void reduceAndComposeSky() {
 
     for (int x = int(invocation); x < SKY_WIDTH; x += 64) {
         ivec2 horizonPixel = ivec2(x, UPPER_HEIGHT - 1);
-        vec3 horizon =
+        vec3 horizon = applyLook(
             imageLoad(UpperSingleImage, horizonPixel).rgb
             + ReducedUpperMean
             * (vec3(1.0) - imageLoad(UpperViewImage, horizonPixel).rgb)
-            * MULTIPLE_SCATTERING_SCALE;
+            * MULTIPLE_SCATTERING_SCALE,
+            skyDirection(horizonPixel));
         for (int y = UPPER_HEIGHT; y < SKY_HEIGHT; y++) {
             float amount = float(y - UPPER_HEIGHT)
                 / float(SKY_HEIGHT - UPPER_HEIGHT - 1);

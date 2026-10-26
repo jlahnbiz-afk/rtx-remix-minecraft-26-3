@@ -5,6 +5,7 @@
 package com.nvidia.rtxremix.minecraft.terrain;
 
 import com.nvidia.rtxremix.minecraft.asset.RemixLight;
+import com.nvidia.rtxremix.minecraft.lens.FlareSources;
 import com.nvidia.rtxremix.minecraft.light.LightEntry;
 import com.nvidia.rtxremix.minecraft.light.LightPower;
 import org.jetbrains.annotations.Nullable;
@@ -78,6 +79,12 @@ public final class TerrainLight {
         boolean draw = weight >= floor;
         if (draw) lastDrawnFrame = frame;
         return draw;
+    }
+
+    /** Offers this light to the lens flare, weighted by how brightly it shines at the camera. */
+    public void offerFlare(double camX, double camY, double camZ) {
+        double dx = x - camX, dy = y - camY, dz = z - camZ;
+        FlareSources.offer(x, y, z, power / Math.max(1.0, dx * dx + dy * dy + dz * dz));
     }
 
     /**

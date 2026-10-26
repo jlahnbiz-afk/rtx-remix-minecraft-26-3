@@ -1,0 +1,10 @@
+{
+  "sources": [
+    {
+      "type": "minecraft:filter",
+      "pattern": {
+        "path": "^block/.+_(n|s|sss)$"
+      }
+    }
+  ]
+}

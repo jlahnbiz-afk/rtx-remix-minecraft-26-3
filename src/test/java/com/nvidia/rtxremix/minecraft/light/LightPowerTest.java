@@ -30,9 +30,9 @@ class LightPowerTest {
 
     @Test
     void theTorchReferenceMatchesTheShippedRule() {
-        // Torch: light level 14 x 5 x 3, authored x7.5, colour (1, 0.35, 0.1),
+        // Torch: light level 14 x 7.5 x 3, authored x7.5, colour (1, 0.35, 0.1),
         // thin-sphere radius 0.2 x 0.4. Changing any of those is a deliberate
         // recalibration of every light.reach value, which is why this pins it.
-        assertEquals(187.1f, LightPower.torchReference(), 0.5f);
+        assertEquals(280.7f, LightPower.torchReference(), 0.5f);
     }
 }

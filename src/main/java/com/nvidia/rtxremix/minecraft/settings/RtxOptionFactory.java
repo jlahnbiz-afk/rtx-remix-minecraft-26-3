@@ -6,6 +6,7 @@ package com.nvidia.rtxremix.minecraft.settings;
 
 import com.mojang.serialization.Codec;
 import com.nvidia.rtxremix.minecraft.UnfocusedFramerateLimit;
+import com.nvidia.rtxremix.minecraft.cloud.CloudStyle;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Function;
@@ -21,7 +22,7 @@ final class RtxOptionFactory {
     static final String ENTITY_DISTANCE_ID = "dist.entity";
     static final String LIGHT_DISTANCE_ID = "dist.light";
     static final String SUN_INTENSITY_ID = "sky.sunIntensity";
-    static final String PROCEDURAL_CLOUDS_ID = "clouds.procedural";
+    static final String CLOUD_STYLE_ID = "clouds.style";
     static final String TERRAIN_EMISSION_MULTIPLIER_ID =
             "materials.terrainEmissionMultiplier";
     static final double SUN_MIN_NONZERO_INTENSITY = 0.01;
@@ -252,15 +253,13 @@ final class RtxOptionFactory {
     }
 
     static Component booleanValueText(String settingId, boolean value) {
-        if (PROCEDURAL_CLOUDS_ID.equals(settingId)) {
-            return Component.translatable(value
-                    ? "rtxremix.settings.value.procedural"
-                    : "rtxremix.settings.value.classic");
-        }
         return CommonComponents.optionStatus(value);
     }
 
     static Component intValueText(String settingId, int value) {
+        if (CLOUD_STYLE_ID.equals(settingId)) {
+            return Component.translatable(CloudStyle.of(value).labelKey());
+        }
         if (UNFOCUSED_FRAMERATE_ID.equals(settingId)) {
             // Vanilla's own Max Framerate wording, so the two read alike.
             return value == UnfocusedFramerateLimit.UNLIMITED

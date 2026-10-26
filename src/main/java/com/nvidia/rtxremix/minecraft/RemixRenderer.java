@@ -29,13 +29,16 @@ import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
 import com.nvidia.rtxremix.minecraft.settings.PostProcessingSettings;
 import com.nvidia.rtxremix.minecraft.sky.SkyRenderer;
 import com.nvidia.rtxremix.minecraft.terrain.ChunkManager;
+import com.nvidia.rtxremix.minecraft.lod.LodTerrain;
 import com.nvidia.rtxremix.minecraft.texture.AtlasAnimationForwarder;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.texture.ParticleAtlasManager;
 import com.nvidia.rtxremix.minecraft.particle.RemixParticleRenderer.PreparedFrame;
 import com.nvidia.rtxremix.minecraft.particle.RemixParticleRenderer;
+import com.nvidia.rtxremix.minecraft.weather.Puddles;
 import com.nvidia.rtxremix.minecraft.weather.RainSurfaces;
 import com.nvidia.rtxremix.minecraft.weather.RemixWeatherRenderer;
+import com.nvidia.rtxremix.minecraft.lens.LensEffects;
 import com.nvidia.rtxremix.minecraft.camera.CameraController;
 import com.nvidia.rtxremix.minecraft.logic.ConfLayerDriver;
 import com.nvidia.rtxremix.minecraft.logic.ZoneRegistry;
@@ -105,6 +108,7 @@ import java.util.concurrent.TimeUnit;
 public class RemixRenderer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RemixRenderer.class);
+    private static final float[] NO_SUN = {0.0f, -1.0f, 0.0f};
 
     /**
      * Launcher options that carry the player's name, session token and account
@@ -127,6 +131,7 @@ public class RemixRenderer {
 
     // Scene managers
     private ChunkManager chunkManager;
+    private LodTerrain lodTerrain;
     // Zones authored via command blocks / commands; written on the server and
     // client threads, read per-frame on the render thread.
     private final ZoneRegistry zoneRegistry = new ZoneRegistry();
@@ -160,7 +165,9 @@ public class RemixRenderer {
     private ParticleAtlasManager particleAtlasManager;
     private RemixParticleRenderer particleRenderer;
     private RemixWeatherRenderer weatherRenderer;
+    private final LensEffects lensEffects = new LensEffects();
     private final RainSurfaces rainSurfaces = new RainSurfaces();
+    private final Puddles puddles = new Puddles();
     private final ExecutorService particleExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "RTX Remix Particles");
         thread.setDaemon(true);
@@ -336,6 +343,7 @@ public class RemixRenderer {
             
             textureManager = new BlockTextureManager(this);
             chunkManager = new ChunkManager(this);
+            lodTerrain = new LodTerrain();
             lightManager = new LightManager(this);
             skyRenderer = new SkyRenderer(this);
             cloudRenderer = new CloudRenderer(this);
@@ -562,7 +570,9 @@ public class RemixRenderer {
         if (particleAtlasManager != null) particleAtlasManager.cleanup();
         entityAtlasPreloadPending = true;
         if (weatherRenderer != null) weatherRenderer.cleanup();
+        puddles.destroy();
         if (chunkManager != null) chunkManager.clear();
+        if (lodTerrain != null) lodTerrain.clear();
         if (textureManager != null) textureManager.reload();
         if (skyRenderer != null) skyRenderer.reloadResources();
         if (cloudRenderer != null) {
@@ -773,6 +783,7 @@ public class RemixRenderer {
             
             if (world == null || client.gameRenderer == null) {
                 if (chunkManager != null) chunkManager.hideRetainedInstances();
+                if (lodTerrain != null) lodTerrain.update(remixApi, null, null, false);
                 discardPendingParticleFrame();
                 // Closed by the finally, like the RTX-disabled branch below. endFrame is not
                 // idempotent: it re-adds elapsed from the same frame start and refolds min,
@@ -790,6 +801,7 @@ public class RemixRenderer {
             // intentionally left untouched so off<->on transitions don't desync.
             if (!RtxRemixMod.isRtxEnabled()) {
                 if (chunkManager != null) chunkManager.hideRetainedInstances();
+                if (lodTerrain != null) lodTerrain.update(remixApi, null, null, false);
                 // A payload prepared before the toggle holds world-space vertices from the
                 // old camera position; publishing it on re-enable would draw stale geometry.
                 discardPendingParticleFrame();
@@ -837,11 +849,18 @@ public class RemixRenderer {
                 } catch (Exception e) {
                     LOGGER.error("Error updating chunks", e);
                 }
+                try (ProfileScope lodScope = ProfileScope.begin("LOD terrain")) {
+                    lodTerrain.update(remixApi, cameraPos, textureManager, true);
+                } catch (Exception e) {
+                    LOGGER.error("Error updating LOD terrain", e);
+                }
                 if (textureManager != null) {
                     rainSurfaces.update(world, tickDelta, textureManager);
+                    puddles.render(remixApi, world, cameraPos, tickDelta, textureManager);
                 }
             } else {
                 chunkManager.hideRetainedInstances();
+                lodTerrain.update(remixApi, cameraPos, textureManager, false);
             }
 
             entitySubmitter.beginFrame();
@@ -1239,12 +1258,19 @@ public class RemixRenderer {
             int width = client.getWindow().getWidth();
             int height = client.getWindow().getHeight();
             float aspect = (float) width / (float) height;
+            float lodRadius = lodTerrain != null ? lodTerrain.radiusBlocks() : 0f;
             if (weatherRenderer != null) {
                 weatherRenderer.updateCamera(
                         camera,
                         worldFov,
                         aspect);
             }
+            float farPlane = Math.max(1000.0f, lodRadius * 1.25f);
+            LightManager.SkyLightState sky = lightManager != null
+                    ? lightManager.getSkyLightState() : LightManager.SkyLightState.empty();
+            // Only a sky with a lit sun draws its starburst; the empty state's sun points up.
+            float[] sunDirection = sky.sunDirectRadiance()[1] > 0.0f ? sky.sunPosition() : NO_SUN;
+            lensEffects.updateCamera(camera, client.level, worldFov, aspect, farPlane, sunDirection);
     
             CameraInfoParameterizedEXT worldCameraParams = CameraInfoParameterizedEXT.builder()
                 .position((float) pos.x, (float) pos.y, (float) pos.z)
@@ -1254,7 +1280,7 @@ public class RemixRenderer {
                 .fovYInDegrees(worldFov)
                 .aspect(aspect)
                 .nearPlane(0.05f)
-                .farPlane(1000.0f)
+                .farPlane(farPlane)
                 .build();
     
             CameraInfo worldCameraInfo = CameraInfo.builder()
@@ -1273,8 +1299,10 @@ public class RemixRenderer {
     
             remixApi.setupCamera(worldCameraInfo);
             remixApi.setupCamera(viewModelCameraInfo);
-            float viewDistanceStrength = viewDistanceFade.layerStrength(ClientViewDistance.chunks());
-            updateCameraMedium(camera, pos, viewDistanceStrength, tickDelta);
+            int renderDistance = ClientViewDistance.chunks();
+            float viewDistanceStrength = viewDistanceFade.layerStrength(renderDistance);
+            float lodFadeStrength = viewDistanceFade.lodLayerStrength(renderDistance, lodRadius);
+            updateCameraMedium(camera, pos, viewDistanceStrength, lodFadeStrength, tickDelta);
         } catch (RemixException e) {
             LOGGER.error("Error updating camera: {} (code: {})", e.getMessage(), e.getErrorCode());
         } catch (Exception e) {
@@ -1305,10 +1333,13 @@ public class RemixRenderer {
         if (!initialized) {
             return;
         }
-        viewDistanceFade.layerStrength(ClientViewDistance.chunks());
+        int renderDistance = ClientViewDistance.chunks();
+        viewDistanceFade.layerStrength(renderDistance);
+        viewDistanceFade.lodLayerStrength(renderDistance, lodTerrain != null ? lodTerrain.radiusBlocks() : 0f);
     }
 
-    private void updateCameraMedium(Camera camera, Vec3 cameraPos, float viewDistanceStrength, float tickDelta) {
+    private void updateCameraMedium(Camera camera, Vec3 cameraPos, float viewDistanceStrength,
+                                    float lodFadeStrength, float tickDelta) {
         try {
             Minecraft client = Minecraft.getInstance();
             ClientLevel world = client != null ? client.level : null;
@@ -1330,7 +1361,7 @@ public class RemixRenderer {
             // until the next successful /rtx conf reload.
             if (confLayerDriver != null && confLayerDriver.isActive() && world != null) {
                 confLayerDriver.update(world, cameraPos, underwater,
-                        viewDistanceStrength, tickDelta, zoneRegistry);
+                        viewDistanceStrength, lodFadeStrength, tickDelta, zoneRegistry);
             }
             if (materialHandle != lastCameraMediumHandle) {
                 LOGGER.info("Camera medium updated: {}", materialHandle != 0 ? "water" : "clear");
@@ -1488,6 +1519,9 @@ public class RemixRenderer {
         if (chunkManager != null) {
             chunkManager.clear();
         }
+        if (lodTerrain != null) {
+            lodTerrain.reset();
+        }
         if (lightManager != null) {
             lightManager.clear();
         }
@@ -1507,6 +1541,8 @@ public class RemixRenderer {
         if (weatherRenderer != null) {
             weatherRenderer.cleanup();
         }
+        lensEffects.cleanup();
+        puddles.destroy();
         if (skyRenderer != null) {
             skyRenderer.cleanup();
         }
@@ -1553,6 +1589,9 @@ public class RemixRenderer {
         if (chunkManager != null) {
             chunkManager.destroy();
         }
+        if (lodTerrain != null) {
+            lodTerrain.destroy();
+        }
 
         // Retained entity meshes reference the block atlas and particle atlas
         // materials their managers own, so the submitter goes before both.
@@ -1568,6 +1607,7 @@ public class RemixRenderer {
             weatherRenderer.cleanup();
             weatherRenderer = null;
         }
+        lensEffects.cleanup();
         if (particleAtlasManager != null) {
             particleAtlasManager.cleanup();
             particleAtlasManager = null;
@@ -1647,6 +1687,10 @@ public class RemixRenderer {
         return chunkManager;
     }
 
+    public LodTerrain getLodTerrain() {
+        return lodTerrain;
+    }
+
     public ZoneRegistry getZoneRegistry() {
         return zoneRegistry;
     }
@@ -1671,6 +1715,10 @@ public class RemixRenderer {
 
     public RemixWeatherRenderer getWeatherRenderer() {
         return weatherRenderer;
+    }
+
+    public LensEffects getLensEffects() {
+        return lensEffects;
     }
     
     public PerformanceTimer getPerfTimer() {

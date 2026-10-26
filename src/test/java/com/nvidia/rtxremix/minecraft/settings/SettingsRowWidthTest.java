@@ -75,6 +75,7 @@ class SettingsRowWidthTest {
      */
     private static final Map<String, String> WIDEST_VALUE = Map.ofEntries(
             entry("rtxremix.setting.dist.autoFade", "OFF"),
+            entry("rtxremix.setting.dist.lod", "OFF"),
             entry("rtxremix.setting.dist.light", "Auto"),
             entry("rtxremix.setting.dist.entity", "Auto"),
             entry("rtxremix.setting.light.reach", "256"),
@@ -83,7 +84,27 @@ class SettingsRowWidthTest {
             entry("rtxremix.setting.sky.ambient", "OFF"),
             entry("rtxremix.setting.sky.haloFocus", "0.99"),
             entry("rtxremix.setting.sky.minimumCelestialWeatherVisibility", "1.00"),
-            entry("rtxremix.setting.clouds.procedural", "Procedural"),
+            entry("rtxremix.setting.sky.saturation", "2.00"),
+            entry("rtxremix.setting.sky.sunsetWarmth", "2.00"),
+            entry("rtxremix.setting.sky.sunGlare", "4.00"),
+            entry("rtxremix.setting.sky.rainbow", "3.00"),
+            entry("rtxremix.setting.sky.starBrightness", "5.00"),
+            entry("rtxremix.setting.sky.aerialHaze", "3.00"),
+            entry("rtxremix.setting.sky.cirrusCoverage", "1.00"),
+            entry("rtxremix.setting.sky.cirrusBrightness", "3.00"),
+            entry("rtxremix.setting.sky.aurora", "OFF"),
+            entry("rtxremix.setting.sky.auroraIntensity", "4.00"),
+            entry("rtxremix.setting.sky.auroraEverywhere", "OFF"),
+            entry("rtxremix.setting.clouds.style", "Reimagined"),
+            entry("rtxremix.setting.clouds.coverage", "1.00"),
+            entry("rtxremix.setting.clouds.secondLayer", "OFF"),
+            entry("rtxremix.setting.clouds.speed", "10.00"),
+            entry("rtxremix.setting.clouds.unboundThickness", "1000.00"),
+            entry("rtxremix.setting.clouds.unboundDensity", "3.00"),
+            entry("rtxremix.setting.clouds.unboundBrightness", "3.00"),
+            entry("rtxremix.setting.clouds.unboundDetail", "2.00"),
+            entry("rtxremix.setting.clouds.unboundRain", "1.00"),
+            entry("rtxremix.setting.clouds.unboundShadow", "1.00"),
             entry("rtxremix.setting.clouds.vanillaEdgeSmoothness", "1.99"),
             entry("rtxremix.setting.clouds.size", "2.00"),
             entry("rtxremix.setting.clouds.height", "-128.00"),
@@ -97,7 +118,9 @@ class SettingsRowWidthTest {
             entry("rtxremix.setting.post.shadows", "-5.00"),
             entry("rtxremix.setting.post.highlights", "10.00"),
             entry("rtxremix.setting.post.lowLightAdaptation", "-5.00"),
-            entry("rtxremix.setting.post.highLightAdaptation", "10.00"));
+            entry("rtxremix.setting.post.highLightAdaptation", "10.00"),
+            entry("rtxremix.setting.lens.depthOfField", "2.00"),
+            entry("rtxremix.setting.lens.flare", "2.00"));
 
     private final DefaultFont font = DefaultFont.load();
     private final Map<String, String> lang = loadLang();

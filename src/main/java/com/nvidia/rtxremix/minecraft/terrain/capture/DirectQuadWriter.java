@@ -45,8 +45,6 @@ public final class DirectQuadWriter {
     /** Quads one block may stage; past it the rest are dropped rather than grown into. */
     private static final int MAX_BLOCK_QUADS = 1 << 16;
     private static final float DECAL_NORMAL_DOT_EPSILON = 0.999f;
-    /** Bucket of the films over open water where raindrop rings show. */
-    public static final String RIPPLE_FILM_BUCKET = "rain_ripple";
     private static final float DECAL_PLANE_DISTANCE_EPSILON = 1.0E-3f;
     private static final float DECAL_OVERLAP_EPSILON = 1.0E-4f;
 
@@ -340,15 +338,6 @@ public final class DirectQuadWriter {
                                 : HardcodedVertex.packHalf2x16(su1, sv1);
 
         bb.writeQuad(positions, 0, uvs, 0, nx, ny, nz, color, boundsMin, boundsMax);
-    }
-
-    /**
-     * Writes an upward-facing rain film into {@code bucket}, in world-space UVs. Its opacity
-     * comes from its material's texture alone: the runtime ignores vertex alpha.
-     */
-    public void writeFilmQuad(String bucket, float[] positions, float[] uvs) {
-        getBucket(ChunkManager.CAT_SOLID, bucket).writeQuad(positions, 0, uvs, 0,
-                0f, 1f, 0f, 0xFFFFFFFF, HardcodedVertex.packHalf2x16(0, 0), HardcodedVertex.packHalf2x16(1, 1));
     }
 
     /**

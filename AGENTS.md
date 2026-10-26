@@ -4,12 +4,16 @@ Context for AI coding agents working in this repository.
 
 ## Project Overview
 
-`rtx-remix-minecraft` is a Fabric mod that renders Minecraft 1.21.1 through
+`rtx-remix-minecraft` is a Fabric mod that renders Minecraft 26.3 through
 NVIDIA RTX Remix. It captures terrain, entities, particles, sky, and clouds from
 the client and submits them to the Remix runtime as a path-traced scene. The
 Java facade and JNI bridge are tracked under `rtxremix-java/`; the native
 runtime and the Remix C API come from dxvk-remix. A change often spans all
 three layers.
+
+This branch (`26.3`) is a fork that ports the upstream 1.21.1 mod to Minecraft
+26.3 and adds its own rendering features. [PORTING.md](PORTING.md) (Japanese)
+records what the port changed and why, feature by feature.
 
 ## Source Of Truth
 
@@ -18,17 +22,28 @@ Prefer these sources in this order:
 1. source under `src/main/java/`
 2. `build.gradle`
 3. the Architecture section below
-4. `README.md` and the guides under `docs/`
+4. `PORTING.md`, `README.md` and the guides under `docs/`
+
+This file must describe the code as it is. When you find it disagreeing with the
+code, report the mismatch to the user and rewrite this file to the newer state
+in the same change; do the same for the guides under `docs/`. Never work around
+a stale sentence silently.
 
 There is deliberately no standalone architecture document. One existed and went
 stale faster than the code it described. Code standards and review expectations
 are in [CONTRIBUTING.md](CONTRIBUTING.md) and apply to agent-written code too. A
 subdirectory may carry its own `AGENTS.md`; read the nearest one as well.
 
+Mixin class names keep their 1.21.1 names so the fork diffs cleanly against
+upstream: `WorldRendererMixin` targets `LevelRenderer`, for example. Comments
+and guides use the 26.3 vanilla class names.
+
 ## Build, Run, Package, Test
 
-Java 21, Windows, and the C++ toolchain are required. Gradle fetches a missing
-Remix runtime automatically. [Getting Started](docs/GETTING_STARTED.md) covers local overrides.
+A JDK 25 (with `JAVA_HOME` set, since the native build reads `jni.h` from it),
+Windows, and the MSVC toolchain are required. Gradle fetches a missing Remix
+runtime automatically. [Getting Started](docs/GETTING_STARTED.md) covers local
+overrides.
 
 ```powershell
 .\gradlew.bat build
@@ -45,13 +60,20 @@ owns Minecraft: Java Edition. See
 [Getting Started](docs/GETTING_STARTED.md#sign-in-to-prism).
 
 `classes` depends on `setupRuntime`, which compiles the JNI bridge, fetches a
-missing runtime, and stages it, so even `test` needs the C++ toolchain.
-`build` leaves a lightweight JAR in `build/libs/`; `package` embeds
-the runtime and payload in `build/distributions/`. It verifies inclusion of
-every `packaging/licenses/` file and excludes Python interpreter and binding
-payloads. Staged and packaged contents must agree with `NativeExtractor`.
-See [Getting Started](docs/GETTING_STARTED.md) and
-[`build.gradle`](build.gradle) for the staging inventory.
+missing runtime, and stages it along with `rtx.conf`, the Packman runtime
+textures and the `rtx-remix/` conf payload, and migrates `run/` resource packs.
+Even `test` therefore needs the C++ toolchain, PowerShell and Packman access.
+`build` leaves a lightweight JAR in `build/libs/`; `package` embeds the runtime
+and payload in `build/distributions/`. It verifies inclusion of every
+`packaging/licenses/` file and every `packaging/rtx-remix/` file, and fails if
+the runtime payload contains a Python interpreter or bindings. Staged and
+packaged contents must agree with `NativeExtractor`. See
+[Getting Started](docs/GETTING_STARTED.md) and [`build.gradle`](build.gradle)
+for the staging inventory.
+
+Distant Horizons is an optional compile-only dependency (Modrinth Maven, never
+shipped). Its mixins live in a separate `rtx-remix-renderer.distanthorizons.mixins.json`
+that loads only when Distant Horizons is installed (`lod/dh/`).
 
 Do not run Gradle while a client from the same checkout is up: staging can fail
 on locked DLLs or replace its live configuration. Stop the client or use another
@@ -62,48 +84,67 @@ Keep the unconditional tuning arguments in `loom.runs.client.vmArgs` in
 `build.gradle` and `RECOMMENDED_JVM_ARGS` in `packaging/installer.ps1`
 identical, and when `RECOMMENDED_JVM_ARGS` changes, append its outgoing value to
 `PREVIOUS_RECOMMENDED_JVM_ARGS`. Opt-in benchmark and profiling arguments are
-excluded. See
-[JVM Arguments](docs/TUNING.md#jvm-arguments).
+excluded. See [JVM Arguments](docs/TUNING.md#jvm-arguments). The Fabric API
+version in `build.gradle` and `packaging/installer.ps1` must match too.
 
 ## Runtime And Install Model
 
 The mod needs the native runtime, not only Java code, and `NativeExtractor`
 unpacks the bundled payload on first launch, version or architecture change,
-or when `remix-sdk/` or its `d3d9.dll` is missing. Deleting
-`.rtx-remix-version` also forces full re-extraction. Full extraction replaces
-the mod-owned `remix-sdk/`, `rtx.conf`, and the shipped runtime textures in
-`textures/`, leaving anything else in that folder alone, so a JAR installed
-without the release installer is complete. With a matching marker and runtime
-present, launch restores a missing `rtx.conf`, a missing runtime texture, and
-any missing shipped files under `rtx-remix/` without replacing existing files. The `rtx-remix/` payload
-is author-owned: existing files, including edited confs, are never overwritten,
-even during full extraction. Deleting a shipped conf restores its default on
-the next launch. A present conf that fails to acquire still prevents renderer
-initialization; the error identifies the file.
+or when `remix-sdk/` or its `d3d9.dll` is missing. The version marker includes
+the build's timestamp and commit, so every new build extracts in full once.
+Deleting `.rtx-remix-version` also forces full re-extraction. Full extraction
+replaces the mod-owned `remix-sdk/`, `rtx.conf`, and the shipped runtime
+textures in `textures/`, leaving anything else in that folder alone, so a JAR
+installed without the release installer is complete. With a matching marker and
+runtime present, launch restores a missing `rtx.conf`, a missing runtime
+texture, and any missing shipped files under `rtx-remix/` without replacing
+existing files. The `rtx-remix/` payload is author-owned: existing files,
+including edited confs, are never overwritten by `NativeExtractor`, even during
+full extraction (`tools\rtx.bat install` does overwrite shipped payload files in
+a development instance). Deleting a shipped conf restores its default on the
+next launch. A missing or unacquirable `water.conf` prevents renderer
+initialization and the error names the file; any other conf that fails to
+acquire is skipped with a warning naming it, and `/rtx conf reload` retries it.
 
 Baseline LabPBR textures live in `src/main/resources/assets/` and load through
 Fabric's `fabric` resource pack below user packs. Development setup, `rtx install`,
 and the release installer use `packaging/migrate_resource_packs.ps1` to remove
 their exactly identified legacy baseline copies and migrate existing pack order.
+`assets/minecraft/atlases/blocks.json` and `items.json` filter LabPBR `_n`, `_s`
+and `_sss` sprites out of vanilla's atlases; the mod reads those maps from the
+resources directly (`PbrAtlasFilterTest`).
 
 ## Architecture
 
 **Orchestration.** `RtxRemixMod` is the Fabric entrypoint: lifecycle hooks, key
 bindings, and the `/rtx` command tree. `RemixRenderer` is the render thread's
-bridge into Remix and owns the frame. Sky textures are generated and published
-on the render thread, branched on the dimension's sky type: the End
-keeps a constant dark dome and a skyless dimension a black one with no sky
-ambient. Thread-safe stores wrap Remix-side meshes, instances, textures,
-materials, and lights over raw `long` handles from the JNI wrapper.
-`JoinBurstHold` keeps vanilla's terrain-download screen up for a bounded wait
-for stable frames after a world join, hiding first-sight mesh, pipeline, and
-BLAS costs without holding the screen indefinitely.
+bridge into Remix and owns the frame. Minecraft 26.3 renders a level in two
+halves, extraction into render states and submission to a
+`SubmitNodeCollector`; Remix captures from the extracted states and replaces
+the submits it renders itself (see
+[Cancelling Vanilla Render Work](CONTRIBUTING.md#cancelling-vanilla-render-work)).
+Thread-safe stores wrap Remix-side meshes, instances, textures, materials, and
+lights over raw `long` handles from the JNI wrapper. `JoinBurstHold` keeps
+vanilla's terrain-download screen up for a bounded wait for stable frames after
+a world join, hiding first-sight mesh, pipeline, and BLAS costs without holding
+the screen indefinitely.
+
+**Sky.** `SkyRenderer` branches on the dimension's sky type: the End keeps a
+constant dark dome and a skyless dimension a black one with no sky ambient. In
+the Overworld, `AtmosphericSkyGenerator` computes the atmosphere with compute
+shaders (`sky_atmosphere.comp`) into the texture of a Remix dome light, with the
+sun's disc painted in as a spread splat (`LightManager.SUN_DISC_GAIN`) so that
+reflections, which read the dome texture, glint; the distant sun light gives up
+the same share. `SkyLayers` draws cirrus and aurora, `SkyRenderer` the stars and celestial bodies; `SkyLook` holds the
+sky appearance settings.
 
 **Overlay input.** `RemixInputGate` owns the Minecraft-side capture session for
-the Remix overlays; `KeyboardMixin` and `MouseMixin` route GLFW input through
-it. Capture follows whether a native menu is shown, which `rtx.showUI` records:
-`GameRendererMixin` has the gate read it through `GetConfigVariableResolved` at
-the start of every frame. The mod opens and closes menus by writing it, and the
+the Remix overlays; `KeyboardMixin` and `MouseMixin` route SDL input events
+through it. Capture follows whether a native menu is shown, which `rtx.showUI`
+records: `GameRendererMixin` has the gate read it through
+`GetConfigVariableResolved` at the head of `GameRenderer.extract`, before the
+frame's GUI is extracted. The mod opens and closes menus by writing it, and the
 menus' own close and switch controls, the runtime's menu hotkey, and its First
 Use Guide change it too. Alt+X without Control toggles the developer menu over
 gameplay or a screen. The only other open command in the mod is the RTX Remix
@@ -125,74 +166,128 @@ runtime binding on a chord Windows cannot deliver.
 **Camera paths.** A time-aware shape-preserving cubic Hermite path over
 nonuniform waypoint times with shortest-route unwrapped yaw, a strict version 1
 JSON codec, and world-scoped storage. Playback applies each pose at the
-pre-`GameRenderer` hook. The default clock follows wall time; the fixed-60 clock
-advances one deterministic sample per rendered frame, which benchmarks reuse
-with their own frame index. `docs/CAMERA_PATHS.md` is the canonical guide.
+pre-`GameRenderer` hook. The default clock follows wall time with bounded stall
+smoothing (`PresentationClock`); the fixed-60 clock (`FixedStepClock`) advances
+one deterministic sample per rendered frame, which benchmarks reuse with their
+own frame index. Still shots for the screenshot tool use their own codec
+(`StillShotCodec`, version 2 adds the cloud style, version 1 still reads).
+`docs/CAMERA_PATHS.md` is the canonical guide.
 
-**Gameplay-driven conf layers.** Option layers come from a mod root shipping
-archetypes, acquired at init, and a world root inside a save supplying zone and
-biome profiles, acquired on join. A world layer sits just above its mod
-counterpart, so a map overrides per option rather than replacing an archetype,
-and it needs the integrated server, so it is single-player only. Profiles
-resolve above `rtx.conf` and below user settings and quality presets.
+**Gameplay-driven conf layers.** `ConfLayerDriver` fades a fixed table of mod
+layers (water, view distance and its LOD extension, volumetric settling, rain,
+thunder, and four times of day) by gameplay state. Option layers come from a mod
+root shipping archetypes, acquired at init, and a world root inside a save
+supplying zone and biome profiles, acquired on join. A world layer sits just
+above its mod counterpart, so a map overrides per option rather than replacing
+an archetype, and it needs the integrated server, so it is single-player only.
+Profiles resolve above `rtx.conf` and below user settings and quality presets.
+`ViewDistanceFade` sets the view-distance fade from Minecraft's render distance,
+or from the LOD radius while LOD terrain draws.
 
-**Procedural clouds.** Cloud identity and motion are stateless functions of cell
+**Clouds.** Four styles (`CloudStyle`). Classic (the default) voxelizes
+vanilla's cloud texture with vanilla's world-time period and phase. Procedural
+draws puffy meshes: identity and motion are stateless functions of cell
 coordinates and synchronized world time, so clients reconstruct the same clouds
-with no network state. One worker builds the mesh palette lazily, the render
+with no network state; one worker builds the mesh palette lazily, the render
 thread uploads one mesh per frame, and each visible cloud submits one palette
-mesh with one transform. Choosing the Classic cloud style switches to vanilla
-texture partitions that keep vanilla's cloud period and phase.
+mesh with one transform. Reimagined uses the texture-chunk path over a generated
+mask (`ReimaginedCloudMask`) in one or two thick layers. Unbound is not drawn by
+`CloudRenderer`: `sky/VolumetricClouds` ray-marches three cloud layers (small
+and large cumulus, altostratus) and the cirrus on the GPU
+(`volumetric_clouds.comp`) into a panorama shown on a dome in the sky category,
+and dims the sun's distant light while a cloud covers it. On screen the lens
+draws them per pixel instead (see Lens); the dome stays as what the lens
+replaces and for the sun's occlusion. The density field, lighting and march
+live once in `cloud_field.glsl`, which both include (`CloudField`).
 
 **Terrain.** Minecraft workers build section meshes, a low-concurrency executor
 merges them into chunk-column assets split into byte-capped pages per category,
 and the render thread publishes them under a frame budget and retires replaced
 pages through a bounded queue. Concurrent vanilla section builds are capped.
-Visibility rebuilds use a low-priority executor and produce a coarse frustum
-index that survives chunk slots being re-originned by replaying a render-thread
-move log. While capture is on, integrated-server chunk delivery and chunk
-unloads are paced by measured render-thread cost under separate budgets, with
-chunk caps on delivery and a ring-edge bypass for unloads
-(`LocalChunkBatchPacing`, `PacedUnloadQueue`, `ChunkDataSenderMixin`); a
-chunk-load neighbour re-flag is dropped if the
-neighbour's last build already saw the loading column (`NeighbourReflagFilter`);
-the client light engine publishes its live section map as its snapshot
-(`ClientLightSnapshotPolicy`, `LightStorageMixin`) while the integrated server's
-engines, which have real readers on other threads, publish an immutable layered
-view instead of vanilla's whole-map clone (`ServerLightSnapshot`); and the
-client's sky-light surface walk is seeded at the packet's `WORLD_SURFACE`
-height (`SeededSurfaceScan`, `SkyLightSurfaceScanPolicy`). `VanillaSectionBuilds`
+Visibility is vanilla's `SectionOcclusionGraph`; the 1.21.1 allocation-free
+walk and coarse frustum index were not ported. While capture is on,
+integrated-server chunk delivery and chunk unloads are paced by measured
+render-thread cost under separate budgets, with chunk caps on delivery and a
+ring-edge bypass for unloads (`LocalChunkBatchPacing`, `PacedUnloadQueue`,
+`ChunkDataSenderMixin`); the client light engine publishes its live section map
+as its snapshot (`ClientLightSnapshotPolicy`, `LightStorageMixin`) while the
+integrated server's engines, which have real readers on other threads, publish
+an immutable layered view instead of vanilla's whole-map clone
+(`ServerLightSnapshot`); and the client's sky-light surface walk is seeded at
+the packet's `WORLD_SURFACE` height (`SeededSurfaceScan`,
+`SkyLightSurfaceScanPolicy`), with capture on or off. `VanillaSectionBuilds`
 keeps real copies until every build that latched capture off has finished.
-Each policy has a `rtxremix.*` kill switch listed in `docs/TUNING.md`.
+Each policy has a `rtxremix.*` kill switch listed in `docs/TUNING.md`;
+`rtxremix.light.vanillaSnapshot` covers both light snapshot policies.
+
+**LOD terrain.** With Distant Horizons 3.3.4 installed, `lod/LodTerrain` builds
+its far terrain as retained Remix instances beyond Minecraft's own terrain: the
+LOD mod decides which sections exist and which are drawn, one low-priority
+thread builds each section's mesh against the current clip (Minecraft's terrain
+is clipped two chunks inside its render distance), and the render thread
+installs them under a frame budget and a 2 GiB budget of mesh data.
 
 **Allocation.** The collector's concurrent work is what stretches frames at
 high render distance, so the hot vanilla paths that run per section or per
-frame are ported allocation-free and kept that way: the chunk visibility walk
-and its far-section probe (`ChunkRenderingDataPreparerMixin`,
-`terrain/visibility/`), block model variant and part selection
-(`WeightedBakedModelMixin`, `MultipartBakedModelMixin`), biome colour blending,
-and the integrated server's per-tick chunk list. Retained section meshes live
-in C-allocated direct buffers outside the JDK's direct-memory budget
-(`SectionMeshData`, `DirectBufferPool`) and render-region snapshots in pooled
-heap arrays (`RenderRegionStoragePool`), both under explicit reference counts:
-the creator's reference travels worker, `BlockDataQueue`, `TerrainState`
-entry; a column build retains each snapshot before submission and releases in
-its executor task's `finally`; the last release returns the buffers and makes
-the surfaces unreadable while the cached hashes stay readable for diffing.
+frame are ported allocation-free and kept that way: biome colour blending
+(`ClientWorldColorMixin`, `BiomeMixin`, `BiomeColorGeneration`). Retained
+section meshes live in C-allocated direct buffers outside the JDK's
+direct-memory budget (`SectionMeshData`, `DirectBufferPool`) and render-region
+section snapshots (`SectionCopy`, through `SectionCopyMixin`) in pooled heap
+arrays (`RenderRegionStoragePool`), both under explicit reference counts: the
+creator's reference travels worker, `BlockDataQueue`, `TerrainState` entry; a
+column build retains each snapshot before submission and releases in its
+executor task's `finally`; the last release returns the buffers and makes the
+surfaces unreadable while the cached hashes stay readable for diffing.
 
 **Textures and atlases.** Atlas capture produces per-sprite materials plus
-atlas-level PBR, emissive, and luminance textures. Animated sprite uploads are
-batched and forwarded, which needs the upload hook, the patch types in the
-wrapper, and runtime support for updating a texture from memory. Glyph pages are
-mirrored on upload, because vanilla assembles them on the GPU and never keeps
-them on the CPU.
+atlas-level PBR, emissive, and luminance textures. Every atlas is stitched
+without a sprite border (`StitcherMixin`, `AtlasPadding`,
+`-Drtxremix.atlas.vanillaPadding` restores vanilla's): the runtime mips the
+whole atlas by halving it, and with no border the stitcher puts power-of-two
+sprites on multiples of their own size, so no mip blends a sprite with its
+neighbour (`AtlasSprites.offGrid` counts the exceptions in the block atlas log
+line). Vanilla animates sprites on the GPU, so `SpriteAtlasTextureMixin` reads
+each animation's state after `TextureAtlas.cycleAnimationFrames` and
+`AtlasAnimationForwarder` rebuilds the frames on the CPU, LabPBR channels in
+phase, and sends them in one batched `UpdateTextureFromMemory` call. Glyph pages
+are mirrored on upload (`CommandEncoderGlyphMirrorMixin`,
+`BitmapGlyphStagingMixin`), because vanilla assembles them on the GPU and never
+keeps them on the CPU. `BlockTextureManager` keeps only mostly translucent
+sprites translucent; doors, flowers and the like become cutout.
+
+**Water and weather.** `WaterNormals` holds the water normal map, and raindrop
+rings from `RainRipples` are written into it as texture content each frame by
+`RainSurfaces` (`-Drtxremix.rain.ripples=false` turns them off). `Puddles` and
+`PuddleMask` lay thin clear-water sheets on open ground in the rain.
+`RemixWeatherRenderer` redraws vanilla's rain and snow over the Remix image,
+occluded through the interop depth texture; rain refracts a copy of the main
+target as the lens left it, since it draws opaquely. Vanilla's own weather and
+cloud draws are skipped.
+
+**Lens.** `lens/LensEffects` is a GL pass after the Remix composite and before
+the weather: depth of field focused on what the crosshair rests on, flares from
+the sun and the brightest drawn lights (`FlareSources`; the terrain light loop
+and the first-person flame offer them, and the list is cleared after the lens
+draws), aerial haze toward the horizon's sky colour, thickened by rain, and the
+Unbound clouds. It works on the runtime's tone-mapped image and the interop
+depth, which is not antialiased, so haze and clouds treat a sky pixel beside
+the land as land. The clouds are marched at half resolution for every pixel,
+between the camera and the land or through the whole sky, and folded into a
+history reprojected by the camera's motion. Their light is brought to the
+image's exposure by comparing the dome's opaque clouds on screen with the
+panorama, per brightness band; over the sky the dome's own clouds are taken
+back out of the image using the panorama the dome shows
+(`VolumetricCloudGenerator.shownPanoramaTexture`) and the sky behind them.
 
 **Particles.** Slot preparation and CPU mesh snapshots run on a dedicated worker
 and are double buffered: the render thread publishes the previous frame's
 payload at the top of the frame and joins the worker after submit, so particles
-trail the scene by exactly one frame. Vanilla particle colours are lightmap
-tints, not albedos, and the runtime lights a blended particle from the radiance
-cache with no self-shadowing, so `ParticleTint` draws soot near-black to keep
-smoke dark over a lit floor.
+trail the scene by exactly one frame. Only `SINGLE_QUADS` particles are
+captured; item-atlas particles are alpha-tested. Vanilla particle colours are
+lightmap tints, not albedos, and the runtime lights a blended particle from the
+radiance cache with no self-shadowing, so `ParticleTint` draws soot near-black
+to keep smoke dark over a lit floor.
 
 **Entities.** Entities and block entities that vanilla already draws are
 captured in place, so a model is evaluated once rather than once for OpenGL and
@@ -201,26 +296,34 @@ under a budget, because a path tracer needs them for shadows and reflections,
 and an entity that owns a Remix light this frame is swept at any distance so
 its light never arrives without its housing. Rigid occurrences retain instances
 keyed by owner, category, layer, and part; strips and beams stream transient
-meshes per frame. `RemixBlockDamagePass` submits static terrain damage decals.
-`CopperBeaconBlockEntityRenderer` submits the articulated beacon model; the
-mount stays in terrain. `CopperBeaconPose` is shared with the per-frame disk
+meshes per frame. `OverlayComposite` paints cutout overlay layers, such as a
+villager's profession or a sheep's wool, into a copy of the body texture so they
+do not render black. `RemixBlockDamagePass` submits static terrain damage
+decals. `CopperBeaconBlockEntityRenderer` submits the articulated beacon model;
+the mount stays in terrain. `CopperBeaconPose` is shared with the per-frame disk
 light. Server-authoritative block-entity state owns the axis parameters and
 anchor tick; clients reconstruct motion from those and synchronized world time.
 
 **Lights.** Block lights are created, updated, and destroyed on the render
-thread under their own budget, from resource-pack rules keyed by block state. A
+thread under their own budget, from resource-pack rules keyed by block state.
+Changing the block-light multipliers updates existing lights in place over a few
+frames (`ChunkManager.refreshBlockLightIntensities`); terrain is not rebuilt. A
 hand-held item whose placed block shows a lit particle gets the same element in
-hand, emitted once the item's pose is on the matrix stack, so first person, the
-hidden shadow model, and other players share one hook. `HeldLightState` is the
-one decision on whether a held item's lit element is burning: the local
-player's Toggle Held Lights key puts out everything in their own hands, and by
-default an open flame goes out for any holder whose eyes are under water.
+hand, emitted once the item's pose is on the matrix stack
+(`ItemLayerRenderStateMixin`), so first person, the hidden shadow model, and
+other players share one hook. `HeldLightState` is the one decision on whether a
+held item's lit element is burning: the local player's Toggle Held Lights key
+puts out everything in their own hands, and by default an open flame goes out
+for any holder whose eyes are under water. When the time of day jumps by more
+than a hundredth of a day in one frame, `LightManager` clears the runtime's
+radiance cache (`rtx.spatiallyHashedRadianceCache.resetHistory`), which would
+otherwise keep the old light for half a minute where few paths refresh it.
 
 Terrain block lights are per-frame draws, not retained instances: every frame
 `ChunkManager.draw` submits each surviving `TerrainLight` (the `RemixLight`
-plus its position, power, and last drawn frame), so not drawing a light is a
-complete cull. Culling applies the column Chebyshev box and the section
-connectivity flood in `TerrainState`, then a power-aware reach test with
+plus its position, power, rule output, and last drawn frame), so not drawing a
+light is a complete cull. Culling applies the column Chebyshev box and the
+section connectivity flood in `TerrainState`, then a power-aware reach test with
 hysteresis. A light cull distance of 0 means Auto: `ChunkManager` resolves it,
 and any explicit value, against Minecraft's render distance and pushes the
 radius into `TerrainState` only on change, so `TerrainState` is always finite.
@@ -236,11 +339,11 @@ diluting the sampler's candidate pool.
   workers hand over CPU data through bounded, generation-tagged queues
   (`BlockDataQueue`, `ChunkManager`).
 - A retained instance is submitted where it is created or mutated, never once
-  per frame (`ChunkManager`, `RemixEntitySubmitter`).
+  per frame (`ChunkManager`, `RemixEntitySubmitter`, `LodTerrain`).
 - A prepared particle payload holds world-space vertices and a live bucket, so
   every path that suspends or tears down rendering discards it rather than
   publishing it, including a world swap that keeps the connection alive
-  (`RemixParticleRenderer`).
+  (`RemixRenderer`).
 - A coplanar decal stack, such as a banner's pattern layers, is one mesh in
   paint order, because Remix orders coplanar decals by primitive index rather
   than by depth; text turns draw order into depth the same way
@@ -249,19 +352,24 @@ diluting the sampler's candidate pool.
   because the volumetric grid reuses the previous frame's radiance and a
   camera-locked emitter would smear into distant geometry (`LightManager`).
 - Ordinary classes must not live in the mixin package (`MixinPackageBoundaryTest`).
-- A mixin that cancels vanilla work replays the GL, fog, and framebuffer state
-  its target would have set (`WorldRendererMixin`).
-- Never cancel `WorldRenderer.render()` itself or return early past
-  `setupTerrain`. Remix is hosted inside vanilla's traversal and captures its
-  sub-passes in place. Cancel only replaced draws and preserve their net state
-  changes; see [Cancelling Vanilla Render Work](CONTRIBUTING.md#cancelling-vanilla-render-work).
+- A mixin that skips vanilla render work skips a whole draw or submit, never
+  part of a `RenderPass`'s setup: pipelines carry their own state, so nothing
+  needs replaying, but a half-skipped pass leaves uniforms and samplers half set
+  (`ChunkSectionsToRenderMixin`, `WorldRendererMixin`). Raw GL calls outside
+  renderpearl save and restore what they change.
+- Never cancel `LevelRenderer.render()` or `LevelExtractor.extract()`. Remix is
+  hosted inside vanilla's frame and captures entities and block entities at
+  their submit points; skip submits, never extraction. See
+  [Cancelling Vanilla Render Work](CONTRIBUTING.md#cancelling-vanilla-render-work).
 - A terrain recapture must clear Remix terrain, reload vanilla terrain, and
   explicitly queue the previous built set. Snapshot `builtSections` before
-  `WorldRenderer.reload()` forgets it, then call `recaptureTerrainForRemix`.
-  `RtxRemixMod.rebuildLoadedTerrain()` owns this sequence. Commit settings once
-  per transaction, never once per slider step.
+  `LevelExtractor.allChanged()` forgets it, then call `recaptureTerrainForRemix`,
+  which queues the set for vanilla's next view-area rebuild.
+  `RtxRemixMod.rebuildLoadedTerrain()` owns this sequence. A setting that only
+  changes light radiance uses `refreshBlockLightIntensities()` instead. Commit
+  settings once per transaction, never once per slider step.
 - Schedule world-transition work through `client.execute`, not a flag drained
-  by a world-render hook: those hooks stop when `client.world` is null, so the
+  by a world-render hook: those hooks stop when `client.level` is null, so the
   clear would land in the next world's initialization. Re-check the session
   after an executor hop.
 - `JOIN` and `DISCONNECT` are not paired across server reconfiguration. A join
@@ -270,16 +378,13 @@ diluting the sampler's candidate pool.
   calls with additional `System.nanoTime` reads. Reuse `ProfileScope`, the
   loop's deadline read, and clock-free `TerrainNativeCallStats` tallies.
   Avoid per-block/per-quad capture allocation and per-frame render allocation.
-- Terrain capture has one path; the pre-`SectionMeshData` paths are gone
-  (`SectionBuilderMixin`).
+- Vanilla section capture has one path (`SectionBuilderMixin`); LOD-mod terrain
+  is a separate source (`LodTerrain`).
 - Every retained `SectionMeshData` or render-region reference is released
   exactly once: `SectionMeshData` rejects an over-release, `DirectBufferPool`
   ignores a buffer that is already idle, and `RenderRegionStoragePool` relies
   on its callers' counts (`SectionMeshData`, `DirectBufferPool`,
   `RenderRegionStoragePool`).
-- The visibility walk port produces vanilla's visible set exactly;
-  `-Drtxremix.vanillaVisibilityWalk` and `-Drtxremix.logVisibleSet` are how to
-  prove it on a live world (`ChunkRenderingDataPreparerMixin`, `FarChunkProbeTest`).
 - A queued chunk unload is cancelled by the column's re-send, and a queued
   column that reaches the client ring's edge is sent at once regardless of
   budget (`PacedUnloadQueue`).
@@ -304,9 +409,9 @@ diluting the sampler's candidate pool.
   `CommandLineRedaction`).
 - Vanilla's shared worker pool and section-builder concurrency stay capped
   (`WorkerPoolCap`, `SectionBuildConcurrency`).
-- Nothing but the render thread reads client light (`World.getLightLevel`,
-  `LightingProvider.get`) while capture is on: the published snapshot is then
-  the engine's live map (`ClientLightSnapshotPolicy`, `LightStorageMixin`).
+- Nothing but the render thread reads client light (`Level.getBrightness`,
+  `LevelLightEngine`) while capture is on: the published snapshot is then the
+  engine's live map (`ClientLightSnapshotPolicy`, `LightStorageMixin`).
 - There is one overlay toggle path. `RemixInputGate` alone owns the capture
   session. Every open request goes through `RtxRemixMod.openRemixMenu`, and
   every menu the runtime shows or hides reaches the gate through
@@ -330,6 +435,14 @@ diluting the sampler's candidate pool.
   Their rule-id sets are validated during resource reload, not just unit tests.
 - Run entity capture on the render thread. Vanilla shares mutable renderer and
   model instances; gathering entities in parallel races on their part angles.
+- Atlases are stitched without sprite borders; a wider border to fight mip
+  bleeding costs atlas area fourfold for 128-texel packs (`AtlasPadding`).
+- The Unbound clouds' density, lighting and march are written once, in
+  `cloud_field.glsl`; the dome's march and the lens's per-pixel march include
+  it, so the clouds on screen and the panorama they replace agree
+  (`CloudField`, `VolumetricCloudGenerator`, `LensEffects`).
+- Anything drawn after the lens reads the main target, never the runtime's raw
+  image, or it undoes the lens where it draws (`RemixWeatherRenderer`).
 - The developer tools launch only through a signed-in Prism; they never pass
   Prism's `--offline` or launch `runClient` (`test_public_boundary.py`).
 
@@ -344,6 +457,8 @@ diluting the sampler's candidate pool.
 - [Getting Started](docs/GETTING_STARTED.md): runtime staging, initialization
   failures, debug views, and worktree setup. Debug-view indices belong to the
   matching dxvk-remix source, not this repository.
+- [PORTING.md](PORTING.md): what the 26.3 port changed, the fork's own
+  features, and what the runtime was found to do (Japanese).
 
 ## Integrated JNI Wrapper
 
@@ -352,13 +467,16 @@ RTX Remix C API. It must never import `net.minecraft` or `net.fabricmc`;
 `RemixJavaBoundaryTest.shimSourcesDoNotImportMinecraftOrFabric` enforces this
 boundary across `rtxremix-java/src/`. Keep game-state capture and Fabric
 integration in the mod, not in the shim. Wrapper and affected mod callers
-change in the same pull request.
+change in the same pull request. This fork has not changed the wrapper since
+the upstream import; its features reuse the existing batched
+`updateTextureFromMemory`, config-variable and config-layer entry points.
 
 The wrapper's source of truth, in order, is:
 
 1. `rtxremix-java/src/com/nvidia/rtxremix/`: `RemixAPI.java` is the facade,
    `RemixBridge.java` declares static JNI entry points, and the other API types
-   are data holders, builders, constants, and handles.
+   are data holders, builders, constants, handles, and small utilities such as
+   `CommandLineRedaction`.
 2. `rtxremix-java/native/remixbridge.cpp`: loads `d3d9.dll`, calls
    `remixapi_InitializeLibrary`, stores the native interface, and forwards calls.
 3. `rtxremix-java/native/include/remix_c.h`: the copied C API header.
@@ -369,17 +487,18 @@ The wrapper's source of truth, in order, is:
 The root Gradle build compiles the Java sources directly and builds
 `remixbridge.dll` into `build/native/{win64|arm64}/`. There is no separate
 wrapper Java build or example launcher. The native build needs Visual Studio
-C++ tools and `JAVA_HOME` pointing to a 64-bit JDK 21. It uses the
+C++ tools and `JAVA_HOME` pointing to a 64-bit JDK 25. It uses the
 copied header unless `REMIX_INCLUDE` explicitly selects another directory.
 The supported targets are Windows x64 and ARM64; agent shells may be POSIX
 even though the Gradle wrapper and native compiler entry points are batch scripts.
 
 Runtime payloads live in `remix-runtime/{win64|arm64}/`, outside `build/` so
-Gradle `clean` cannot traverse Packman junctions into the shared package cache.
-The runtime textures' junction, `remix-runtime/textures/`, sits beside them.
-Treat these junctions as read-only, and keep every Packman link under
+Gradle `clean` cannot traverse Packman links into the shared package cache.
+The runtime textures' link, `remix-runtime/textures/`, sits beside them. Packman
+makes these links as junctions or directory symlinks depending on the machine.
+Treat them as read-only, and keep every Packman link under
 `remix-runtime/`, which git has never tracked: a checkout of a commit that
-tracks files under a junction writes and deletes them in the shared cache. Staging and packaging combine the selected
+tracks files under a link writes and deletes them in the shared cache. Staging and packaging combine the selected
 SDK with the separately built bridge; never write the bridge into a
 Packman-managed directory. The SDK contains `d3d9.dll`, dependent runtime DLLs,
 and USD plugin payload under `usd/`. SDK payloads and bridge outputs stay
@@ -391,15 +510,18 @@ are left alone. Run source-management commands from the repository root:
 
 - `tools\rtx.bat sdk status --arch {win64|arm64}` reports the staged source and
   local-copy freshness without changing it.
-- `tools\rtx.bat sdk local --arch {win64|arm64} --path <path>` replaces the
-  selected junction with a snapshot copy and writes `.local-sdk-source`.
+- `tools\rtx.bat sdk local --arch {win64|arm64} [PATH | --path <path>]` replaces
+  the selected link with a snapshot copy and writes `.local-sdk-source`.
   Without a path, it reuses the sentinel's source, then `sdk.localPath` from
   ignored `tools/config.local.json`, then `../dxvk-remix/_output`. Relative
   paths start at the repository root. Worktrees can set that local default
-  once or pass `--path`. `sdk restage` refreshes the recorded snapshot.
+  once or pass a path. `sdk restage` refreshes the recorded snapshot, and
+  `sdk auto-restage [on|off]` controls whether launch re-stages a changed local
+  build (on by default).
 - `tools\rtx.bat sdk packman --arch {win64|arm64|all}` clears local staging
   and restores the pinned runtime. It is a no-op on the pinned version unless
   `--force` is passed.
+- `tools\rtx.bat sdk tracy-tools` fetches the pinned Tracy tools.
 - Bridge-only builds use `gradlew.bat compileNativeWin64 compileNativeArm64`,
   or `rtxremix-java/native/build_native.bat x64` or `arm64`.
 
@@ -448,9 +570,11 @@ ahead of it.
 
 ## Tests
 
-`TerrainStateTest` is the entry point for the JVM-side chunk-pipeline tests.
+JVM tests live under `src/test/java/` and `gradlew.bat test` runs them all;
+`TerrainStateTest` and its `terrain/` neighbours cover the chunk pipeline.
 The suite does not cross the JNI boundary or render, so a rendering change is
-verified by launching with `tools\rtx.bat launch` and looking.
+verified by launching with `tools\rtx.bat launch` and looking, or with the
+screenshot tool's shot sets (`tools\rtx.bat screenshots refresh`).
 
 Python tooling uses `tools\rtx.bat check --tests` for its test suite.
 Its shared defaults pin the demo world and art pack without selecting a

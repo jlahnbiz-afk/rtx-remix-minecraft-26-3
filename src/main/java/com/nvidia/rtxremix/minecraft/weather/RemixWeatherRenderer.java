@@ -145,6 +145,12 @@ public final class RemixWeatherRenderer {
                 return clip.xy / safeW * 0.5 + 0.5;
             }
 
+            // The image behind the rain, a copy of the main target as the lens left it, read in
+            // the runtime's top-to-bottom screen coordinates the rest of this shader uses.
+            vec3 background(vec2 uv) {
+                return texture(Sampler1, vec2(uv.x, 1.0 - uv.y)).rgb;
+            }
+
             float screenFade(vec2 uv) {
                 vec2 edgeDistance = min(uv, vec2(1.0) - uv);
                 return smoothstep(0.0, 0.04, min(edgeDistance.x, edgeDistance.y));
@@ -208,17 +214,15 @@ public final class RemixWeatherRenderer {
                     vec2(0.0),
                     vec2(1.0));
 
-                vec3 sourceColor = texture(Sampler1, sourceUv).rgb;
-                vec3 refractedColor = texture(Sampler1, refractedUv).rgb;
+                vec3 sourceColor = background(sourceUv);
+                vec3 refractedColor = background(refractedUv);
 
                 vec3 reflectedDirection = reflect(incident, lensNormal);
                 vec2 reflectedUv = projectedUv(reflectedDirection);
                 reflectedUv.y = 1.0 - reflectedUv.y;
                 float reflectionValidity = step(reflectedDirection.z, -0.01)
                     * screenFade(reflectedUv);
-                vec3 reflectedColor = texture(
-                    Sampler1,
-                    clamp(reflectedUv, vec2(0.0), vec2(1.0))).rgb;
+                vec3 reflectedColor = background(clamp(reflectedUv, vec2(0.0), vec2(1.0)));
                 reflectedColor = mix(sourceColor, reflectedColor, reflectionValidity);
 
                 vec3 rainTint = vec3(0.76, 0.86, 1.0);
@@ -259,6 +263,15 @@ public final class RemixWeatherRenderer {
     private int indexBufferQuads;
     private int vertexArray;
     private int framebuffer;
+    /**
+     * A copy of the main target as the lens left it, which rain refracts and reflects: the
+     * rain draws opaquely over the target, so reading the runtime's raw image instead would
+     * take back the lens's haze, clouds and depth of field wherever it falls.
+     */
+    private int backgroundTexture;
+    private int backgroundFramebuffer;
+    private int backgroundWidth;
+    private int backgroundHeight;
     private int weatherSampler;
     private int colorSampler;
     private int depthSampler;
@@ -299,8 +312,9 @@ public final class RemixWeatherRenderer {
     }
 
     /**
-     * Draws the captured weather over the main render target, which the composite has
-     * just filled with {@code finalColorTexture}. A frame draws its weather once.
+     * Draws the captured weather over the main render target, which the composite has just
+     * filled from {@code finalColorTexture} and the lens has drawn over. A frame draws its
+     * weather once.
      */
     public void render(int finalColorTexture, int depthTexture) {
         int rain = rainQuads;
@@ -372,7 +386,10 @@ public final class RemixWeatherRenderer {
                     GL45C.GL_SRC_ALPHA, GL45C.GL_ONE_MINUS_SRC_ALPHA, GL45C.GL_ONE, GL45C.GL_ZERO);
             GlStateManager._blendEquationSeparate(GL45C.GL_FUNC_ADD, GL45C.GL_FUNC_ADD);
 
-            bindTexture(UNIT_REMIX_COLOR, finalColorTexture, colorSampler);
+            if (rain > 0) {
+                copyBackground(mainTarget.width, mainTarget.height);
+            }
+            bindTexture(UNIT_REMIX_COLOR, rain > 0 ? backgroundTexture : finalColorTexture, colorSampler);
             bindTexture(UNIT_LIGHTMAP, lightmap, colorSampler);
             bindTexture(UNIT_REMIX_DEPTH, depthTexture, depthSampler);
             GL45C.glBindVertexArray(vertexArray);
@@ -403,6 +420,25 @@ public final class RemixWeatherRenderer {
         }
     }
 
+    /** Copies the main target, attached to {@link #framebuffer}, into {@link #backgroundTexture}. */
+    private void copyBackground(int width, int height) {
+        if (backgroundTexture == 0 || width != backgroundWidth || height != backgroundHeight) {
+            if (backgroundTexture != 0) {
+                GL45C.glDeleteTextures(backgroundTexture);
+            }
+            if (backgroundFramebuffer == 0) {
+                backgroundFramebuffer = GL45C.glCreateFramebuffers();
+            }
+            backgroundTexture = GL45C.glCreateTextures(GL45C.GL_TEXTURE_2D);
+            GL45C.glTextureStorage2D(backgroundTexture, 1, GL45C.GL_RGBA8, width, height);
+            GL45C.glNamedFramebufferTexture(backgroundFramebuffer, GL45C.GL_COLOR_ATTACHMENT0, backgroundTexture, 0);
+            backgroundWidth = width;
+            backgroundHeight = height;
+        }
+        GL45C.glBlitNamedFramebuffer(framebuffer, backgroundFramebuffer, 0, 0, width, height, 0, 0, width, height,
+                GL45C.GL_COLOR_BUFFER_BIT, GL45C.GL_NEAREST);
+    }
+
     public int getLastDrawCount() {
         return lastDrawCount;
     }
@@ -425,6 +461,9 @@ public final class RemixWeatherRenderer {
         if (vertexBuffer != 0) GL45C.glDeleteBuffers(vertexBuffer);
         if (indexBuffer != 0) GL45C.glDeleteBuffers(indexBuffer);
         if (framebuffer != 0) GL45C.glDeleteFramebuffers(framebuffer);
+        if (backgroundFramebuffer != 0) GL45C.glDeleteFramebuffers(backgroundFramebuffer);
+        if (backgroundTexture != 0) GL45C.glDeleteTextures(backgroundTexture);
+        backgroundFramebuffer = backgroundTexture = backgroundWidth = backgroundHeight = 0;
         if (weatherSampler != 0) GL45C.glDeleteSamplers(weatherSampler);
         if (colorSampler != 0) GL45C.glDeleteSamplers(colorSampler);
         if (depthSampler != 0) GL45C.glDeleteSamplers(depthSampler);

@@ -17,9 +17,9 @@ class BeaconBeamTest {
 
     @Test
     void authoredBaselineAppliesToPlacedAndHeldButNotDisplayBeacons() {
-        assertEquals(56_250.0f, BeaconBeam.intensity(15));
-        assertEquals(1_125_000.0f, BeaconBeam.displayIntensity(15));
-        assertEquals(16_875.0f, BeaconBeam.heldIntensity(15));
+        assertEquals(84_375.0f, BeaconBeam.intensity(15));
+        assertEquals(1_687_500.0f, BeaconBeam.displayIntensity(15));
+        assertEquals(25_312.5f, BeaconBeam.heldIntensity(15));
     }
 
     @Test

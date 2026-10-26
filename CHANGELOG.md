@@ -11,6 +11,79 @@ also part of every mod file name.
 
 ## Unreleased
 
+### Added
+
+- Sky Appearance settings: saturation, sunset warmth, sun glare, rainbows
+  after rain, star brightness, high cirrus and northern aurora.
+- Two cloud styles. Reimagined draws large rounded blocky clouds in one or two
+  thick layers. Unbound draws soft volumetric clouds out to the horizon in
+  three layers, small and large cumulus and an altostratus sheet, that dim
+  the sunlight as they pass in front of the sun.
+- Cloud coverage, speed and Unbound shape and lighting settings.
+- LOD Terrain: with Distant Horizons 3.3.4 installed, its distant terrain is
+  path traced beyond Minecraft's render distance, and the view fade moves out
+  to its LOD radius. Experimental; needs Auto View Fade.
+- Puddles on open ground in the rain: thin sheets of clear water that the
+  raindrop rings ripple. They pull back from sheltered and lower ground, so a
+  roof's edge leaves no straight line.
+- Lens settings: a light depth of field that focuses on what the crosshair
+  rests on, and lens flare from lights, such as the sun and a held torch:
+  round ghosts and a rainbow ring along the line through the screen centre,
+  and a starburst on the sun.
+- The sun glints on rippling water.
+- Aerial Haze: distant land fades into the colour of the sky, most in low
+  valleys and least on high ground.
+- Unbound clouds are drawn for every pixel, sharp and with the parallax of
+  real clouds: you can fly into and through them, and from above you look
+  down on them, with the land showing through the gaps.
+
+### Changed
+
+- High Cirrus is off by default. Seen from below, its streaks fanned out from
+  the zenith and the sun like smears; the slider still turns it on.
+- Direct sunlight is slightly warmer.
+- Block lights, item lights and beacon beams are 1.5 times as bright.
+- Water is clearer: a riverbed shows several blocks down, and a bright cloud's
+  reflection no longer hides it in shallow water.
+- Puddles reflect more of the sky, and raindrop rings land more often and
+  ripple harder.
+- Unbound clouds are brighter on the sun's side and greyer on the far side,
+  and the bases of the cumulus are flat rather than frayed.
+- Rain closes the view: distant land fades into the grey of the overcast sky
+  instead of standing dark against it.
+
+### Fixed
+
+- Distant Horizons no longer turns Minecraft's clouds off, which removed
+  every cloud while it was installed.
+- Distant leaves no longer turn violet, and distant faces no longer pick up
+  lines or a neighbour's glow, with high-resolution LabPBR packs. Their
+  normal and specular maps stay out of the block and item atlases, and the
+  atlases are stitched without a border around each sprite, which keeps every
+  sprite on its own power-of-two grid so the runtime's mips never blend it with
+  a neighbour. A 128-texel pack's atlases are a quarter of the size the wider
+  border needed, which saves about 6 GB of video memory.
+- Leaves, grass and packed ice with LabPBR subsurface scattering no longer
+  glow far brighter than their surroundings at night and in the rain. The
+  radiance cache no longer shades them where they are seen directly.
+- `rtx screenshots refresh --resource-pack local:` accepts a pack already in
+  the instance's resource packs folder.
+- Unbound clouds no longer show a fine diagonal grid where the sky overhead is
+  magnified.
+- Seen from above the Unbound clouds, the land below keeps its colours, and
+  the clouds over it are the same clouds as the ones in the sky, not a flat
+  layer that appears as you climb past them.
+- Distant ridges no longer show a dark outline that crawls along them against
+  the sky: aerial haze now covers the pixels along a silhouette.
+- In the rain, the aerial haze, the Unbound clouds over the land and the depth
+  of field are no longer undone wherever rain falls.
+- The flare from a torch in your hand starts at the flame on screen.
+- When the time of day jumps, as with `/time set`, sleeping or a camera path,
+  riverbeds and shaded ground no longer keep glowing with the old daylight
+  for half a minute: the runtime's radiance cache is cleared.
+- Benchmarks are no longer held at 30 FPS after a minute by Minecraft's
+  inactivity frame limit.
+
 ## 0.2.0 - 2026-10-25
 
 The port to Minecraft 26.3. PORTING.md records the design changes.

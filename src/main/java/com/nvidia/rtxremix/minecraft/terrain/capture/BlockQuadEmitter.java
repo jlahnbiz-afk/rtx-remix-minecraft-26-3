@@ -7,7 +7,6 @@ package com.nvidia.rtxremix.minecraft.terrain.capture;
 import com.nvidia.rtxremix.RemixAPI;
 import com.nvidia.rtxremix.minecraft.light.BlockLightRuleManager;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
-import com.nvidia.rtxremix.minecraft.texture.RainSurfaceTextures;
 import com.nvidia.rtxremix.minecraft.light.LightEntry;
 import com.nvidia.rtxremix.minecraft.profiling.ProfileScope;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -67,7 +66,7 @@ import java.util.function.Predicate;
  * <p>Lifecycle per section:
  * <ol>
  *   <li>{@link #beginSection}: reset state, called at HEAD of build()</li>
- *   <li>{@link #processBlock}: opacity/masks/lights, called per block from isOpaqueFullCube redirect</li>
+ *   <li>{@link #processBlock}: opacity and lights, called per non-air block from the isSolidRender redirect</li>
  *   <li>{@link #emitBlock}: block model quads for MODEL blocks, called from the same
  *       isOpaqueFullCube redirect; vanilla's renderBlock never runs because captured
  *       blocks are reported invisible</li>
@@ -90,14 +89,6 @@ public final class BlockQuadEmitter {
      */
     static final float SHARED_FACE_PUSH = 1f / 512f;
 
-    /**
-     * Block units the ripple film sits above the water. A ray through a clear
-     * stretch of the film restarts a little beyond it, so the gap must stay wider than
-     * that restart for the surface below to be met.
-     */
-    static final float RAIN_FILM_LIFT = 1f / 64f;
-    /** World-space UVs wrap at this many blocks, a whole number of ripple tiles, to stay precise. */
-    private static final int RAIN_UV_WRAP_BLOCKS = 4096;
     private static final int HEIGHT_NOT_READ = Integer.MIN_VALUE;
     private static final int HEIGHT_UNKNOWN = Integer.MIN_VALUE + 1;
 
@@ -182,7 +173,6 @@ public final class BlockQuadEmitter {
     private boolean cutoutLeaves;
     private BlockColors blockColors;
     private int baseX, baseY, baseZ;
-    private long topMask, bottomMask, eastMask, westMask, southMask, northMask;
     private final long[] opacity = new long[64];
     private final long[] blockStateKnown = new long[64];
     private final long[] fluidStateKnown = new long[64];
@@ -193,15 +183,13 @@ public final class BlockQuadEmitter {
     /** Added to every position staged for the current face; non-zero only on a shared side. */
     private float facePushX, facePushY, facePushZ;
 
-    // Raindrop rings on open water: see RainSurfaceTextures.
+    // Where rain reaches: the level's heightmaps and biomes.
     /** The level the build reads, for heightmaps and biomes; null when it is unknown. */
     private @Nullable ClientLevel level;
     /** The top motion-blocking block per column of this section, read on first use. */
     private final int[] motionBlockingTops = new int[SECTION_SIZE * SECTION_SIZE];
     private boolean motionBlockingTopsCleared;
     private final BlockPos.MutableBlockPos rainPos = new BlockPos.MutableBlockPos();
-    private final float[] filmPositions = new float[12];
-    private final float[] filmUvs = new float[8];
     private int waterColorKnownMask;
     private FluidState waterTopCellCacheFluid;
     private BlockAndTintGetter waterTopCullWorld;
@@ -264,7 +252,6 @@ public final class BlockQuadEmitter {
 
         writer.beginSection(baseX, baseY, baseZ);
         lights.clear();
-        topMask = bottomMask = eastMask = westMask = southMask = northMask = 0;
         Arrays.fill(opacity, 0);
         Arrays.fill(blockStateKnown, 0);
         Arrays.fill(fluidStateKnown, 0);
@@ -313,9 +300,9 @@ public final class BlockQuadEmitter {
     }
 
     /**
-     * Captures opacity bitmap, boundary face masks, and light-emitting
-     * blocks. Called once per non-air block from the isSolidRender redirect;
-     * the section starts out all transparent, which is what air is.
+     * Captures the opacity bitmap and light-emitting blocks. Called once per non-air
+     * block from the isSolidRender redirect; the section starts out all transparent,
+     * which is what air is.
      */
     public void processBlock(BlockState state, BlockGetter world, BlockPos pos, boolean opaque) {
         int lx = SectionPos.sectionRelative(pos.getX());
@@ -331,15 +318,6 @@ public final class BlockQuadEmitter {
             opacity[word] |= bit;
         } else {
             opacity[word] &= ~bit;
-        }
-
-        if (!opaque && (ly == 0 || ly == 15 || lx == 0 || lx == 15 || lz == 0 || lz == 15)) {
-            if (ly == 15) topMask    |= 1L << ((lz >> 1) * 8 + (lx >> 1));
-            if (ly == 0)  bottomMask |= 1L << ((lz >> 1) * 8 + (lx >> 1));
-            if (lx == 15) eastMask   |= 1L << ((ly >> 1) * 8 + (lz >> 1));
-            if (lx == 0)  westMask   |= 1L << ((ly >> 1) * 8 + (lz >> 1));
-            if (lz == 15) southMask  |= 1L << ((ly >> 1) * 8 + (lx >> 1));
-            if (lz == 0)  northMask  |= 1L << ((ly >> 1) * 8 + (lx >> 1));
         }
 
         if (state.isAir()) return;
@@ -445,14 +423,52 @@ public final class BlockQuadEmitter {
             finishScope.blockCount(blockCount).fluidCount(fluidCount);
             SectionMeshData meshData = writer.buildMeshData();
             SectionBlockData result = new SectionBlockData(
-                    sectionPos, meshData, List.copyOf(lights), topMask, bottomMask,
-                    eastMask, westMask, southMask, northMask,
+                    sectionPos, meshData, List.copyOf(lights),
+                    boundaryMask(opacity, Direction.UP), boundaryMask(opacity, Direction.DOWN),
+                    boundaryMask(opacity, Direction.EAST), boundaryMask(opacity, Direction.WEST),
+                    boundaryMask(opacity, Direction.SOUTH), boundaryMask(opacity, Direction.NORTH),
                     Arrays.copyOf(opacity, opacity.length));
             lights.clear();
             return result;
         } finally {
             active = false;
         }
+    }
+
+    /**
+     * The section's boundary on {@code face} as a bit per 2x2 patch, set where any block of
+     * the patch on that face is not opaque; the bit order is the one {@code TerrainState}'s
+     * flood reads. It is read from the opacity bitmap rather than gathered block by block,
+     * because vanilla never hands air to the capture hook, and a boundary of air alone would
+     * otherwise read as sealed.
+     */
+    static long boundaryMask(long[] opacity, Direction face) {
+        long mask = 0L;
+        for (int a = 0; a < 16; a++) {
+            for (int b = 0; b < 16; b++) {
+                boolean open = switch (face) {
+                    case UP -> !opaqueAt(opacity, a, 15, b);
+                    case DOWN -> !opaqueAt(opacity, a, 0, b);
+                    case EAST -> !opaqueAt(opacity, 15, a, b);
+                    case WEST -> !opaqueAt(opacity, 0, a, b);
+                    case SOUTH -> !opaqueAt(opacity, b, a, 15);
+                    case NORTH -> !opaqueAt(opacity, b, a, 0);
+                };
+                if (open) {
+                    // UP and DOWN index (z, x), so row b; the sides index (y, the other axis), so row a.
+                    int bit = face.getAxis() == Direction.Axis.Y
+                            ? (b >> 1) * 8 + (a >> 1)
+                            : (a >> 1) * 8 + (b >> 1);
+                    mask |= 1L << bit;
+                }
+            }
+        }
+        return mask;
+    }
+
+    private static boolean opaqueAt(long[] opacity, int lx, int ly, int lz) {
+        int index = (ly << 8) | (lz << 4) | lx;
+        return (opacity[index >> 6] & (1L << (index & 63))) != 0;
     }
 
     private void emitVanillaBlock(BlockAndTintGetter world, BlockState state,
@@ -540,27 +556,6 @@ public final class BlockQuadEmitter {
                 spriteId, su0, sv0, su1, sv1, layerName);
     }
 
-    /**
-     * Copies the quad in {@code positions} into {@code filmPositions}, lifted by
-     * {@link #RAIN_FILM_LIFT}, and gives it world-space UVs over the ripple tile in
-     * {@code filmUvs}. The UVs start from the block's own corner, so a quad never spans
-     * the wrap.
-     */
-    private void liftFilm(float[] positions) {
-        int lx = mutablePos.getX() - baseX, lz = mutablePos.getZ() - baseZ;
-        float tile = RainSurfaceTextures.TILE_BLOCKS;
-        float blockU = Math.floorMod(mutablePos.getX(), RAIN_UV_WRAP_BLOCKS) / tile;
-        float blockV = Math.floorMod(mutablePos.getZ(), RAIN_UV_WRAP_BLOCKS) / tile;
-        for (int v = 0; v < 4; v++) {
-            float x = positions[v * 3], z = positions[v * 3 + 2];
-            filmPositions[v * 3] = x;
-            filmPositions[v * 3 + 1] = positions[v * 3 + 1] + RAIN_FILM_LIFT;
-            filmPositions[v * 3 + 2] = z;
-            filmUvs[v * 2] = blockU + (x - lx) / tile;
-            filmUvs[v * 2 + 1] = blockV + (z - lz) / tile;
-        }
-    }
-
 
     /**
      * The y of the highest block that stops rain in column {@code (lx, lz)} of this
@@ -600,13 +595,6 @@ public final class BlockQuadEmitter {
                 == Biome.Precipitation.RAIN;
     }
 
-    /** Whether the water surface of block {@code (lx, ly, lz)} lies under open sky where it rains. */
-    private boolean waterOpenToRain(int lx, int ly, int lz) {
-        if (!BlockTextureManager.RAIN_RIPPLES_ENABLED || level == null) return false;
-        int y = baseY + ly;
-        return motionBlockingTop(lx, lz) == y && rainsAt(baseX + lx, y + 1, baseZ + lz);
-    }
-
     /**
      * Whether a quad vanilla put on the translucent layer stays translucent for Remix:
      * only when its sprite reads as a see-through surface
@@ -637,6 +625,16 @@ public final class BlockQuadEmitter {
     private static final Identifier WATER_FLOW_SPRITE = Identifier.withDefaultNamespace("block/water_flow");
 
     /** A block-model face painted with the water texture: the cauldron's water level is the vanilla case. */
+    /**
+     * Where block {@code block} starts within the water's world-space tile, 0 to 1. The water
+     * normals play as a sprite sheet, and a coordinate outside one tile reaches into another
+     * frame of the sheet, so each tile would show a different moment and its waves would not
+     * meet its neighbours'.
+     */
+    static float waterTileCoordinate(int block, float tileSize) {
+        return Math.floorMod(block, (int) tileSize) / tileSize;
+    }
+
     static boolean isWaterSprite(Identifier spriteId) {
         return WATER_STILL_SPRITE.equals(spriteId) || WATER_FLOW_SPRITE.equals(spriteId);
     }
@@ -651,6 +649,7 @@ public final class BlockQuadEmitter {
     private void emitBlockWaterQuad(float nx, float ny, float nz, int color, String layerName) {
         float tileSize = BlockTextureManager.getWaterTileSize();
         float ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
+        float minU = Float.MAX_VALUE, minW = Float.MAX_VALUE;
         for (int v = 0; v < 4; v++) {
             float wx = baseX + tempPositions[v * 3];
             float wy = baseY + tempPositions[v * 3 + 1];
@@ -663,8 +662,19 @@ public final class BlockQuadEmitter {
             } else {
                 u = wx; w = wy;
             }
-            tempUvs[v * 2] = u / tileSize;
-            tempUvs[v * 2 + 1] = w / tileSize;
+            tempUvs[v * 2] = u;
+            tempUvs[v * 2 + 1] = w;
+            minU = Math.min(minU, u);
+            minW = Math.min(minW, w);
+        }
+        // Measured from the block the face starts in, so the whole face stays inside one tile.
+        int blockU = (int) Math.floor(minU + 1.0e-4f);
+        int blockW = (int) Math.floor(minW + 1.0e-4f);
+        float originU = waterTileCoordinate(blockU, tileSize);
+        float originW = waterTileCoordinate(blockW, tileSize);
+        for (int v = 0; v < 4; v++) {
+            tempUvs[v * 2] = originU + (tempUvs[v * 2] - blockU) / tileSize;
+            tempUvs[v * 2 + 1] = originW + (tempUvs[v * 2 + 1] - blockW) / tileSize;
         }
         writer.writeFluidQuad(tempPositions, tempUvs, nx, ny, nz, color,
                 null, 0, 0, 1, 1, layerName, texManager);
@@ -852,17 +862,11 @@ public final class BlockQuadEmitter {
             setPos4(tempPositions, lx, ly + h00, lz, lx + 1, ly + h10, lz,
                     lx + 1, ly + h11, lz + 1, lx, ly + h01, lz + 1);
             if (isWater) {
-                float u0 = wx / tileSize, v0 = wz / tileSize;
-                float u1 = (wx + 1) / tileSize, v1 = (wz + 1) / tileSize;
+                float u0 = waterTileCoordinate(wx, tileSize), v0 = waterTileCoordinate(wz, tileSize);
+                float u1 = u0 + 1 / tileSize, v1 = v0 + 1 / tileSize;
                 setUv4(tempUvs, u0, v0, u1, v0, u1, v1, u0, v1);
                 writer.writeFluidQuad(tempPositions, tempUvs, 0, 1, 0, color,
                         null, 0, 0, 1, 1, layer, texManager);
-                if (waterOpenToRain(lx, ly, lz)) {
-                    // Raindrop rings show on a film just over the water, from above.
-                    mutablePos.set(wx, wy, wz);
-                    liftFilm(tempPositions);
-                    writer.writeFilmQuad(DirectQuadWriter.RIPPLE_FILM_BUCKET, filmPositions, filmUvs);
-                }
                 setPos4(tempPositions, lx, ly + h01, lz + 1, lx + 1, ly + h11, lz + 1,
                         lx + 1, ly + h10, lz, lx, ly + h00, lz);
                 writer.writeFluidQuad(tempPositions, tempUvs, 0, -1, 0, color,
@@ -912,8 +916,8 @@ public final class BlockQuadEmitter {
             setPos4(tempPositions, lx, ly, lz + 1, lx + 1, ly, lz + 1,
                     lx + 1, ly, lz, lx, ly, lz);
             if (isWater) {
-                float u0 = wx / tileSize, v0 = wz / tileSize;
-                float u1 = (wx + 1) / tileSize, v1 = (wz + 1) / tileSize;
+                float u0 = waterTileCoordinate(wx, tileSize), v0 = waterTileCoordinate(wz, tileSize);
+                float u1 = u0 + 1 / tileSize, v1 = v0 + 1 / tileSize;
                 setUv4(tempUvs, u0, v1, u1, v1, u1, v0, u0, v0);
                 writer.writeFluidQuad(tempPositions, tempUvs, 0, -1, 0, color,
                         null, 0, 0, 1, 1, layer, texManager);
@@ -967,12 +971,10 @@ public final class BlockQuadEmitter {
             if (isWater) {
                 boolean xAxis = (dir == Direction.EAST || dir == Direction.WEST);
                 float sU0, sU1, sV0, sV1;
-                if (xAxis) {
-                    sU0 = wz / tileSize; sU1 = (wz + 1) / tileSize;
-                } else {
-                    sU0 = wx / tileSize; sU1 = (wx + 1) / tileSize;
-                }
-                sV0 = wy / tileSize; sV1 = (wy + 1) / tileSize;
+                sU0 = waterTileCoordinate(xAxis ? wz : wx, tileSize);
+                sU1 = sU0 + 1 / tileSize;
+                sV0 = waterTileCoordinate(wy, tileSize);
+                sV1 = sV0 + 1 / tileSize;
                 setUv4(tempUvs, sU0, sV1, sU1, sV1, sU1, sV0, sU0, sV0);
                 writer.writeFluidQuad(tempPositions, tempUvs, fnx, fny, fnz, color,
                         null, 0, 0, 1, 1, layer, texManager);

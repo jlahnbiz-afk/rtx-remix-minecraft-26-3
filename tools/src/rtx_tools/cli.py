@@ -527,11 +527,18 @@ def cmd_camera_list(args) -> int:
 
 
 def cmd_screenshots_list(args) -> int:
-    return screenshots.list_shots(as_json=args.json)
+    return screenshots.list_shots(as_json=args.json, set_name=args.set)
 
 
 def cmd_screenshots_refresh(args) -> int:
-    return screenshots.refresh(args.names, sdk_variant=args.sdk_variant, timeout_seconds=args.timeout)
+    return screenshots.refresh(
+        args.names,
+        sdk_variant=args.sdk_variant,
+        timeout_seconds=args.timeout,
+        set_name=args.set,
+        world=args.world,
+        resource_pack=args.resource_pack,
+    )
 
 
 def cmd_menu(args) -> int:
@@ -1161,9 +1168,28 @@ def build_parser() -> argparse.ArgumentParser:
     shot_sub = p.add_subparsers(dest="screenshots_command", required=True, metavar="COMMAND")
     sp = shot_sub.add_parser("list", help="print the marked shots")
     sp.add_argument("--json", action="store_true", help="print the shot set as JSON")
+    sp.add_argument("--set", default=screenshots.SHOT_SET, metavar="SET", help="shot set name (default: docs)")
     sp.set_defaults(func=cmd_screenshots_list)
     sp = shot_sub.add_parser("refresh", help="capture the shots and write build/screenshots")
     sp.add_argument("names", nargs="*", metavar="NAME", help="shots to capture; default every shot")
+    sp.add_argument(
+        "--set",
+        default=screenshots.SHOT_SET,
+        metavar="SET",
+        help="shot set in tools/assets/shots; a set other than docs writes build/screenshots/SET/",
+    )
+    sp.add_argument(
+        "--world",
+        default=None,
+        metavar="WORLD",
+        help="capture in this benchmark world, such as a save imported with world import",
+    )
+    sp.add_argument(
+        "--resource-pack",
+        default=None,
+        metavar="SPEC",
+        help="art pack: none | local:<path> | <name>@<version> | pinned",
+    )
     sp.add_argument(
         "--sdk-variant",
         choices=["release", "tracy"],

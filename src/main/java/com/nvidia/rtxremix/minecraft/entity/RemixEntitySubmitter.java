@@ -821,13 +821,18 @@ public class RemixEntitySubmitter {
         if (result.layers().isEmpty()) return;
 
         collectCanvasBases(result);
+        long paintedLayers = collectOverlayComposite(result);
         // The layer carries the ordinal it was assigned when the entity first
         // requested it. Counting position in this list instead would shift every
         // later layer's shell offset, and therefore its mesh key, on any frame
         // where an earlier layer happened to emit nothing.
         try {
-            for (RemixVertexConsumerProvider.CapturedLayer layer : result.layers()) {
-                submitLayer(result, layer, worldTransform, baseCategoryFlags, policy, layer.layerIndex());
+            List<RemixVertexConsumerProvider.CapturedLayer> layers = result.layers();
+            for (int i = 0; i < layers.size(); i++) {
+                if (i < Long.SIZE && (paintedLayers & (1L << i)) != 0) continue;
+                RemixVertexConsumerProvider.CapturedLayer layer = layers.get(i);
+                submitLayer(result, layer, worldTransform, baseCategoryFlags, policy, layer.layerIndex(),
+                        layer == compositeBody ? compositeTexture : null);
             }
         } catch (RuntimeException | Error failure) {
             // Parts submitted before the failure already sit at this frame's transform
@@ -838,12 +843,55 @@ public class RemixEntitySubmitter {
         }
     }
 
+    /**
+     * Finds the overlay layers that repeat the body and can be painted into its texture;
+     * see {@link OverlayComposite}. Leaves the body layer and its composite texture in
+     * {@link #compositeBody} and {@link #compositeTexture}, both null when there is none.
+     *
+     * @return the positions in the capture's layer list of the layers painted into the body
+     */
+    private long collectOverlayComposite(RemixEntityPass.EntityCaptureResult result) {
+        compositeBody = null;
+        compositeTexture = null;
+        List<RemixVertexConsumerProvider.CapturedLayer> layers = result.layers();
+        if (layers.size() < 2 || result.owner() instanceof Player) return 0L;
+        RemixVertexConsumerProvider.CapturedLayer body = null;
+        for (RemixVertexConsumerProvider.CapturedLayer layer : layers) {
+            if (layer.layerIndex() == 0) {
+                body = layer;
+                break;
+            }
+        }
+        if (body == null || body.textureId() == null) return 0L;
+        long painted = 0L;
+        int count = 0;
+        for (int i = 0; i < layers.size() && i < Long.SIZE && count < overlayTextures.length; i++) {
+            RemixVertexConsumerProvider.CapturedLayer layer = layers.get(i);
+            Identifier texture = layer.textureId();
+            if (layer == body || texture == null || texture.equals(body.textureId())
+                    || RenderLayerUtils.surfaceMode(layer.renderLayer()) != RenderLayerUtils.SurfaceMode.CUTOUT
+                    || !OverlayComposite.repeatsBase(body.consumer(), layer.consumer(), result.boneData())) {
+                continue;
+            }
+            overlayTextures[count] = texture;
+            overlayTints[count] = layer.consumer().getPartTint(0);
+            count++;
+            painted |= 1L << i;
+        }
+        if (count > 0) {
+            compositeBody = body;
+            compositeTexture = OverlayComposite.texture(body.textureId(), overlayTextures, overlayTints, count);
+        }
+        return painted;
+    }
+
     private void submitLayer(RemixEntityPass.EntityCaptureResult result,
                              RemixVertexConsumerProvider.CapturedLayer layer,
                              Transform worldTransform,
                              int baseCategoryFlags,
                              PartCategoryPolicy policy,
-                             int layerIndex) {
+                             int layerIndex,
+                             Identifier textureOverride) {
         Identifier texId = layer.textureId();
         if (texId == null) return;
         RenderType renderLayer = layer.renderLayer();
@@ -853,6 +901,9 @@ public class RemixEntitySubmitter {
         RenderLayerUtils.SurfaceMode surfaceMode = playerSkinSurfaceMode(layerMode, vanillaPlayerSkinLayer);
         if (vanillaPlayerSkinLayer && RemixFirstPersonPass.isViewModelCapture(result)) {
             texId = FirstPersonSleeves.flattenedTexture(texId);
+        }
+        if (textureOverride != null) {
+            texId = textureOverride;
         }
 
         RemixCapturingConsumer consumer = layer.consumer();
@@ -1136,6 +1187,11 @@ public class RemixEntitySubmitter {
     }
 
     private final CanvasReader canvasReader = new CanvasReader();
+    /** Per-entity scratch for {@link #collectOverlayComposite}; vanilla stacks at most a few overlays. */
+    private final Identifier[] overlayTextures = new Identifier[8];
+    private final int[] overlayTints = new int[8];
+    private RemixVertexConsumerProvider.CapturedLayer compositeBody;
+    private Identifier compositeTexture;
 
     private void collectCanvasBases(RemixEntityPass.EntityCaptureResult result) {
         canvasReader.beginEntity(result.boneData());
@@ -2173,7 +2229,7 @@ public class RemixEntitySubmitter {
         ResourceManager rm = client.getResourceManager();
         // A derived texture reads its source's pixels and LabPBR variants and keeps its own
         // identity for the material, the meshes and the dynamic-upload version.
-        Identifier sourceId = FirstPersonSleeves.sourceTexture(textureId);
+        Identifier sourceId = sourceTexture(textureId);
         // getResource walks every registered pack and stats the directory-backed ones. For a
         // texture that is not in any pack this never succeeds, so without the memo it is paid
         // on the render thread on every frame the entity is visible.
@@ -2209,6 +2265,18 @@ public class RemixEntitySubmitter {
         if (FirstPersonSleeves.isFlattened(textureId)) {
             FirstPersonSleeves.flatten(pixels, width, height);
         }
+        OverlayComposite.Spec composite = OverlayComposite.spec(textureId);
+        if (composite != null) {
+            for (int i = 0; i < composite.overlays().length; i++) {
+                Optional<Resource> overlay = rm.getResource(composite.overlays()[i]);
+                if (overlay.isEmpty()) continue;
+                try (var image = NativeImage.read(overlay.get().open())) {
+                    OverlayComposite.paint(pixels, width, height,
+                            abgrToRGBA(image, image.getWidth(), image.getHeight()),
+                            image.getWidth(), image.getHeight(), composite.tints()[i]);
+                }
+            }
+        }
 
         Identifier spriteId = deriveLabPBRSpriteId(sourceId);
         NativeImage nImg = loadVariant(rm, spriteId, "_n");
@@ -2236,6 +2304,11 @@ public class RemixEntitySubmitter {
             dynamicTextureSizes.put(textureId, new TextureSize(width, height));
         }
         return textures;
+    }
+
+    /** The resource a derived texture's pixels and LabPBR variants come from, or the texture itself. */
+    private static Identifier sourceTexture(Identifier textureId) {
+        return FirstPersonSleeves.sourceTexture(OverlayComposite.sourceTexture(textureId));
     }
 
     private NativeImage loadVariant(ResourceManager rm, Identifier spriteId, String suffix) {
@@ -2441,7 +2514,7 @@ public class RemixEntitySubmitter {
     }
 
     private void refreshDynamicTexture(Identifier textureId) {
-        DynamicTextureCache.Pixels pixels = DynamicTextureCache.get(FirstPersonSleeves.sourceTexture(textureId));
+        DynamicTextureCache.Pixels pixels = DynamicTextureCache.get(sourceTexture(textureId));
         if (pixels == null || pixels.version() <= 0L) return;
 
         Long appliedVersion = dynamicTextureVersions.get(textureId);

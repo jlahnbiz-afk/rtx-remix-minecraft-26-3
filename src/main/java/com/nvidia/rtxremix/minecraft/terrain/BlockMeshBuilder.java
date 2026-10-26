@@ -387,7 +387,6 @@ public final class BlockMeshBuilder {
         String baseName = isSss ? bucketKey.substring(0, bucketKey.length() - 4) : bucketKey;
 
         if ("water".equals(baseName)) return tex.getWaterSurfaceMaterial();
-        if (DirectQuadWriter.RIPPLE_FILM_BUCKET.equals(baseName)) return tex.getRippleFilmMaterial();
 
         int layerType = BlockTextureManager.layerType(baseName);
         return isSss ? tex.getAtlasMaterialSSS(layerType)

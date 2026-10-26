@@ -10,8 +10,13 @@ import com.nvidia.rtxremix.minecraft.light.BlockLightIntensityControls;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.terrain.ChunkManager;
 import com.nvidia.rtxremix.minecraft.light.LightManager;
+import com.nvidia.rtxremix.minecraft.lod.LodTerrain;
 import com.nvidia.rtxremix.minecraft.RemixRenderer;
+import com.nvidia.rtxremix.minecraft.cloud.CloudRenderer;
+import com.nvidia.rtxremix.minecraft.cloud.CloudStyle;
 import com.nvidia.rtxremix.minecraft.RtxRemixMod;
+import com.nvidia.rtxremix.minecraft.sky.SkyLook;
+import com.nvidia.rtxremix.minecraft.lens.LensLook;
 import com.nvidia.rtxremix.minecraft.sky.SkyRenderer;
 import com.nvidia.rtxremix.minecraft.UnfocusedFramerateLimit;
 import com.nvidia.rtxremix.minecraft.entity.RemixEntityPass;
@@ -76,6 +81,11 @@ public final class RtxSettingsFactory {
                 renderer.isViewDistanceFadeAuto(), renderer::isViewDistanceFadeAuto,
                 renderer::setViewDistanceFadeAuto));
 
+        LodTerrain lod = renderer.getLodTerrain();
+        list.add(RtxSetting.ofBool("dist.lod", SettingGroup.RENDER_DISTANCE,
+                "rtxremix.setting.dist.lod", "rtxremix.setting.dist.lod.tip",
+                lod.isEnabled(), lod::isEnabled, lod::setEnabled));
+
         // Both ranges are 0 to 32 chunks and both zeros mean Auto, Minecraft's
         // render distance. 32 is Minecraft's maximum render distance and
         // therefore the point past which a cull stops culling anything, so one
@@ -136,12 +146,70 @@ public final class RtxSettingsFactory {
                 SkyRenderer::getMinimumCelestialWeatherVisibility,
                 SkyRenderer::setMinimumCelestialWeatherVisibility));
 
-        list.add(RtxSetting.ofBool("clouds.procedural", SettingGroup.CLOUDS,
-                "rtxremix.setting.clouds.procedural",
-                "rtxremix.setting.clouds.procedural.tip",
-                false,
-                renderer.getCloudRenderer()::isProceduralClouds,
-                renderer.getCloudRenderer()::setProceduralClouds));
+        // --- Sky appearance ---
+        list.add(skyLookFloat(renderer, "sky.saturation", "rtxremix.setting.sky.saturation",
+                SkyLook.MAX_SATURATION, SkyLook::getSaturation, SkyLook::setSaturation));
+        list.add(skyLookFloat(renderer, "sky.sunsetWarmth", "rtxremix.setting.sky.sunsetWarmth",
+                SkyLook.MAX_SUNSET_WARMTH, SkyLook::getSunsetWarmth, SkyLook::setSunsetWarmth));
+        list.add(skyLookFloat(renderer, "sky.sunGlare", "rtxremix.setting.sky.sunGlare",
+                SkyLook.MAX_SUN_GLARE, SkyLook::getSunGlare, SkyLook::setSunGlare));
+        list.add(skyLookFloat(renderer, "sky.rainbow", "rtxremix.setting.sky.rainbow",
+                SkyLook.MAX_RAINBOW, SkyLook::getRainbow, SkyLook::setRainbow));
+        list.add(skyLookFloat(renderer, "sky.starBrightness", "rtxremix.setting.sky.starBrightness",
+                SkyLook.MAX_STAR_BRIGHTNESS, SkyLook::getStarBrightness, SkyLook::setStarBrightness));
+        list.add(floatSetting("sky.aerialHaze", SettingGroup.SKY_LOOK, "rtxremix.setting.sky.aerialHaze",
+                0.0, SkyLook.MAX_AERIAL_HAZE, SkyLook::getAerialHaze, SkyLook::setAerialHaze));
+        // Coverage regenerates the cirrus texture on a worker, so it applies once a drag settles.
+        list.add(skyLookFloat(renderer, "sky.cirrusCoverage", "rtxremix.setting.sky.cirrusCoverage",
+                1.0, SkyLook::getCirrusCoverage, SkyLook::setCirrusCoverage).deferSliderApply());
+        list.add(skyLookFloat(renderer, "sky.cirrusBrightness", "rtxremix.setting.sky.cirrusBrightness",
+                SkyLook.MAX_CIRRUS_BRIGHTNESS, SkyLook::getCirrusBrightness, SkyLook::setCirrusBrightness));
+        list.add(RtxSetting.ofBool("sky.aurora", SettingGroup.SKY_LOOK,
+                "rtxremix.setting.sky.aurora", "rtxremix.setting.sky.aurora.tip",
+                SkyLook.isAuroraEnabled(), SkyLook::isAuroraEnabled, SkyLook::setAuroraEnabled));
+        list.add(skyLookFloat(renderer, "sky.auroraIntensity", "rtxremix.setting.sky.auroraIntensity",
+                SkyLook.MAX_AURORA_INTENSITY, SkyLook::getAuroraIntensity, SkyLook::setAuroraIntensity));
+        list.add(RtxSetting.ofBool("sky.auroraEverywhere", SettingGroup.SKY_LOOK,
+                "rtxremix.setting.sky.auroraEverywhere", "rtxremix.setting.sky.auroraEverywhere.tip",
+                SkyLook.isAuroraEverywhere(), SkyLook::isAuroraEverywhere, SkyLook::setAuroraEverywhere));
+
+        CloudRenderer clouds = renderer.getCloudRenderer();
+        list.add(RtxSetting.ofInt(RtxOptionFactory.CLOUD_STYLE_ID, SettingGroup.CLOUDS,
+                "rtxremix.setting.clouds.style",
+                "rtxremix.setting.clouds.style.tip",
+                0, CloudStyle.values().length - 1, CloudStyle.CLASSIC.ordinal(),
+                () -> clouds.getCloudStyle().ordinal(),
+                v -> clouds.setCloudStyle(CloudStyle.of(v))));
+        // Coverage regenerates the mask and every cloud chunk, so it applies once a drag settles.
+        list.add(floatSetting("clouds.coverage", SettingGroup.CLOUDS,
+                "rtxremix.setting.clouds.coverage", 0.0, 1.0,
+                clouds::getCoverage, clouds::setCoverage)
+                .deferSliderApply());
+        list.add(RtxSetting.ofBool("clouds.secondLayer", SettingGroup.CLOUDS,
+                "rtxremix.setting.clouds.secondLayer",
+                "rtxremix.setting.clouds.secondLayer.tip",
+                CloudRenderer.DEFAULT_SECOND_LAYER, clouds::isSecondLayer, clouds::setSecondLayer));
+        list.add(floatSetting("clouds.speed", SettingGroup.CLOUDS,
+                "rtxremix.setting.clouds.speed", 0.0, CloudRenderer.MAX_SPEED,
+                clouds::getSpeed, clouds::setSpeed));
+        list.add(floatSetting("clouds.unboundThickness", SettingGroup.CLOUDS,
+                "rtxremix.setting.clouds.unboundThickness", 20.0, 1000.0,
+                clouds::getUnboundThickness, clouds::setUnboundThickness));
+        list.add(floatSetting("clouds.unboundDensity", SettingGroup.CLOUDS,
+                "rtxremix.setting.clouds.unboundDensity", 0.1, 3.0,
+                clouds::getUnboundDensity, clouds::setUnboundDensity));
+        list.add(floatSetting("clouds.unboundBrightness", SettingGroup.CLOUDS,
+                "rtxremix.setting.clouds.unboundBrightness", 0.2, 3.0,
+                clouds::getUnboundBrightness, clouds::setUnboundBrightness));
+        list.add(floatSetting("clouds.unboundDetail", SettingGroup.CLOUDS,
+                "rtxremix.setting.clouds.unboundDetail", 0.0, 2.0,
+                clouds::getUnboundDetail, clouds::setUnboundDetail));
+        list.add(floatSetting("clouds.unboundRain", SettingGroup.CLOUDS,
+                "rtxremix.setting.clouds.unboundRain", 0.0, 1.0,
+                clouds::getUnboundRainInfluence, clouds::setUnboundRainInfluence));
+        list.add(floatSetting("clouds.unboundShadow", SettingGroup.CLOUDS,
+                "rtxremix.setting.clouds.unboundShadow", 0.0, 1.0,
+                clouds::getUnboundShadow, clouds::setUnboundShadow));
         list.add(floatSetting(
                 "clouds.vanillaEdgeSmoothness",
                 SettingGroup.CLOUDS,
@@ -234,6 +302,14 @@ public final class RtxSettingsFactory {
                 "rtxremix.setting.post.highLightAdaptation", -5.0, 10.0,
                 postProcessing::getHighLightAdaptation, postProcessing::setHighLightAdaptation));
 
+        // --- Lens ---
+        list.add(floatSetting("lens.depthOfField", SettingGroup.LENS,
+                "rtxremix.setting.lens.depthOfField", 0.0, LensLook.MAX_DEPTH_OF_FIELD,
+                LensLook::getDepthOfField, LensLook::setDepthOfField));
+        list.add(floatSetting("lens.flare", SettingGroup.LENS,
+                "rtxremix.setting.lens.flare", 0.0, LensLook.MAX_FLARE,
+                LensLook::getFlare, LensLook::setFlare));
+
         return new RtxSettings(list);
     }
 
@@ -281,6 +357,19 @@ public final class RtxSettingsFactory {
             Supplier<Float> getter, Consumer<Float> setter) {
         return RtxSetting.ofFloat(id, SettingGroup.SKY, labelKey, labelKey + ".tip",
                 min, max, getter.get(),
+                () -> (double) getter.get(),
+                v -> {
+                    setter.accept(v.floatValue());
+                    if (renderer.getSkyRenderer() != null) {
+                        renderer.getSkyRenderer().forceRefresh();
+                    }
+                });
+    }
+
+    private static RtxSetting<Double> skyLookFloat(RemixRenderer renderer, String id, String labelKey,
+            double max, Supplier<Float> getter, Consumer<Float> setter) {
+        return RtxSetting.ofFloat(id, SettingGroup.SKY_LOOK, labelKey, labelKey + ".tip",
+                0.0, max, getter.get(),
                 () -> (double) getter.get(),
                 v -> {
                     setter.accept(v.floatValue());

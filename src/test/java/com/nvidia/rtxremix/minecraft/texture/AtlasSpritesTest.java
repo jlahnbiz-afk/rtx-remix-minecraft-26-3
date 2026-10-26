@@ -9,7 +9,9 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AtlasSpritesTest {
 
@@ -58,6 +60,15 @@ class AtlasSpritesTest {
             }
         }
         assertEquals(0, atlas[2 * 4]);
+    }
+
+    @Test
+    void aSpriteIsOnGridWhenItStartsOnAMultipleOfItsPowerOfTwoSize() {
+        assertTrue(AtlasSprites.onGrid(256, 128, 128, 128));
+        assertTrue(AtlasSprites.onGrid(128, 0, 128, 4096), "an animation strip aligns to its width");
+        assertTrue(AtlasSprites.onGrid(48, 16, 24, 24), "a 24-texel sprite aligns to 16");
+        assertFalse(AtlasSprites.onGrid(130, 130, 128, 128), "vanilla's border of two moves it off");
+        assertFalse(AtlasSprites.onGrid(64, 0, 128, 128));
     }
 
     @Test

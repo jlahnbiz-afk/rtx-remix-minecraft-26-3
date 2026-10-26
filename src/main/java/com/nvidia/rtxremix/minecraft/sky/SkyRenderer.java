@@ -26,6 +26,7 @@ import com.nvidia.rtxremix.TexturePatchInfo;
 import com.nvidia.rtxremix.TexturePurpose;
 import com.nvidia.rtxremix.Transform;
 import com.nvidia.rtxremix.minecraft.RemixRenderer;
+import com.nvidia.rtxremix.minecraft.cloud.CloudRenderer;
 import com.nvidia.rtxremix.minecraft.asset.RemixAssetBase;
 import com.nvidia.rtxremix.minecraft.asset.RemixLight;
 import com.nvidia.rtxremix.minecraft.asset.RemixLightStore;
@@ -167,6 +168,12 @@ public class SkyRenderer {
     private final TextureBatchEntry atmosphericTextureEntry = new TextureBatchEntry();
     private final TexturePatchInfo atmosphericTextureUpdate = new TexturePatchInfo();
     private final float[] atmosphericMean = new float[3];
+    private final float[] skyLook = new float[4];
+    private final SkyLook.Rainbow rainbow = new SkyLook.Rainbow();
+    private final SkyLayers skyLayers = new SkyLayers();
+    private final VolumetricClouds volumetricClouds = new VolumetricClouds();
+    private final float[] cloudAmbient = new float[3];
+    private long lastRenderNanos;
     private final Transform sunTransform = new Transform();
     private final Transform moonTransform = new Transform();
     private final Transform starTransform = new Transform();
@@ -227,6 +234,7 @@ public class SkyRenderer {
         if (world != currentWorld) {
             releaseSkyLights();
             currentWorld = world;
+            rainbow.reset();
         }
 
         RemixAPI api = renderer.getRemixApi();
@@ -260,6 +268,7 @@ public class SkyRenderer {
         LightManager.SkyLightState lightState;
         float[] sunDirection;
         WeatherDomeState weather;
+        float rainStrength;
         try (ProfileScope ignored = ProfileScope.begin("Sky.Prepare")) {
             skyAngle = SkyFrame.timeOfDay(SkyFrame.sky());
             ConfLayerDriver confLayers = renderer.getConfLayerDriver();
@@ -274,6 +283,7 @@ public class SkyRenderer {
                     ? lightManager.getSkyLightState()
                     : LightManager.SkyLightState.empty();
             sunDirection = LightManager.computeSunDirection(skyAngle);
+            rainStrength = weatherStrengths.rain();
             float celestialIntensity =
                     lightState.weatherDomeRadiance();
             weather = weatherDomeState(
@@ -285,6 +295,15 @@ public class SkyRenderer {
                     celestialIntensity
                             * LightManager.THUNDER_SKY_INTENSITY);
         }
+
+        long now = System.nanoTime();
+        float frameSeconds = lastRenderNanos == 0 ? 0.0f : (now - lastRenderNanos) / 1.0e9f;
+        lastRenderNanos = now;
+        skyLook[0] = SkyLook.getSaturation();
+        skyLook[1] = SkyLook.getSunsetWarmth();
+        skyLook[2] = SkyLook.getSunGlare();
+        skyLook[3] = SkyLook.getRainbow()
+                * rainbow.update(rainStrength, sunDirection[1], frameSeconds);
 
         try (ProfileScope ignored = ProfileScope.begin("Sky.Atmosphere")) {
             updateAtmosphericDomeLight(api, lightState);
@@ -298,6 +317,14 @@ public class SkyRenderer {
                     tickDelta,
                     sunDirection,
                     weather.opacity());
+        }
+        // After the celestial meshes, so the clouds are drawn over them.
+        try (ProfileScope ignored = ProfileScope.begin("Sky.Clouds")) {
+            cloudAmbient[0] = atmosphericMeanR;
+            cloudAmbient[1] = atmosphericMeanG;
+            cloudAmbient[2] = atmosphericMeanB;
+            volumetricClouds.render(api, world, cameraPos, tickDelta, renderer.getCloudRenderer(),
+                    lightState, cloudAmbient, rainStrength, skyLayers, 1.0f - clamp01(weather.opacity()));
         }
         boolean weatherRendered;
         try (ProfileScope ignored = ProfileScope.begin("Sky.Weather")) {
@@ -481,6 +508,7 @@ public class SkyRenderer {
                 lightState,
                 atmosphericMean,
                 mieScatteringAnisotropy,
+                skyLook,
                 publishedOutputValid);
         if (pixelBuf == null) {
             return;
@@ -592,12 +620,18 @@ public class SkyRenderer {
 
         float weatherVisibility = Math.max(
                 minimumCelestialWeatherVisibility, 1.0f - clamp01(weatherOpacity));
-        float starsOpacity = starOpacity(SkyFrame.sky().starBrightness) * weatherVisibility;
+        float night = starOpacity(SkyFrame.sky().starBrightness);
+        float starsOpacity = night * weatherVisibility;
         if (starsOpacity > 0.0f) {
             updateStarOpacity(starsOpacity);
             updateStarTransform(starTransform, cameraPos, skyAngle);
             drawCelestialMesh(api, starMeshAsset, starTransform);
         }
+        float skyLuminance = 0.2126f * atmosphericMeanR + 0.7152f * atmosphericMeanG + 0.0722f * atmosphericMeanB;
+        CloudRenderer clouds = renderer.getCloudRenderer();
+        boolean unbound = clouds != null && !Float.isNaN(clouds.unboundBaseHeight());
+        skyLayers.render(api, world, cameraPos, celestialBlendPNext,
+                night, 1.0f - clamp01(weatherOpacity), skyLuminance, !unbound);
 
         celestialMoonDirection[0] = -sunDirection[0];
         celestialMoonDirection[1] = -sunDirection[1];
@@ -771,7 +805,7 @@ public class SkyRenderer {
                 .build();
         return MaterialInfo.builder()
                 .emissiveColorConstant(1.0f, 1.0f, 1.0f)
-                .emissiveIntensity(STAR_RADIANCE * opacity)
+                .emissiveIntensity(STAR_RADIANCE * SkyLook.getStarBrightness() * opacity)
                 .opaqueExt(opaque)
                 .build();
     }
@@ -953,6 +987,8 @@ public class SkyRenderer {
     }
 
     private void destroyCelestialAssets() {
+        skyLayers.destroy();
+        volumetricClouds.destroyAssets();
         CELESTIAL_BLEND.freeNative();
         celestialBlendPNext = 0;
         destroyMeshes();
@@ -1095,6 +1131,7 @@ public class SkyRenderer {
             cleanup();
         } finally {
             atmosphericGenerator.destroy();
+            volumetricClouds.destroyGenerator();
         }
     }
 }

@@ -37,9 +37,11 @@ class ShotSetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "docs.shots.json"
             self.assertEqual(screenshots.load_shot_set(path), [])
-            path.write_text(json.dumps({"version": 2, "shots": []}), encoding="utf-8")
+            path.write_text(json.dumps({"version": 3, "shots": []}), encoding="utf-8")
             with self.assertRaises(RuntimeError):
                 screenshots.load_shot_set(path)
+            path.write_text(json.dumps({"version": 2, "shots": [shot("c", clouds="unbound")]}), encoding="utf-8")
+            self.assertEqual([s["name"] for s in screenshots.load_shot_set(path)], ["c"])
             path.write_text(json.dumps({"version": 1, "shots": [shot("a"), shot("b")]}), encoding="utf-8")
             self.assertEqual([s["name"] for s in screenshots.load_shot_set(path)], ["a", "b"])
 
@@ -114,6 +116,7 @@ class ReadmeTests(unittest.TestCase):
                 shot("village-night", timeOfDay=18000),
                 shot("thunderstorm", weather="thunder"),
                 shot("clouds-dusk", proceduralClouds=True),
+                shot("unbound-noon", clouds="unbound"),
                 shot("rtx-off", rtx=False),
             ],
         )
@@ -123,6 +126,7 @@ class ReadmeTests(unittest.TestCase):
         self.assertIn("| `village-night.jpg` | 18000 | clear | classic | on |", text)
         self.assertIn("| `thunderstorm.jpg` | 13000 | thunderstorm | classic | on |", text)
         self.assertIn("| `clouds-dusk.jpg` | 13000 | clear | procedural | on |", text)
+        self.assertIn("| `unbound-noon.jpg` | 13000 | clear | unbound | on |", text)
         self.assertIn("| `rtx-off.jpg` | 13000 | clear | classic | off |", text)
         self.assertTrue(text.startswith(screenshots.PROVENANCE_BEGIN))
         self.assertTrue(text.endswith(screenshots.PROVENANCE_END))
@@ -297,3 +301,26 @@ def test_capture_ends_the_game_on_ctrl_c(fake_launcher: FakeLauncher, tmp_path: 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_a_named_set_reads_and_writes_beside_the_docs_set():
+    assert screenshots.shot_set_path() == screenshots.SHOTS_DIR / "docs.shots.json"
+    assert screenshots.shot_set_path("checks") == screenshots.SHOTS_DIR / "checks.shots.json"
+    assert screenshots.output_dir() == screenshots.OUTPUT_DIR
+    assert screenshots.output_dir("checks") == screenshots.OUTPUT_DIR / "checks"
+    with pytest.raises(RuntimeError):
+        screenshots.shot_set_path("../outside")
+
+
+def test_the_trigger_names_the_set_it_captures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    write = Mock()
+    monkeypatch.setattr(runner, "write_auto_trigger", write)
+    screenshots.write_stills_trigger({}, stills_selection(tmp_path), ["rain-clouds"], "checks")
+    assert write.call_args.kwargs["extra"]["shotSet"] == "checks"
+    assert write.call_args.kwargs["extra"]["shots"] == ["rain-clouds"]
+
+
+def test_cloud_style_reads_from_either_shot_version():
+    assert screenshots.shot_clouds(shot("a", clouds="reimagined")) == "reimagined"
+    assert screenshots.shot_clouds(shot("b", proceduralClouds=True)) == "procedural"
+    assert screenshots.shot_clouds(shot("c")) == "classic"

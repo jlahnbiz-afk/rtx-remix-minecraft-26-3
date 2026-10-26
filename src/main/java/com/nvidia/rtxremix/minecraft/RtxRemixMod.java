@@ -51,6 +51,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.nvidia.rtxremix.ErrorCode;
 import com.nvidia.rtxremix.RemixException;
+import com.nvidia.rtxremix.minecraft.cloud.CloudStyle;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
@@ -644,6 +645,9 @@ public class RtxRemixMod implements ClientModInitializer {
             mod.frameFailureLogged = false;
             if (remixTexture > 0 && mod.textureOverlay != null && isRtxEnabled()) {
                 mod.textureOverlay.render(remixTexture);
+                try (ProfileScope lensScope = ProfileScope.begin("Lens")) {
+                    renderer.getLensEffects().render(remixTexture, renderer.getInteropDepthTexture());
+                }
                 RemixWeatherRenderer weather = renderer.getWeatherRenderer();
                 if (weather != null) {
                     try (ProfileScope weatherScope = ProfileScope.begin("Weather")) {
@@ -2049,7 +2053,7 @@ public class RtxRemixMod implements ClientModInitializer {
         CameraController.StillShotScene scene = new CameraController.StillShotScene(
                 StillShot.Weather.of(client.level.isRaining(), client.level.isThundering()),
                 isRtxEnabled(),
-                renderer.getCloudRenderer() != null && renderer.getCloudRenderer().isProceduralClouds());
+                renderer.getCloudRenderer() != null ? renderer.getCloudRenderer().getCloudStyle() : CloudStyle.CLASSIC);
         source.sendFeedback(Component.literal(controller.markStillShot(DOCS_SHOT_SET, name, scene)));
         return 1;
     }

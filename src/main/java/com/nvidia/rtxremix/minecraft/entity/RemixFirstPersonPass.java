@@ -8,6 +8,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.nvidia.rtxremix.InstanceCategoryBit;
 import com.nvidia.rtxremix.Transform;
+import com.nvidia.rtxremix.minecraft.lens.FlareSources;
 import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -19,6 +20,7 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.FirstPersonHandsAndItemsRenderer;
+import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.FirstPersonHandsAndItemsRenderState;
 import net.minecraft.client.renderer.state.level.PlayerRenderState;
@@ -116,6 +118,8 @@ public final class RemixFirstPersonPass implements AutoCloseable {
                     layers, context, reusableBoneData, boneCount, InteractionHand.MAIN_HAND);
             pendingOffHandLightPosition = findHeldBlockLightPosition(
                     layers, context, reusableBoneData, boneCount, InteractionHand.OFF_HAND);
+            offerHeldFlare(layers, context, reusableBoneData, boneCount, InteractionHand.MAIN_HAND);
+            offerHeldFlare(layers, context, reusableBoneData, boneCount, InteractionHand.OFF_HAND);
 
             pendingResult = new RemixEntityPass.EntityCaptureResult(
                     player,
@@ -225,6 +229,34 @@ public final class RemixFirstPersonPass implements AutoCloseable {
                 (minX + maxX) * 0.5f,
                 (minY + maxY) * 0.5f,
                 (minZ + maxZ) * 0.5f);
+    }
+
+    /**
+     * Offers the flame in this hand to the lens where it is drawn. The light that lights the
+     * scene sits on the camera's centreline instead, nowhere near the flame on screen, so the
+     * flare follows the flame's own quad: the first {@link HeldItemEffectsRenderer} emits on
+     * the particle atlas for the hand.
+     */
+    private void offerHeldFlare(List<RemixVertexConsumerProvider.CapturedLayer> layers, EntityRenderContext context,
+                                float[] transformData, int transformCount, InteractionHand hand) {
+        for (RemixVertexConsumerProvider.CapturedLayer layer : layers) {
+            if (!TextureAtlas.LOCATION_PARTICLES.equals(layer.textureId())) continue;
+            RemixCapturingConsumer consumer = layer.consumer();
+            int[] indices = consumer.getBoneIndices();
+            for (int i = 0; i + 3 < layer.vertexCount(); i++) {
+                int transform = indices[i];
+                if (transform < 0 || transform >= transformCount || context.handForTransform(transform) != hand) {
+                    continue;
+                }
+                float[] px = consumer.getPx(), py = consumer.getPy(), pz = consumer.getPz();
+                RemixEntitySubmitter.composeRigidTransform(cameraToWorld, transformData,
+                        transformCount, transform, heldLightTransform);
+                Vec3 flame = transformPoint(heldLightTransform,
+                        (px[i] + px[i + 2]) * 0.5f, (py[i] + py[i + 2]) * 0.5f, (pz[i] + pz[i + 2]) * 0.5f);
+                FlareSources.offerHeld(flame.x, flame.y, flame.z);
+                return;
+            }
+        }
     }
 
     static Vec3 transformPoint(Transform transform, float x, float y, float z) {

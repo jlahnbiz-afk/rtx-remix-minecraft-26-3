@@ -349,7 +349,7 @@ and [JVM Arguments](../docs/TUNING.md#jvm-arguments).
         "account": "<profile name>"
     },
     "launch": {
-        "jvmArgs": ["-Drtxremix.logVisibleSet=true"]
+        "jvmArgs": ["-Drtxremix.light.vanillaSnapshot=true"]
     }
 }
 ```

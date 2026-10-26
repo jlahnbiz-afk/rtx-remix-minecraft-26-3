@@ -8,10 +8,10 @@ import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import net.minecraft.client.multiplayer.ClientLevel;
 
 /**
- * Drives the raindrop rings on open water from the weather, once a frame on the render
- * thread. The rings follow the rain's strength itself, so they thin out as the weather
- * clears and stop with it. They reach the runtime through
- * {@link BlockTextureManager#updateRainSurfaces}, which sends only changes.
+ * Drives the water's waves and, from the weather, its raindrop rings, once a frame on the
+ * render thread. The rings follow the rain's strength itself, so they thin out as the
+ * weather clears and stop with it. Both reach the runtime through
+ * {@link BlockTextureManager#updateWaterSurfaces}, which sends only changes.
  */
 public final class RainSurfaces {
 
@@ -21,7 +21,7 @@ public final class RainSurfaces {
     private double animationSeconds;
     private long lastNanos;
 
-    /** Advances the ring animation by the frame's time; {@code partialTick} interpolates the rain. */
+    /** Advances the water's animation by the frame's time; {@code partialTick} interpolates the rain. */
     public void update(ClientLevel level, float partialTick, BlockTextureManager textures) {
         long now = System.nanoTime();
         if (lastNanos != 0) {
@@ -29,6 +29,6 @@ public final class RainSurfaces {
         }
         lastNanos = now;
         float rain = Math.max(0f, Math.min(1f, level.getRainLevel(partialTick)));
-        textures.updateRainSurfaces(rain, animationSeconds);
+        textures.updateWaterSurfaces(rain, animationSeconds);
     }
 }

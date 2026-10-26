@@ -14,15 +14,15 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Widens every atlas's sprite padding; see {@link AtlasPadding}. */
+/** Stitches every atlas without a sprite border; see {@link AtlasPadding}. */
 @Mixin(Stitcher.class)
 public abstract class StitcherMixin {
 
     @Shadow @Final @Mutable private int padding;
 
     @Inject(method = "<init>", at = @At("RETURN"))
-    private void rtxremix$widenPadding(int maxWidth, int maxHeight, int mipLevel, int anisotropyBits,
+    private void rtxremix$alignSprites(int maxWidth, int maxHeight, int mipLevel, int anisotropyBits,
                                        CallbackInfo ci) {
-        padding = AtlasPadding.widen(padding);
+        padding = AtlasPadding.border(padding);
     }
 }

@@ -4,6 +4,8 @@
  */
 package com.nvidia.rtxremix.minecraft.benchmark;
 
+import com.nvidia.rtxremix.minecraft.cloud.CloudStyle;
+
 import com.nvidia.rtxremix.minecraft.camera.StillShot;
 import org.junit.jupiter.api.Test;
 
@@ -20,7 +22,7 @@ class StillShotSessionTest {
     private static final StillShotSession.Settle SETTLE = new StillShotSession.Settle(10, 3, 20);
 
     private static StillShot shot(String name) {
-        return new StillShot(name, 0, 64, 0, 0f, 0f, 6000, StillShot.Weather.CLEAR, true, false);
+        return new StillShot(name, 0, 64, 0, 0f, 0f, 6000, StillShot.Weather.CLEAR, true, CloudStyle.CLASSIC);
     }
 
     @Test

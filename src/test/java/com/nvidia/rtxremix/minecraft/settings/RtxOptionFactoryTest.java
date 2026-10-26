@@ -64,15 +64,23 @@ class RtxOptionFactoryTest {
     }
 
     @Test
-    void proceduralCloudToggleUsesCloudStyleNames() {
-        assertEquals(
-                "rtxremix.settings.value.procedural",
-                ((TranslatableContents) RtxOptionFactory.booleanValueText(
-                        RtxOptionFactory.PROCEDURAL_CLOUDS_ID, true).getContents()).getKey());
+    void cloudStyleSliderUsesCloudStyleNames() {
         assertEquals(
                 "rtxremix.settings.value.classic",
-                ((TranslatableContents) RtxOptionFactory.booleanValueText(
-                        RtxOptionFactory.PROCEDURAL_CLOUDS_ID, false).getContents()).getKey());
+                ((TranslatableContents) RtxOptionFactory.intValueText(
+                        RtxOptionFactory.CLOUD_STYLE_ID, 0).getContents()).getKey());
+        assertEquals(
+                "rtxremix.settings.value.procedural",
+                ((TranslatableContents) RtxOptionFactory.intValueText(
+                        RtxOptionFactory.CLOUD_STYLE_ID, 1).getContents()).getKey());
+        assertEquals(
+                "rtxremix.settings.value.reimagined",
+                ((TranslatableContents) RtxOptionFactory.intValueText(
+                        RtxOptionFactory.CLOUD_STYLE_ID, 2).getContents()).getKey());
+        assertEquals(
+                "rtxremix.settings.value.unbound",
+                ((TranslatableContents) RtxOptionFactory.intValueText(
+                        RtxOptionFactory.CLOUD_STYLE_ID, 3).getContents()).getKey());
     }
 
     @Test

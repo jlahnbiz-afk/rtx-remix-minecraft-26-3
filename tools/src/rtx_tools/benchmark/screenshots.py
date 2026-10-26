@@ -5,7 +5,9 @@
 
 The shot set is authored in game with `/rtx shot mark <name>` and lives in
 `tools/assets/shots/docs.shots.json`, a git-tracked file the mod writes
-to directly when the harness launched the client. A refresh stages the pinned
+to directly when the harness launched the client. Other sets beside it, such as a
+set of visual checks, are captured the same way with `--set`, into
+`build/screenshots/<set>/`, optionally in another imported world or art pack. A refresh stages the pinned
 world and art pack, runs the client in `stills` trigger mode, waits for the
 `stills-complete` heartbeat, and converts each captured PNG into a JPEG under
 `build/screenshots/`. The guides embed the images as GitHub attachments, so a
@@ -28,7 +30,8 @@ from .. import client, sdk
 from . import runner, util
 
 SHOT_SET = "docs"
-SHOT_SET_VERSION = 1
+# Version 2 names the cloud style; version 1 had only a procedural-clouds flag.
+SHOT_SET_VERSIONS = (1, 2)
 SHOTS_DIR = util.ASSETS_DIR / "shots"
 SHOT_SET_PATH = SHOTS_DIR / f"{SHOT_SET}.shots.json"
 # The guides embed the images as GitHub attachments, so a refresh writes them
@@ -51,13 +54,33 @@ SHOT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 WINDOWS_RESERVED_RE = re.compile(r"^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$", re.IGNORECASE)
 
 
+def shot_set_path(set_name: str = SHOT_SET) -> Path:
+    """Where a named shot set lives."""
+    if not is_shot_name(set_name):
+        raise RuntimeError(f"shot set name is not a single file name: {set_name!r}")
+    return SHOTS_DIR / f"{set_name}.shots.json"
+
+
+def output_dir(set_name: str = SHOT_SET) -> Path:
+    """Where a set's JPEGs go: the documentation set at the top, any other in its own folder."""
+    return OUTPUT_DIR if set_name == SHOT_SET else OUTPUT_DIR / set_name
+
+
+def shot_clouds(shot: dict[str, Any]) -> str:
+    """The cloud style a shot shows, from either shot set version."""
+    clouds = shot.get("clouds")
+    if isinstance(clouds, str):
+        return clouds
+    return "procedural" if shot.get("proceduralClouds") else "classic"
+
+
 def load_shot_set(path: Path = SHOT_SET_PATH) -> list[dict[str, Any]]:
     """The shots in a set, in file order. A missing file is an empty set."""
     if not path.exists():
         return []
     data = util.read_json(path)
-    if not isinstance(data, dict) or data.get("version") != SHOT_SET_VERSION:
-        raise RuntimeError(f"{path} is not a version {SHOT_SET_VERSION} shot set")
+    if not isinstance(data, dict) or data.get("version") not in SHOT_SET_VERSIONS:
+        raise RuntimeError(f"{path} is not a version {' or '.join(map(str, SHOT_SET_VERSIONS))} shot set")
     shots = data.get("shots")
     if not isinstance(shots, list) or not all(isinstance(shot, dict) for shot in shots):
         raise RuntimeError(f"{path} has a malformed shots array")
@@ -77,7 +100,7 @@ def is_shot_name(name: object) -> bool:
     )
 
 
-def select_shots(shots: list[dict[str, Any]], names: list[str]) -> list[dict[str, Any]]:
+def select_shots(shots: list[dict[str, Any]], names: list[str], set_name: str = SHOT_SET) -> list[dict[str, Any]]:
     """Shots whose names were asked for, in set order; every name must exist."""
     if not names:
         return list(shots)
@@ -85,7 +108,7 @@ def select_shots(shots: list[dict[str, Any]], names: list[str]) -> list[dict[str
     missing = [name for name in names if name not in known]
     if missing:
         raise RuntimeError(
-            f"no shot named {', '.join(missing)} in {SHOT_SET_PATH.name}; "
+            f"no shot named {', '.join(missing)} in {set_name}.shots.json; "
             f"mark it in game with /rtx shot mark <name> (have: {', '.join(sorted(known)) or 'none'})"
         )
     wanted = set(names)
@@ -130,7 +153,7 @@ def provenance_text(
         "|-------|-------------|---------|--------|--------------|",
     ]
     for shot in shots:
-        clouds = "procedural" if shot.get("proceduralClouds") else "classic"
+        clouds = shot_clouds(shot)
         rtx = "on" if shot.get("rtx", True) else "off"
         weather = WEATHER_LABELS.get(str(shot.get("weather", "clear")), str(shot.get("weather")))
         lines.append(f"| `{shot['name']}.jpg` | {shot.get('timeOfDay', 0)} | {weather} | {clouds} | {rtx} |")
@@ -154,11 +177,13 @@ def stills_log() -> Path:
     return util.RUN_DIR / "benchmark" / "stills.log"
 
 
-def write_stills_trigger(config: dict, selection: runner.BenchmarkSelection, names: list[str]) -> None:
+def write_stills_trigger(
+    config: dict, selection: runner.BenchmarkSelection, names: list[str], set_name: str = SHOT_SET
+) -> None:
     settings = config.get("screenshots")
     if not isinstance(settings, dict):
         settings = {}
-    extra: dict[str, Any] = {"shotSet": SHOT_SET, "shots": names}
+    extra: dict[str, Any] = {"shotSet": set_name, "shots": names}
     for key in ("settleFrames", "quietFrames", "maxSettleFrames"):
         if key in settings:
             extra[key] = int(settings[key])
@@ -179,6 +204,7 @@ def capture(
     *,
     sdk_variant: str,
     timeout_seconds: int,
+    set_name: str = SHOT_SET,
 ) -> dict[str, Path]:
     """Run the client once in stills mode and return the PNG each shot produced."""
     runner.ensure_no_live_client()
@@ -197,7 +223,7 @@ def capture(
     expected = {name: screenshots_dir / f"{name}.png" for name in names}
     for png in expected.values():
         png.unlink(missing_ok=True)
-    write_stills_trigger(config, selection, names)
+    write_stills_trigger(config, selection, names, set_name)
 
     runner.kill_leftovers()
     runner.park_stale_runtime_state()
@@ -278,12 +304,27 @@ def enabled_pack_names(config: dict) -> list[str]:
     return names
 
 
-def refresh(names: list[str], *, sdk_variant: str = "release", timeout_seconds: int = 1800) -> int:
+def refresh(
+    names: list[str],
+    *,
+    sdk_variant: str = "release",
+    timeout_seconds: int = 1800,
+    set_name: str = SHOT_SET,
+    world: str | None = None,
+    resource_pack: str | None = None,
+) -> int:
+    runner.set_runtime_resource_pack_override(resource_pack)
     config = runner.load_config()
-    shots = select_shots(load_shot_set(), names)
+    if world:
+        # An imported local save needs only its name.
+        config["world"] = {"name": world}
+    path = shot_set_path(set_name)
+    shots = select_shots(load_shot_set(path), names, set_name)
     if not shots:
-        print(f"No shots in {SHOT_SET_PATH}. Launch with rtx launch and mark poses with /rtx shot mark <name>.")
+        print(f"No shots in {path}. Launch with rtx launch and mark poses with /rtx shot mark <name>.")
         return 1
+    destination_dir = output_dir(set_name)
+    readme_path = destination_dir / README_PATH.name
     # Before the world is staged, which can download it.
     client.active().check()
     selection = resolve_selection(config)
@@ -293,9 +334,10 @@ def refresh(names: list[str], *, sdk_variant: str = "release", timeout_seconds: 
         [shot["name"] for shot in shots],
         sdk_variant=sdk_variant,
         timeout_seconds=timeout_seconds,
+        set_name=set_name,
     )
     for name, png in captured.items():
-        destination = OUTPUT_DIR / f"{name}.jpg"
+        destination = destination_dir / f"{name}.jpg"
         export_jpeg(png, destination)
         print(f"Wrote {destination.relative_to(util.PROJECT_DIR)}")
 
@@ -303,7 +345,7 @@ def refresh(names: list[str], *, sdk_variant: str = "release", timeout_seconds: 
         # The provenance describes one capture of the whole set; a partial
         # refresh would stamp images it did not retake with this run's world,
         # packs, and scene state.
-        readme = README_PATH.relative_to(util.PROJECT_DIR)
+        readme = readme_path.relative_to(util.PROJECT_DIR)
         print(f"Left {readme} alone: a partial refresh; run a full one to regenerate it")
         return 0
 
@@ -317,22 +359,23 @@ def refresh(names: list[str], *, sdk_variant: str = "release", timeout_seconds: 
         height=int(render.get("overrideHeight") or 1080),
         shots=shots,
     )
-    existing = README_PATH.read_text(encoding="utf-8") if README_PATH.exists() else ""
-    README_PATH.write_text(update_readme(existing, provenance), encoding="utf-8")
-    print(f"Updated {README_PATH.relative_to(util.PROJECT_DIR)}")
+    existing = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
+    readme_path.write_text(update_readme(existing, provenance), encoding="utf-8")
+    print(f"Updated {readme_path.relative_to(util.PROJECT_DIR)}")
     return 0
 
 
-def list_shots(*, as_json: bool = False) -> int:
-    shots = load_shot_set()
+def list_shots(*, as_json: bool = False, set_name: str = SHOT_SET) -> int:
+    path = shot_set_path(set_name)
+    shots = load_shot_set(path)
     if as_json:
         print(json.dumps(shots, indent=2))
         return 0
     if not shots:
-        print(f"No shots in {SHOT_SET_PATH}. Launch with rtx launch and mark poses with /rtx shot mark <name>.")
+        print(f"No shots in {path}. Launch with rtx launch and mark poses with /rtx shot mark <name>.")
         return 0
     for shot in shots:
-        clouds = ", procedural clouds" if shot.get("proceduralClouds") else ""
+        clouds = f", {shot_clouds(shot)} clouds"
         rtx = "" if shot.get("rtx", True) else ", rtx off"
         print(
             f"{shot['name']}: {shot['x']:.1f} {shot['y']:.1f} {shot['z']:.1f} "

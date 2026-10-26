@@ -69,15 +69,41 @@ class ViewDistanceFadeTest {
     }
 
     @Test
+    void lodLayerStrengthMovesTheBandToTheLodRadius() {
+        ViewDistanceFade fade = new ViewDistanceFade();
+        for (int chunks : new int[] {2, 12, 32}) {
+            for (int lodChunks : new int[] {64, 256, 4096}) {
+                float lodBlocks = lodChunks * 16f;
+                float near = fade.layerStrength(chunks);
+                float far = fade.lodLayerStrength(chunks, lodBlocks);
+                float nearMin = lerp(ViewDistanceFade.RESTORE_FADE_MIN, ViewDistanceFade.LAYER_FADE_MIN, near);
+                float nearMax = lerp(ViewDistanceFade.RESTORE_FADE_MAX, ViewDistanceFade.LAYER_FADE_MAX, near);
+                assertEquals(lodBlocks * 0.7f,
+                        lerp(nearMin, ViewDistanceFade.LOD_LAYER_FADE_MIN, far), 0.05f);
+                assertEquals(lodBlocks * 0.8f,
+                        lerp(nearMax, ViewDistanceFade.LOD_LAYER_FADE_MAX, far), 0.05f);
+            }
+        }
+        assertEquals(0.0f, fade.lodLayerStrength(12, 0f), "no LOD terrain leaves the band alone");
+        assertEquals(0.0f, fade.lodLayerStrength(12, 100f), "LODs inside the render distance add nothing");
+        fade.setAuto(false);
+        assertEquals(0.0f, fade.lodLayerStrength(12, 4096f));
+    }
+
+    @Test
     void endpointProfilesMatchControllerConstants() throws Exception {
         Map<String, Float> baseline = readConf(Path.of("packaging", "rtx.conf"));
         Map<String, Float> minimum = readConf(Path.of("packaging", "rtx-remix", "mods",
                 "minecraft-logic", "confs", "view_distance.conf"));
+        Map<String, Float> lod = readConf(Path.of("packaging", "rtx-remix", "mods",
+                "minecraft-logic", "confs", "view_distance_lod.conf"));
 
         assertEquals(ViewDistanceFade.RESTORE_FADE_MIN, baseline.get(FADE_MIN_KEY));
         assertEquals(ViewDistanceFade.RESTORE_FADE_MAX, baseline.get(FADE_MAX_KEY));
         assertEquals(ViewDistanceFade.LAYER_FADE_MIN, minimum.get(FADE_MIN_KEY));
         assertEquals(ViewDistanceFade.LAYER_FADE_MAX, minimum.get(FADE_MAX_KEY));
+        assertEquals(ViewDistanceFade.LOD_LAYER_FADE_MIN, lod.get(FADE_MIN_KEY));
+        assertEquals(ViewDistanceFade.LOD_LAYER_FADE_MAX, lod.get(FADE_MAX_KEY));
     }
 
     private static float lerp(float from, float to, float amount) {

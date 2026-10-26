@@ -160,13 +160,18 @@ pose you want, list the set with `/rtx shot`, and drop one with
 nothing to arm or stop.
 
 Shots live beside the camera paths of the same world as `docs.shots.json`, a
-version 1 file with its own strict schema; a camera path may not be named with
-a `.shots` ending for that reason. Two shots whose names differ only in letter
+version 2 file with its own strict schema that names each shot's cloud style in
+`clouds` (`classic`, `procedural`, `reimagined` or `unbound`); version 1 files,
+which carried only a `proceduralClouds` flag, still load. A camera path may not
+be named with a `.shots` ending for that reason. Two shots whose names differ only in letter
 case are one shot, since each becomes an image file. A tool that knows the set
 can stand
 at each pose, wait for the world to load and settle, and take the picture
 again, which is how this repository's documentation screenshots are kept
-current.
+current. `toolstx.bat screenshots refresh --set <set>` captures another set
+from `tools/assets/shots/` into `build/screenshots/<set>/`, and `--world` and
+`--resource-pack` capture it in an imported save or another art pack, so a set
+of visual checks can be retaken one shot at a time.
 
 ## Troubleshooting
 

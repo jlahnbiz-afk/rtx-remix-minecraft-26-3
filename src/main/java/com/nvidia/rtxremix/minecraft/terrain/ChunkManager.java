@@ -1851,6 +1851,7 @@ public class ChunkManager {
                         TerrainLight light = lights.get(lightIndex);
                         if (light.shouldDraw(cam.x, cam.y, cam.z, lightReachThreshold, terrainFrame)) {
                             light.light.drawFast(api);
+                            light.offerFlare(cam.x, cam.y, cam.z);
                             lightsDrawn++;
                         } else {
                             lightsBeyondReach++;

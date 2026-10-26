@@ -123,8 +123,9 @@ public class SectionBuilderMixin {
         rtxremix$tracyBlockLoop.set(ProfileScope.begin("block loop"));
     }
 
-    // isSolidRender: capture opacity / face masks / lights / quads. Vanilla asks only for
-    // non-air blocks, and the emitter's section starts out transparent, which air is.
+    // isSolidRender: capture opacity / lights / quads. Vanilla asks only for non-air blocks,
+    // and the emitter's section starts out transparent, which air is; its boundary masks
+    // are read from that opacity when the section finishes.
     @Redirect(method = "compile",
               at = @At(value = "INVOKE",
                        target = "Lnet/minecraft/world/level/block/state/BlockState;isSolidRender()Z"))

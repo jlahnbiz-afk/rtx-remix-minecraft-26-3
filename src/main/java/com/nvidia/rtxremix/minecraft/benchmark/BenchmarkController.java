@@ -1068,11 +1068,11 @@ public class BenchmarkController {
         }
         RtxRemixMod mod = RtxRemixMod.getInstance();
         if (mod != null && mod.getRenderer() != null && mod.getRenderer().getCloudRenderer() != null) {
-            mod.getRenderer().getCloudRenderer().setProceduralClouds(shot.proceduralClouds());
+            mod.getRenderer().getCloudRenderer().setCloudStyle(shot.clouds());
         }
-        LOGGER.info("Still shot '{}': teleported to {} {} {}, time {}, {}, rtx {}, procedural clouds {}",
+        LOGGER.info("Still shot '{}': teleported to {} {} {}, time {}, {}, rtx {}, {} clouds",
                 shot.name(), shot.x(), shot.y(), shot.z(), shot.timeOfDay(),
-                shot.weather().wireName(), shot.rtxEnabled(), shot.proceduralClouds());
+                shot.weather().wireName(), shot.rtxEnabled(), shot.clouds().wireName());
     }
 
     /**

@@ -939,6 +939,22 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(user_pack.is_dir())
             self.assertEqual((packs / "rtx-remix.zip").read_bytes(), b"user zip")
 
+    def test_a_local_art_pack_already_in_resourcepacks_is_left_in_place(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            packs = Path(tmp) / "resourcepacks"
+            packs.mkdir()
+            zip_pack = packs / "My Pack 128x.zip"
+            zip_pack.write_bytes(b"user zip")
+            folder_pack = packs / "rtx-tools-art"
+            folder_pack.mkdir()
+            (folder_pack / "pack.mcmeta").write_text("{}", encoding="utf-8")
+
+            runner.copy_resource_pack(runner.ResourcePackSource("rtx-tools-art", zip_pack.name, zip_pack), packs)
+            runner.copy_resource_pack(runner.ResourcePackSource("rtx-tools-art", "rtx-tools-art", folder_pack), packs)
+
+            self.assertEqual(zip_pack.read_bytes(), b"user zip")
+            self.assertEqual((folder_pack / "pack.mcmeta").read_text(encoding="utf-8"), "{}")
+
     def test_stage_resource_packs_keeps_unrecognized_rtx_remix_folder(self):
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)

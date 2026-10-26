@@ -30,6 +30,26 @@ public final class AtlasSprites {
     }
 
     /**
+     * How many sprites start off a grid of their own size, the largest power of two that fits
+     * both sides. The runtime mips an atlas by halving it, so such a sprite shares mip texels
+     * with its neighbours before it shrinks to a single texel; see {@link AtlasPadding}.
+     */
+    public static int offGrid(Iterable<TextureAtlasSprite> sprites) {
+        int count = 0;
+        for (TextureAtlasSprite sprite : sprites) {
+            if (!onGrid(contentX(sprite), contentY(sprite), sprite.contents().width(), sprite.contents().height())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    static boolean onGrid(int x, int y, int width, int height) {
+        int grid = Integer.highestOneBit(Math.max(1, Math.min(width, height)));
+        return x % grid == 0 && y % grid == 0;
+    }
+
+    /**
      * The padding borders of an atlas's sprites, for filling an atlas-sized copy.
      *
      * <p>Vanilla fills each border on the GPU by drawing the sprite through a

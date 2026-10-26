@@ -50,45 +50,27 @@ class RainRipplesTest {
     @Test
     void withoutRainTheWaterIsCalm() {
         byte[] normals = new byte[FRAME_PX * FRAME_PX * 4];
-        byte[] rings = new byte[FRAME_PX * FRAME_PX * 4];
         for (int frame = 0; frame < RainRipples.FRAMES; frame += 7) {
             RIPPLES.writeNormals(frame, 0f, normals);
-            RIPPLES.writeRings(frame, 0f, 0x0A0B0C, 0.6f, rings);
             for (int i = 0; i < normals.length; i += 4) {
                 assertEquals(128, normals[i] & 0xFF);
                 assertEquals(128, normals[i + 1] & 0xFF);
-                assertEquals(0, rings[i + 3]);
-                assertEquals((byte) 0x0A, rings[i]);
             }
         }
     }
 
     @Test
-    void ringsShowOnlyWhereTheWaterIsDisturbed() {
-        byte[] rings = new byte[FRAME_PX * FRAME_PX * 4];
-        int maxAlpha = Math.round(0.6f * 255f);
-        int shown = 0, calm = 0;
+    void mostOfTheWaterStaysCalmBetweenRings() {
+        int disturbed = 0, calm = 0;
         for (int frame = 0; frame < RainRipples.FRAMES; frame++) {
-            RIPPLES.writeRings(frame, 1f, 0, 0.6f, rings);
-            for (int i = 3; i < rings.length; i += 4) {
-                int alpha = rings[i] & 0xFF;
-                assertTrue(alpha <= maxAlpha, "alpha " + alpha);
-                if (alpha > maxAlpha / 4) shown++; else calm++;
+            byte[] rg = RIPPLES.normals(frame);
+            for (int i = 0; i < rg.length; i += 2) {
+                int tilt = Math.abs((rg[i] & 0xFF) - 128) + Math.abs((rg[i + 1] & 0xFF) - 128);
+                if (tilt > 8) disturbed++; else calm++;
             }
         }
-        assertTrue(shown > 0, "some rings show");
-        assertTrue(calm > shown, "most of the water stays clear: " + shown + " shown, " + calm + " calm");
-    }
-
-    @Test
-    void lighterRainDrawsFainterRings() {
-        byte[] strong = new byte[FRAME_PX * FRAME_PX * 4];
-        byte[] light = new byte[FRAME_PX * FRAME_PX * 4];
-        RIPPLES.writeRings(5, 1f, 0, 0.6f, strong);
-        RIPPLES.writeRings(5, 0.3f, 0, 0.6f, light);
-        for (int i = 3; i < strong.length; i += 4) {
-            assertTrue((light[i] & 0xFF) <= (strong[i] & 0xFF));
-        }
+        assertTrue(disturbed > 0, "some rings disturb the water");
+        assertTrue(calm > disturbed, disturbed + " disturbed, " + calm + " calm");
     }
 
     @Test

@@ -4,6 +4,7 @@
  */
 package com.nvidia.rtxremix.minecraft.camera;
 
+import com.nvidia.rtxremix.minecraft.cloud.CloudStyle;
 import net.minecraft.client.ClientClockManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -746,7 +747,7 @@ public final class CameraController {
                 name, player.getX(), player.getY(), player.getZ(),
                 Mth.wrapDegrees(player.getYRot()), player.getXRot(),
                 normalizeTimeOfDay(client.level.getOverworldClockTime()),
-                scene.weather(), scene.rtxEnabled(), scene.proceduralClouds());
+                scene.weather(), scene.rtxEnabled(), scene.clouds());
         boolean replaced = shots.removeIf(existing -> existing.name().equalsIgnoreCase(name));
         shots.add(shot);
         String written = writeStillShots(client, set, shots);
@@ -808,7 +809,7 @@ public final class CameraController {
                     .append(", time ").append(shot.timeOfDay())
                     .append(", ").append(shot.weather().wireName())
                     .append(shot.rtxEnabled() ? ", rtx on" : ", rtx off")
-                    .append(shot.proceduralClouds() ? ", procedural clouds" : "");
+                    .append(", ").append(shot.clouds().wireName()).append(" clouds");
         }
         return out.toString();
     }
@@ -936,7 +937,7 @@ public final class CameraController {
     }
 
     /** Scene state a mark records beside the pose; read by the command, since the camera package owns no renderer state. */
-    public record StillShotScene(StillShot.Weather weather, boolean rtxEnabled, boolean proceduralClouds) {}
+    public record StillShotScene(StillShot.Weather weather, boolean rtxEnabled, CloudStyle clouds) {}
 
     public State state() {
         return state;

@@ -9,6 +9,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.nvidia.rtxremix.minecraft.RtxRemixMod;
 import com.nvidia.rtxremix.minecraft.terrain.capture.BlockQuadEmitter;
 import com.nvidia.rtxremix.minecraft.terrain.capture.RegionBuilderRelease;
+import com.nvidia.rtxremix.minecraft.weather.Puddles;
 import net.minecraft.client.renderer.chunk.RenderRegionCache;
 import net.minecraft.client.renderer.extract.LevelExtractor;
 import net.minecraft.core.SectionPos;
@@ -48,6 +49,7 @@ public abstract class LevelExtractorMixin {
         if (!RtxRemixMod.isRtxEnabled()) {
             return;
         }
+        Puddles.blocksChanged(minX, minZ, maxX, maxZ);
 
         int radius = Math.max(1, BlockQuadEmitter.getWaterTopOcclusionRadius());
         int minSectionX = SectionPos.blockToSectionCoord(minX - radius);

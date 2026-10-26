@@ -38,13 +38,41 @@ This page shapes the sky's light and appearance, clouds, and block lights.
 Clouds still follow Minecraft's own cloud option: Off removes them regardless
 of the selected style, while Fast and Fancy draw the same geometry here.
 
+**Sky Appearance** adjusts the generated sky on top of its physical
+scattering: saturation, a warm band toward a low sun, the glare around the
+sun, rainbows opposite a low sun as rain clears, and star brightness. It also
+controls the high sky layers drawn over the dome like the stars: wispy cirrus
+streaks, off by default, whose coverage regenerates their texture once the slider settles,
+and aurora curtains across the northern sky on clear nights, by default only
+where it is cold enough to snow. Aerial Haze fades distant land into the
+colour of the sky at the horizon, thickest in low valleys and thinnest on high
+ground, and thicker in the rain, when distant land melts into the overcast's
+grey; the mod draws it over the image.
+
+**Cloud Style** picks one of four looks. Classic voxelizes Minecraft's own
+clouds, Procedural draws puffy meshes, and Reimagined draws large rounded
+blocky clumps in one or two thick layers; all three are world geometry, so
+they cast shadows but end where the view distance does. Unbound marches soft
+volumetric clouds for every pixel of the screen, out to the horizon, over the
+sun, moon and high sky layers, in three layers: small cumulus just above
+Minecraft's cloud height, large cumulus above them, and a thin altostratus
+sheet far higher, each shading the ones below. You can fly into and through
+them, and from above you look down on them with the land showing through the
+gaps. They are drawn over the image rather than as world geometry, so they
+cast no shadows of their own shape; instead, while one passes in front of the
+sun or moon, the direct light dims by the Sun Shading amount.
+Coverage and speed apply to Reimagined and Unbound; the other Unbound rows set
+the large cumulus thickness (the small cumulus are half as tall), density,
+brightness, edge detail and how far rain thickens them toward an overcast sky.
+
 **Block Lights** opens a table of multipliers for normal light brightness,
 grouping related block lights into a row; the far left is Off. The Copper
-Beacon is separate: right-click a placed beacon for its own controls. Lanterns
-and sea pickles glow through their surfaces rather than casting separate
-lights, so **Block Glow Intensity** under Materials controls them. Emitting
-surfaces are not sampled directly, so a room lit only by them can be darker
-than one with separate lights.
+Beacon is separate: right-click a placed beacon for its own controls. Every
+vanilla block that gives off light has a row, except the ones that come in
+large fields: lava, magma, portals, glow lichen and sea pickles glow through
+their surfaces instead, so **Block Glow Intensity** under Materials controls
+them. Emitting surfaces are not sampled directly, so a room lit only by them
+can be darker than one with separate lights.
 
 The table commits changed rows together when you leave, then updates the
 loaded block lights in place over the next few frames; terrain is not rebuilt.
@@ -58,6 +86,15 @@ here masks that option in a map's lighting profiles for the rest of the
 session. Only these controls and Smooth Relief Maps on the Materials page have
 that rule; see [Where A Setting Can Come From](#where-a-setting-can-come-from)
 below.
+
+**Lens** draws a camera lens over the path-traced image. Depth of Field blurs
+what is nearer or farther than the block under the crosshair, focusing over a
+third of a second as an eye would; your own hand stays sharp. Lens Flare draws
+round ghosts and a rainbow ring along the line from a bright light through the
+screen centre, for the sun and for lamps within 64 blocks such as a held torch,
+and a starburst on the sun; a light behind a block or lost in the daylight does
+not flare. Both are drawn by the mod, not the Remix runtime, and 0 turns either
+off.
 
 ## Materials
 
