@@ -113,6 +113,7 @@ their distance.
 | `rtxremix.chunk.maxLightOpsPerFrame` | Light create, update, and destroy calls per frame | `ChunkManager` |
 | `rtxremix.chunk.lightBudgetNs` | Render-thread time per frame for those calls | `ChunkManager` |
 | `rtxremix.chunk.maxPendingLightOps` | Queued light work before backpressure | `ChunkManager` |
+| `rtxremix.chunk.maxDrawnLights` | Terrain lights drawn per frame. Past it the light reach shrinks for every light alike until the count fits, and eases back once it is well under; the runtime drops every light past 65,535 and samples its whole list evenly | `ChunkManager` |
 | `rtxremix.light.floodSliceNs` | Render-thread time per frame a connectivity rebuild may take. The rebuild fills a second set across frames and swaps it in when complete, so a larger slice finishes sooner and a smaller one costs less per frame | `TerrainState` |
 
 ## Entities, Textures, And Particles

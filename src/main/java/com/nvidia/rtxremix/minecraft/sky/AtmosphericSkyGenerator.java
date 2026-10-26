@@ -50,6 +50,9 @@ final class AtmosphericSkyGenerator {
     private static final int PASS_BUILD_LUT = 0;
     private static final int PASS_SINGLE_SCATTERING = 1;
     private static final int PASS_REDUCE_AND_COMPOSE = 2;
+    private static final int PASS_MULTIPLE_SCATTERING = 3;
+    /** Heights the multiple-scattering table keeps, one row each for the sun and the moon. */
+    private static final int MULTIPLE_SCATTERING_HEIGHTS = 32;
     private static final int READBACK_RING_SIZE = 3;
     // The render boundary owns texture unit 0 and an unbound pixel-pack buffer;
     // dedicated units avoid synchronous binding queries on every sky update.
@@ -83,7 +86,7 @@ final class AtmosphericSkyGenerator {
     private int program;
     private int transmittanceLut;
     private int upperSingleTexture;
-    private int upperViewTexture;
+    private int multipleScatteringTexture;
     private int finalSkyTexture;
     private int skyParametersBuffer;
     private int passLocation;
@@ -122,9 +125,9 @@ final class AtmosphericSkyGenerator {
                 upperHeight,
                 GL30.GL_RGBA32F,
                 GL11.GL_NEAREST);
-        upperViewTexture = createTexture(
-                width,
-                upperHeight,
+        multipleScatteringTexture = createTexture(
+                MULTIPLE_SCATTERING_HEIGHTS,
+                2,
                 GL30.GL_RGBA32F,
                 GL11.GL_NEAREST);
         finalSkyTexture = createTexture(
@@ -246,6 +249,9 @@ final class AtmosphericSkyGenerator {
 
             try (ProfileScope ignored =
                     ProfileScope.begin("Sky.ProceduralGeneration.Dispatch")) {
+                dispatch(PASS_MULTIPLE_SCATTERING, MULTIPLE_SCATTERING_HEIGHTS, 2);
+                GL42.glMemoryBarrier(
+                        GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
                 dispatch(PASS_SINGLE_SCATTERING, width, upperHeight);
                 GL42.glMemoryBarrier(
                         GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -306,7 +312,7 @@ final class AtmosphericSkyGenerator {
     void destroy() {
         deleteTexture(transmittanceLut);
         deleteTexture(upperSingleTexture);
-        deleteTexture(upperViewTexture);
+        deleteTexture(multipleScatteringTexture);
         deleteTexture(finalSkyTexture);
         destroyReadbackBuffers();
         if (skyParametersBuffer != 0) {
@@ -315,7 +321,7 @@ final class AtmosphericSkyGenerator {
         }
         transmittanceLut = 0;
         upperSingleTexture = 0;
-        upperViewTexture = 0;
+        multipleScatteringTexture = 0;
         finalSkyTexture = 0;
         if (program != 0) {
             GL20.glDeleteProgram(program);
@@ -560,7 +566,7 @@ final class AtmosphericSkyGenerator {
                 GL30.GL_RGBA32F);
         GL42.glBindImageTexture(
                 2,
-                upperViewTexture,
+                multipleScatteringTexture,
                 0,
                 false,
                 0,
@@ -708,6 +714,7 @@ final class AtmosphericSkyGenerator {
         return source.substring(0, versionEnd)
                 + "#define SKY_WIDTH " + width + "\n"
                 + "#define SKY_HEIGHT " + height + "\n"
+                + "#define MS_HEIGHTS " + MULTIPLE_SCATTERING_HEIGHTS + "\n"
                 + source.substring(versionEnd);
     }
 

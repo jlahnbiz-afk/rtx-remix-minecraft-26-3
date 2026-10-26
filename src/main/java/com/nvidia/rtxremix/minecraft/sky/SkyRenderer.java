@@ -119,7 +119,7 @@ public class SkyRenderer {
     public static final float DEFAULT_DAY_AMBIENT_BOOST = 0.0f;
     public static final boolean DEFAULT_SKY_AMBIENT_RECT_ENABLED = true;
     public static final float DEFAULT_MINIMUM_CELESTIAL_WEATHER_VISIBILITY = 0.0f;
-    public static final float DEFAULT_MIE_SCATTERING_ANISOTROPY = 0.9f;
+    public static final float DEFAULT_MIE_SCATTERING_ANISOTROPY = 0.8f;
     public static final float MAX_MIE_SCATTERING_ANISOTROPY = 0.99f;
     private static float nightAmbientBoost = DEFAULT_NIGHT_AMBIENT_BOOST;
     private static float dayAmbientBoost = DEFAULT_DAY_AMBIENT_BOOST;
@@ -290,7 +290,7 @@ public class SkyRenderer {
                     weatherStrengths.rain(),
                     weatherStrengths.thunder(),
                     Math.max(
-                            celestialIntensity,
+                            celestialIntensity * LightManager.RAIN_SKY_INTENSITY,
                             RAIN_DOME_MIN_INTENSITY),
                     celestialIntensity
                             * LightManager.THUNDER_SKY_INTENSITY);

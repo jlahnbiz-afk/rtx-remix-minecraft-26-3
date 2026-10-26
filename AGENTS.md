@@ -133,11 +133,19 @@ the screen indefinitely.
 **Sky.** `SkyRenderer` branches on the dimension's sky type: the End keeps a
 constant dark dome and a skyless dimension a black one with no sky ambient. In
 the Overworld, `AtmosphericSkyGenerator` computes the atmosphere with compute
-shaders (`sky_atmosphere.comp`) into the texture of a Remix dome light, with the
-sun's disc painted in as a spread splat (`LightManager.SUN_DISC_GAIN`) so that
-reflections, which read the dome texture, glint; the distant sun light gives up
-the same share. `SkyLayers` draws cirrus and aurora, `SkyRenderer` the stars and celestial bodies; `SkyLook` holds the
-sky appearance settings.
+shaders (`sky_atmosphere.comp`) into the texture of a Remix dome light, which
+primary rays that miss show as the visible sky: Rayleigh scattering, aerosols
+of an ordinary clear day and an ozone layer, with the higher orders of
+scattering from a per-height table (Hillaire 2020) and each step's light
+integrated in closed form over steps that lengthen away from the eye, so the
+zenith stays blue and the horizon whitens. The sun's aureole is a narrow lobe
+over the aerosols' phase; boosting the whole phase greyed the zenith. The sun's
+disc is painted in as a spread splat with a wide, faint skirt
+(`LightManager.SUN_DISC_GAIN`) so that reflections, which read the dome
+texture, glint; the distant sun light gives up the same share. `SkyLayers`
+draws cirrus and aurora, `SkyRenderer` the stars and celestial bodies, in the
+sky matte, which `rtx.skyForceHDR` keeps scene-linear; `SkyLook` holds the sky
+appearance settings.
 
 **Overlay input.** `RemixInputGate` owns the Minecraft-side capture session for
 the Remix overlays; `KeyboardMixin` and `MouseMixin` route SDL input events
@@ -200,7 +208,12 @@ the land, since the runtime casts none (see Lens). The dome stays as what the
 lens replaces, and its opacity toward the sun hides the sun's disc in the
 atmosphere's dome texture, so a glint on water goes out under a cloud; the
 sun's distant light keeps its strength. The density field, lighting, march and
-shadow live once in `cloud_field.glsl`, which both include (`CloudField`).
+shadow live once in `cloud_field.glsl`, which both include (`CloudField`). A
+sample is lit by the sun through light steps that double in length so they
+cross the layer, by light scattered many times that thins as one over the
+optical depth toward the sun, and by the sky through the cloud above it and the
+ground's light through the cloud below it, so bases stay grey rather than
+black.
 
 **Terrain.** Minecraft workers build section meshes, a low-concurrency executor
 merges them into chunk-column assets split into byte-capped pages per category,
@@ -271,23 +284,41 @@ cloud draws are skipped.
 the weather: depth of field focused on what the crosshair rests on, flares from
 the sun and the brightest drawn lights (`FlareSources`; the terrain light loop
 and the first-person flame offer them, and the list is cleared after the lens
-draws), aerial haze toward the horizon's sky colour, thickened by rain, and the
-Unbound clouds and their shadows on the land. It works on the runtime's
-tone-mapped image and the interop depth, which is not antialiased, so haze,
-clouds and shadows treat a sky pixel beside the land as land, and a column's
-horizon colour is read only where the sky runs on for a few rows, never from
-a lone texel with nothing drawn. A shadow darkens the land per channel by the
-share of its light that comes straight from the sun or moon. The clouds are marched at half resolution for every pixel,
-between the camera and the land or through the whole sky, and folded into a
-history reprojected by the camera's motion. Their light is brought to the
-image's exposure by comparing the dome's opaque clouds on screen with the
-panorama, per brightness band; over the sky the dome's own clouds are taken
-back out of the image using the panorama the dome shows
-(`VolumetricCloudGenerator.shownPanoramaTexture`) and the sky behind them. That
-copy is mipmapped and read over the pixel's footprint, its colour averaged
-over neighbours of matching opacity and its opacity only deep inside a cloud,
-because the runtime mips the dome's texture and its denoiser smooths the
-march's speckle out of the image but keeps the outlines.
+draws), aerial haze, thickened by rain, and the Unbound clouds and their
+shadows on the land. The sun flares only as far as rays cast toward it through
+the loaded world meet no block and the depth around it on screen shows sky:
+the depth alone let it through glass, which reads as sky, and lit ceilings.
+It works on the runtime's tone-mapped image and the interop depth, which is
+not antialiased, so haze, clouds and shadows treat a sky pixel beside the land
+as land. Haze fades land toward the sky the image
+shows at the land's own height, kept per band of elevation, times how each
+screen column's sky differs from its band where the column was read; that
+read takes only sky that runs on for a few rows, never a lone texel with
+nothing drawn. Fading toward a column's own lowest sky made whole towers glow
+in the rain, where light from below brightens fog that has no depth. The sky
+bands, the clouds' calibration and the sky behind the clouds all loop over one
+coarse sample of the screen taken once a frame. A shadow darkens the land per
+channel by the share of its light that comes straight from the sun or moon.
+The clouds are marched at half resolution for every pixel, between the camera
+and the land or through the whole sky, and folded into a history reprojected
+by the camera's motion. Their light is brought to the image's exposure by
+comparing the dome's opaque clouds on screen with the panorama, per brightness
+band of one stop; the sky matte is scene-linear, so sunlit cloud is not clipped
+at 1 nor its shade crushed by an sRGB decode. Over the sky they replace the dome's clouds outright, over the sky behind
+those: read out of the image through thin dome clouds, using the panorama the
+dome shows (`VolumetricCloudGenerator.shownPanoramaTexture`), and from its band
+of elevation where they are thick. Keeping the image wherever the two marches
+agreed drew the panorama's speckle and outlines, which the denoiser smooths out
+of the image, onto the bases of clouds overhead. The panorama copy is mipmapped
+and read over the pixel's footprint, its colour averaged over neighbours of
+matching opacity and its opacity only deep inside a cloud, because the runtime
+mips the dome's texture and its denoiser smooths the march's speckle out of the
+image but keeps the outlines. Before the clouds, the clear sky toward the zenith
+is deepened back toward its blue, which the tone mapper's shoulder bleaches.
+After the composite, the sun mirrored on level water glows and its glints
+streak: quarter-resolution passes keep the near-saturated pixels whose view ray,
+turned back up off the horizontal, nears the sun, and streak only those that
+stand out from their neighbours, in the starburst's six directions.
 
 **Particles.** Slot preparation and CPU mesh snapshots run on a dedicated worker
 and are double buffered: the render thread publishes the previous frame's
@@ -303,7 +334,9 @@ captured in place, so a model is evaluated once rather than once for OpenGL and
 again for Remix; entities outside vanilla's frustum are swept up closest-first
 under a budget, because a path tracer needs them for shadows and reflections,
 and an entity that owns a Remix light this frame is swept at any distance so
-its light never arrives without its housing. Rigid occurrences retain instances
+its light never arrives without its housing. The local player is always swept,
+even when vanilla's own draws use up the budget, because in first person its
+hidden body is captured nowhere else. Rigid occurrences retain instances
 keyed by owner, category, layer, and part; strips and beams stream transient
 meshes per frame. `OverlayComposite` paints cutout overlay layers, such as a
 villager's profession or a sheep's wool, into a copy of the body texture so they
@@ -333,7 +366,11 @@ Terrain block lights are per-frame draws, not retained instances: every frame
 plus its position, power, rule output, and last drawn frame), so not drawing a
 light is a complete cull. Culling applies the column Chebyshev box and the
 section connectivity flood in `TerrainState`, then a power-aware reach test with
-hysteresis. A light cull distance of 0 means Auto: `ChunkManager` resolves it,
+hysteresis. When more lights pass than `ChunkManager.MAX_DRAWN_LIGHTS`, the next
+frames raise the reach test's weight floor for every light alike until the
+count fits, and skip unread any section no light could pass: the runtime drops
+every light past 65,535, and its sampler draws candidates evenly from the whole
+list. A light cull distance of 0 means Auto: `ChunkManager` resolves it,
 and any explicit value, against Minecraft's render distance and pushes the
 radius into `TerrainState` only on change, so `TerrainState` is always finite.
 The flood rebuilds into a second set in per-frame slices and swaps it in when
@@ -436,7 +473,8 @@ diluting the sampler's candidate pool.
   (`HeldItemEffectsRenderer`, `LightManager`).
 - A terrain light's cull is the decision not to draw it this frame, never a
   destroy; the radius `TerrainState` holds is finite and pushed only on
-  change, because a changed radius dirties the whole flood (`ChunkManager`,
+  change, because a changed radius dirties the whole flood, and the draw
+  budget raises the weight floor, never that radius (`ChunkManager`,
   `TerrainState`).
 - Keep `rtx.showUICursor = false` in `packaging/rtx.conf`. The mod does not
   write this key; the runtime software cursor can leave the OS cursor hidden.

@@ -424,15 +424,17 @@ public class RemixEntityPass {
      *
      * <p>An entity that owns a Remix light this frame is admitted at any distance
      * and never evicted: its light already reaches the scene from wherever it
-     * stands, and a beam without its housing looks broken.
+     * stands, and a beam without its housing looks broken. The local player is
+     * kept the same way, and keeps a slot even when the in-place captures used up
+     * the budget: in first person its hidden body is captured only here, and a city
+     * full of item frames and armour stands otherwise dropped it from every shadow
+     * and reflection whenever enough of them were on screen.
      */
     private void captureOffFrustum(ClientLevel world, Vec3 cameraPos, float tickDelta,
                                    EntityRenderDispatcher dispatcher, CameraRenderState camera,
                                    RemixEntitySubmitter submitter) {
-        int budget = MAX_ENTITIES - capturedIds.size();
-        if (budget <= 0) {
-            return;
-        }
+        int budget = Math.max(1, MAX_ENTITIES - capturedIds.size());
+        Entity self = Minecraft.getInstance().player;
         // Bounded to the budget, not to MAX_ENTITIES. Heap order is not distance order, so
         // keeping the first `budget` slots of a larger heap would keep the farthest entity
         // (slot 0 is the max) and drop near ones from the leaves. Letting the heap do the
@@ -450,11 +452,11 @@ public class RemixEntityPass {
                 continue;
             }
             double distSq = entity.distanceToSqr(cameraPos);
-            boolean ownsLight = lightOwners.test(entity.getId());
-            if (!sweepAdmits(distSq, maxDistSq, ownsLight)) {
+            boolean kept = entity == self || lightOwners.test(entity.getId());
+            if (!sweepAdmits(distSq, maxDistSq, kept)) {
                 continue;
             }
-            entityHeap.offer(entity, sweepPriority(distSq, ownsLight));
+            entityHeap.offer(entity, sweepPriority(distSq, kept));
         }
         int drawsBefore = frameDraws;
         try {

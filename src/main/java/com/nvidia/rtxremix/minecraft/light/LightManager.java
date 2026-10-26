@@ -101,10 +101,17 @@ public class LightManager {
      */
     public static final float SUN_DISC_GAIN = 4000.0f;
     /**
-     * The disc's share of the sun's irradiance: its solid angle times the gain, over the pi a
-     * distant light of the same radiance delivers (Remix spreads it as radiance / sin² over its cone).
+     * Light in the wide skirt the sky shader lays around the disc, against the disc's own
+     * ({@code SUN_SKIRT_SHARE} in sky_atmosphere.comp).
      */
-    static final float SUN_DISC_SHARE = SUN_ANGULAR_RADIUS * SUN_ANGULAR_RADIUS * SUN_DISC_GAIN;
+    private static final float SUN_DISC_SKIRT = 0.6f;
+    /**
+     * The disc's and its skirt's share of the sun's irradiance: the disc's solid angle times the
+     * gain, over the pi a distant light of the same radiance delivers (Remix spreads it as
+     * radiance / sin² over its cone).
+     */
+    static final float SUN_DISC_SHARE = SUN_ANGULAR_RADIUS * SUN_ANGULAR_RADIUS * SUN_DISC_GAIN
+            * (1.0f + SUN_DISC_SKIRT);
     private static final float SUN_PATH_ROTATION_RAD = (float) Math.toRadians(SUN_PATH_ROTATION_DEG);
     private static final float MIN_DIRECT_RADIANCE = 1.0e-6f;
     /** A day fraction no frame moves the time by, unless the time was set; see resetRadianceCacheOnTimeJump. */
@@ -122,7 +129,12 @@ public class LightManager {
     // Weather dome intensity is authored in sun-luminance units. Keep that
     // reference independent of the normalized direct-light multiplier.
     private static final float WEATHER_DOME_RADIANCE_REFERENCE = 10.0f;
-    public static final float THUNDER_SKY_INTENSITY = 0.8f;
+    /**
+     * The overcast dome's brightness in rain and in a thunderstorm, against the day's light. Rain
+     * at 1 showed a rainy noon nearly as dark as a rainy night, both at the exposure's floor.
+     */
+    public static final float RAIN_SKY_INTENSITY = 2.0f;
+    public static final float THUNDER_SKY_INTENSITY = 1.0f;
     public static final float DEFAULT_SUN_INTENSITY = 1.0f;
     public static final float DEFAULT_MOON_INTENSITY = 1.0f;
 

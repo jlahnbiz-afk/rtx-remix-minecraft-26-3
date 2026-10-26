@@ -24,9 +24,11 @@ Distance controls trade scene coverage for performance. The two cull distances
 cannot exceed Minecraft's render distance, and the far right of each of those
 sliders is Auto, which follows it. Light culling chooses which chunks are
 considered; light reach then decides whether each light is bright enough to
-matter where you stand. Brighter lights reach further. Auto view fade never
-overrides a stronger situational profile, so a map that authors its own fade
-keeps it.
+matter where you stand. Brighter lights reach further. Where more than about
+four thousand lights are in reach, as in a city lit by lamps, the reach shrinks
+on its own until they fit, so the lights faintest where you stand go first.
+Auto view fade never overrides a stronger situational profile, so a map that
+authors its own fade keeps it.
 
 The background frame cap only lowers Minecraft's own Max Framerate;
 Unlimited leaves that setting in charge. A running benchmark is never capped,
@@ -39,8 +41,10 @@ Clouds still follow Minecraft's own cloud option: Off removes them regardless
 of the selected style, while Fast and Fancy draw the same geometry here.
 
 **Sky Appearance** adjusts the generated sky on top of its physical
-scattering: saturation, a warm band toward a low sun, the glare around the
-sun, rainbows opposite a low sun as rain clears, and star brightness. It also
+scattering: saturation, which also sets how far the clear sky overhead is
+deepened back toward the blue the tone mapping bleaches, a warm band toward a
+low sun, the glare around the sun, rainbows opposite a low sun as rain clears,
+and star brightness. It also
 controls the high sky layers drawn over the dome like the stars: wispy cirrus
 streaks, off by default, whose coverage regenerates their texture once the slider settles,
 and aurora curtains across the northern sky on clear nights, by default only
@@ -94,8 +98,9 @@ third of a second as an eye would; your own hand stays sharp. Lens Flare draws
 round ghosts and a rainbow ring along the line from a bright light through the
 screen centre, for the sun and for lamps within 64 blocks such as a held torch,
 and a starburst on the sun; a light behind a block or lost in the daylight does
-not flare. Both are drawn by the mod, not the Remix runtime, and 0 turns either
-off.
+not flare, nor does the sun behind a roof or glass. It also sets the glow
+around the sun mirrored on water and puddles and the streaks on its glints.
+Both are drawn by the mod, not the Remix runtime, and 0 turns either off.
 
 ## Materials
 

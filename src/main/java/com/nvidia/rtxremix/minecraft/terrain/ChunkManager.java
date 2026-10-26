@@ -127,6 +127,16 @@ public class ChunkManager {
             Long.getLong("rtxremix.chunk.lightBudgetNs", 750_000L));
     private static final long MAX_PENDING_LIGHT_OPS = Math.max(256L,
             Long.getLong("rtxremix.chunk.maxPendingLightOps", 4096L));
+    /**
+     * Terrain lights drawn per frame that the draw keeps under, a frame or two after a jump. A
+     * city lit by sea lanterns put 180,000 in reach: the runtime spent every frame on them and
+     * dropped all past 65,535, and its light sampler, which picks candidates evenly from the
+     * whole list, rarely found the lamp beside the camera. Past the budget the reach shrinks
+     * for every light alike, so the lights weakest at the camera drop out first; their blocks
+     * still glow.
+     */
+    static final int MAX_DRAWN_LIGHTS = Math.max(256,
+            Integer.getInteger("rtxremix.chunk.maxDrawnLights", 4096));
 
     private record LightSectionKey(int cx, int sy, int cz) {}
 
@@ -259,6 +269,7 @@ public class ChunkManager {
             RemixLightStore.get().create(light);
             TerrainLight record = new TerrainLight(light);
             record.place(incoming, LightPower.of(incoming, radiance.r(), radiance.g(), radiance.b()));
+            maxTerrainLightPower = Math.max(maxTerrainLightPower, record.power());
             entry.putLight(mutation.key(), record);
             entry.lightFingerprints().put(mutation.key(), mutation.fingerprint());
             terrain.adjustSectionLightCount(
@@ -273,6 +284,7 @@ public class ChunkManager {
             LightInfo info = buildBlockLightInfo(incoming, radiance);
             RemixLightStore.get().update(mutation.existing(), info);
             record.place(incoming, LightPower.of(incoming, radiance.r(), radiance.g(), radiance.b()));
+            maxTerrainLightPower = Math.max(maxTerrainLightPower, record.power());
             entry.lightFingerprints().put(mutation.key(), mutation.fingerprint());
         }
 
@@ -337,6 +349,7 @@ public class ChunkManager {
                     BlockLightRadiance radiance = blockLightRadiance(source, textures);
                     RemixLightStore.get().update(record.light, buildBlockLightInfo(source, radiance));
                     record.place(source, LightPower.of(source, radiance.r(), radiance.g(), radiance.b()));
+                    maxTerrainLightPower = Math.max(maxTerrainLightPower, record.power());
                     entry.lightFingerprints().put(target.key(), fingerprint);
                 }
             }
@@ -567,6 +580,10 @@ public class ChunkManager {
     private int lightCullChunks = DEFAULT_LIGHT_CULL_CHUNKS;
     private int lightReachBlocks = DEFAULT_LIGHT_REACH_BLOCKS;
     private float lightReachThreshold = TerrainLight.thresholdFor(DEFAULT_LIGHT_REACH_BLOCKS);
+    /** The weight floor the light budget raises the reach's to, or 0 while the reach alone fits. */
+    private float budgetThreshold;
+    /** The most power any terrain light has had; bounds which sections can hold a drawn light. */
+    private float maxTerrainLightPower;
     /** The radius TerrainState currently holds, so it is only pushed on change. */
     private int appliedLightCullChunks = -1;
     private long[] zombieAuditColumns;
@@ -639,6 +656,37 @@ public class ChunkManager {
 
     public int getLightReach() {
         return lightReachBlocks;
+    }
+
+    /**
+     * The weight floor the light budget sets for the next frame, from this frame's: raised
+     * while more lights than the budget were drawn, eased back toward the reach's own floor
+     * once well under it, and 0 when the reach alone fits.
+     */
+    static float nextBudgetThreshold(float current, float reachThreshold, int drawn, int budget) {
+        if (drawn > budget) {
+            // In a city the lights in reach grow about as the cube of the distance, and the
+            // weight falls as its square, so the floor rises as the count's 2/3 power.
+            double rise = Math.min(4.0, Math.pow((double) drawn / budget, 2.0 / 3.0));
+            return (float) (Math.max(current, reachThreshold) * rise);
+        }
+        if (current > 0.0f && drawn < budget * 3 / 4) {
+            float eased = current * 0.97f;
+            return eased > reachThreshold ? eased : 0.0f;
+        }
+        return current;
+    }
+
+    /** Squared distance from the camera to the nearest point of a section's box. */
+    private static double sectionDistanceSq(Vec3 cam, int cx, int sy, int cz) {
+        double dx = axisDistance(cam.x, cx * 16.0);
+        double dy = axisDistance(cam.y, sy * 16.0);
+        double dz = axisDistance(cam.z, cz * 16.0);
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private static double axisDistance(double value, double min) {
+        return value < min ? min - value : value > min + 16.0 ? value - (min + 16.0) : 0.0;
     }
 
     /** The weight floor the draw loop applies this frame, for tests. */
@@ -1834,6 +1882,7 @@ public class ChunkManager {
                 retainedInstancesHidden = false;
             }
 
+            float threshold = Math.max(lightReachThreshold, budgetThreshold);
             for (TerrainState.ChunkColumn column : terrain.columns()) {
                 if (!terrain.isColumnWithinLightCullRange(column.cx, column.cz)) {
                     lightsCulled += column.lightCount();
@@ -1842,14 +1891,23 @@ public class ChunkManager {
                 List<TerrainState.SectionEntry> sections = column.sectionEntries();
                 for (int sectionIndex = 0; sectionIndex < sections.size(); sectionIndex++) {
                     TerrainState.SectionEntry entry = sections.get(sectionIndex);
+                    if (entry.lightCount() == 0) {
+                        continue;
+                    }
                     if (!terrain.isSectionReachableForLights(column.cx, column.cz, entry.sy)) {
                         lightsCulled += entry.lightCount();
+                        continue;
+                    }
+                    // A whole section too far for even the strongest light is skipped unread.
+                    if (!TerrainLight.mayDraw(sectionDistanceSq(cam, column.cx, entry.sy, column.cz),
+                            maxTerrainLightPower, threshold)) {
+                        lightsBeyondReach += entry.lightCount();
                         continue;
                     }
                     List<TerrainLight> lights = entry.lightEntries();
                     for (int lightIndex = 0; lightIndex < lights.size(); lightIndex++) {
                         TerrainLight light = lights.get(lightIndex);
-                        if (light.shouldDraw(cam.x, cam.y, cam.z, lightReachThreshold, terrainFrame)) {
+                        if (light.shouldDraw(cam.x, cam.y, cam.z, threshold, terrainFrame)) {
                             light.light.drawFast(api);
                             light.offerFlare(cam.x, cam.y, cam.z);
                             lightsDrawn++;
@@ -1861,6 +1919,7 @@ public class ChunkManager {
             }
             traversalScope.drawCalls(drawCalls);
         }
+        budgetThreshold = nextBudgetThreshold(budgetThreshold, lightReachThreshold, lightsDrawn, MAX_DRAWN_LIGHTS);
 
         t.count(cntLightsCulled, lightsCulled);
         t.count(cntLightsDrawn, lightsDrawn);
@@ -1978,6 +2037,8 @@ public class ChunkManager {
         pendingColumnUnloads.clear();
         framesSinceAudit = 0;
         terrainFrame = 0;
+        budgetThreshold = 0.0f;
+        maxTerrainLightPower = 0.0f;
         zombieAuditColumns = null;
         zombieAuditCursor = 0;
         zombieAuditRemoved = 0;

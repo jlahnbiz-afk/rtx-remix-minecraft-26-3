@@ -163,21 +163,26 @@ float layerDensity(int layer, vec3 world, bool detailed) {
     return cumulusShape(layer, world, h, detailed) * density * Density;
 }
 
-const int LIGHT_STEPS = 3;
-// Blocks between light samples in a 200-block layer, scaled with the layer's thickness.
+// Light samples toward the sun, each twice as far as the one before so they cross the whole
+// layer (Photon): three short steps saw only the first 30% of it, so every point deeper in got
+// the same light. The first step, in blocks, for a 200-block layer, scaled with its thickness.
+const int LIGHT_STEPS = 4;
 const float LIGHT_STEP = 20.0;
+const int ALTO_LIGHT_STEPS = 2;
 const float ALTO_LIGHT_STEP = 200.0;
 const float FORWARD_G = 0.8;
 const float MIDDLE_G = 0.45;
 const float WIDE_G = 0.15;
-const float BACK_G = -0.3;
-const float BACK_WEIGHT = 0.5;
+// Light back toward a viewer with the sun behind, close to Bliss's 2 HG(-0.25).
+const float BACK_G = -0.25;
+const float BACK_WEIGHT = 1.5;
 const float POWDER_RATE = 4.0;
-// Kept below the direct beam's share, so a cloud is bright on the sun's side and grey on the far one.
+// Light scattered many times inside a cloud thins as one over its optical depth, as a
+// diffusing slab's transmission does, 1 / (1 + 0.75 (1 - g) tau) with g 0.85 (Kokhanovsky
+// 2004), not exponentially: an exponential left the bases of thick cumulus black.
 const float MULTIPLE_SCATTERING_GAIN = 2.0;
-const float MULTIPLE_SCATTERING_REACH = 0.35;
+const float DIFFUSION_PER_DEPTH = 0.1125;
 const float AMBIENT_GAIN = 0.65;
-const float BASE_SHADE = 5.0;
 // Share of the sky a fully covered large cumulus layer hides from the small cumulus under it.
 const float UPPER_SKY_OCCLUSION = 0.6;
 // Blocks of cloud a sunbeam crosses in a fully covered layer above.
@@ -204,15 +209,20 @@ float coverAbove(int layer, vec3 world, vec3 toward) {
     return layer == LAYER_ALTO ? cover * cover * ALTO_DENSITY / LARGE_DENSITY : cover;
 }
 
-// Optical depth toward the light: a few short steps through the layer itself, plus the
-// layers above it read once each.
+// Optical depth toward the light: steps through the layer itself, plus the layers above it
+// read once each.
 float lightOpticalDepth(int layer, vec3 world, float jitter) {
     float depth = 0.0;
-    float stepLength = layer == LAYER_ALTO ? ALTO_LIGHT_STEP : LIGHT_STEP * layerThickness(layer) / 200.0;
-    int steps = layer == LAYER_ALTO ? 2 : LIGHT_STEPS;
-    for (int i = 0; i < steps; i++) {
-        vec3 position = world + LightDirection * (stepLength * (float(i) + jitter));
+    bool alto = layer == LAYER_ALTO;
+    float stepLength = alto ? ALTO_LIGHT_STEP : LIGHT_STEP * layerThickness(layer) / 200.0;
+    float travelled = 0.0;
+    for (int i = 0; i < (alto ? ALTO_LIGHT_STEPS : LIGHT_STEPS); i++) {
+        vec3 position = world + LightDirection * (travelled + stepLength * jitter);
         depth += layerDensity(layer, position, false) * stepLength;
+        travelled += stepLength;
+        if (!alto) {
+            stepLength *= 2.0;
+        }
     }
     float shade = 0.0;
     if (layer == LAYER_SMALL) {
@@ -274,13 +284,17 @@ vec3 cloudSource(int layer, vec3 world, float density, float h, CloudPhase phase
     // Light that has scattered inside reaches deeper than the direct beam, and leaves nearly
     // evenly in every direction.
     vec3 sun = LightIrradiance * (exp(-depth) * lobes
-        + exp(-MULTIPLE_SCATTERING_REACH * depth) * MULTIPLE_SCATTERING_GAIN / (4.0 * PI));
-    // The sky lights the tops; bases, deep in their own cloud and under any layer above, see
-    // much less of it.
-    float skyShade = mix(1.0, exp2(-BASE_SHADE * density / max(Density, 0.05)), (1.0 - h) * (1.0 - h));
+        + MULTIPLE_SCATTERING_GAIN / (4.0 * PI) / (1.0 + DIFFUSION_PER_DEPTH * depth));
+    // The sky lights a point through the cloud above it, and the ground's light through the
+    // cloud below it, so a base takes the ground's light unblocked (Photon's split): dimming
+    // both by the depth into the cloud crushed the bases to black. The cloud around the point
+    // stands in for the column above and below it.
+    float extinction = density * EXTINCTION * layerThickness(layer);
     float overhead = layer == LAYER_SMALL ? coverAbove(LAYER_LARGE, world, vec3(0.0, 1.0, 0.0)) : 0.0;
-    vec3 sky = mix(AmbientBottom, AmbientTop, h) * skyShade * (1.0 - overhead * UPPER_SKY_OCCLUSION);
-    return sun + sky * AMBIENT_GAIN;
+    vec3 above = AmbientTop * (1.0 - overhead * UPPER_SKY_OCCLUSION)
+        / (1.0 + DIFFUSION_PER_DEPTH * extinction * (1.0 - h));
+    vec3 below = AmbientBottom * exp(-extinction * h);
+    return sun + mix(below, above, h) * AMBIENT_GAIN;
 }
 
 // A small planet, so the layers curve down to the horizon within the march distance.

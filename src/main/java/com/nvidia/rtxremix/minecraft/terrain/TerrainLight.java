@@ -81,6 +81,14 @@ public final class TerrainLight {
         return draw;
     }
 
+    /**
+     * Whether a light of this power, at least this far from the camera, could be drawn this
+     * frame at all, even having been drawn the frame before.
+     */
+    public static boolean mayDraw(double minDistanceSq, float power, float threshold) {
+        return power / (FOUR_PI * Math.max(1.0, minDistanceSq)) >= threshold / HYSTERESIS;
+    }
+
     /** Offers this light to the lens flare, weighted by how brightly it shines at the camera. */
     public void offerFlare(double camX, double camY, double camZ) {
         double dx = x - camX, dy = y - camY, dz = z - camZ;

@@ -64,6 +64,17 @@ public final class LensEffects {
     private static final float FOCUS_SECONDS = 0.35f;
     /** Seconds for the clouds' brightness to follow the sky's exposure. */
     private static final float CALIBRATION_SECONDS = 0.5f;
+    /**
+     * Rays cast toward the sun, at its centre and this many radians to four sides, and their
+     * reach: the share that meets no block is how much of its flare shows. The depth alone let
+     * it through glass and lit ceilings, which the interop depth reads as sky or as a lamp.
+     */
+    private static final float SUN_RAY_SPREAD = 0.01f;
+    private static final double SUN_RAY_LENGTH = 256.0;
+    /** Seconds for the sun's flare to follow its visibility, so a passing post dims it rather than cuts it. */
+    private static final float SUN_VISIBILITY_SECONDS = 0.08f;
+    /** How far the clear sky overhead is deepened at the sky saturation look's default of 1. */
+    private static final float SKY_DEPTH_AT_DEFAULT = 0.5f;
 
     private static final int UNIT_SCENE = 0;
     private static final int UNIT_DEPTH = 1;
@@ -80,16 +91,24 @@ public final class LensEffects {
     // The temporal pass reads no panorama, so its history's distances take that unit; above
     // eleven the backend caches no bindings.
     private static final int UNIT_HISTORY_DISTANCE = UNIT_PANORAMA;
+    // Nor do the sky bands' pass and the composite read the clouds' history.
+    private static final int UNIT_SKY_BANDS = UNIT_HISTORY;
+    // The statistics passes read no marched clouds, and the composite binds its own over them.
+    private static final int UNIT_SAMPLES = UNIT_CLOUDS;
+    private static final int UNIT_SAMPLE_CLOUDS = UNIT_CLOUD_DISTANCE;
     private static final int UNIT_COUNT = 12;
     /**
-     * Brightness bands the clouds' calibration keeps apart, since the tone mapper bends dark
-     * and bright cloud differently.
+     * Brightness bands the clouds' calibration keeps apart, one stop each from 1/256 up, since
+     * the tone mapper bends dark and bright cloud differently.
      */
-    private static final int CALIBRATION_BINS = 8;
+    private static final int CALIBRATION_BINS = 12;
     /** Bands of the sine of elevation, nadir to zenith, the sky behind the clouds is kept for. */
     private static final int SKY_BANDS = 32;
     /** A camera move this far in a frame is a teleport, after which the clouds' history starts over. */
     private static final double HISTORY_RESET_DISTANCE = 64.0;
+    /** The coarse grid the statistics passes sample the screen on. */
+    private static final int SAMPLE_COLUMNS = 64;
+    private static final int SAMPLE_ROWS = 36;
     /** Columns across the screen the sky's colour at the horizon is kept for. */
     private static final int HORIZON_BINS = 256;
     /** The sun and the lights {@link FlareSources} keeps. */
@@ -161,12 +180,39 @@ public final class LensEffects {
             }
             """;
 
-    // Per screen column, the sky just above the lowest point it shows: the colour distant land
-    // fades toward. A column showing no sky is left empty for the fill pass.
+    // Reads a sky kept per band of elevation (SKY_BANDS of them, by the sine of the elevation).
+    private static final String BAND_READING = "const int SKY_BANDS = " + SKY_BANDS + ";\n" + """
+            // A band, or the nearest one that has seen sky; alpha zero when none has.
+            vec4 skyBand(sampler2D bands, int band) {
+                for (int d = 0; d < SKY_BANDS; d++) {
+                    vec4 below = texelFetch(bands, ivec2(max(band - d, 0), 0), 0);
+                    if (below.a > 0.0) {
+                        return below;
+                    }
+                    vec4 above = texelFetch(bands, ivec2(min(band + d, SKY_BANDS - 1), 0), 0);
+                    if (above.a > 0.0) {
+                        return above;
+                    }
+                }
+                return vec4(0.0);
+            }
+
+            vec4 skyBandAt(sampler2D bands, float rise) {
+                float position = clamp((rise * 0.5 + 0.5) * float(SKY_BANDS) - 0.5, 0.0, float(SKY_BANDS - 1));
+                int low = int(position);
+                return mix(skyBand(bands, low), skyBand(bands, min(low + 1, SKY_BANDS - 1)), position - float(low));
+            }
+            """;
+
+    // Per screen column, the sky just above the lowest point it shows, against the sky the whole
+    // screen shows at that height (decoded, per channel): how the sky in that direction differs,
+    // as toward the setting sun, which distant land fades toward with the band at its own
+    // height. A column showing no sky is left empty, alpha zero, for the fill pass.
     private static final String HORIZON_FRAGMENT_SHADER = """
             #version 330 core
             out vec4 fragColor;
-            """ + SCENE_SAMPLING + DEPTH_SAMPLING + """
+            """ + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE + BAND_READING + """
+            uniform sampler2D SkyBands;
 
             const int ROWS = 128;
 
@@ -181,7 +227,12 @@ public final class LensEffects {
                     // nothing drawn, a gap in leaves that the unantialiased depth shows on some
                     // frames and not others, would read the land and flicker the haze.
                     if (isSky(distanceAt(vec2(u, v))) && isSky(distanceAt(above)) && isSky(distanceAt(higher))) {
-                        fragColor = vec4((scene(above) + scene(higher)) * 0.5, 1.0);
+                        vec3 colour = srgbToLinear((scene(above) + scene(higher)) * 0.5);
+                        vec4 band = skyBandAt(SkyBands, normalize(viewRay(above)).y);
+                        if (band.a <= 0.0) {
+                            break;
+                        }
+                        fragColor = vec4(clamp(colour / max(band.rgb, vec3(1.0e-4)), 0.5, 2.0), 1.0);
                         return;
                     }
                 }
@@ -208,8 +259,10 @@ public final class LensEffects {
                 for (int d = 1; d < columns; d++) {
                     vec4 left = x - d >= 0 ? texelFetch(HorizonRaw, ivec2(x - d, 0), 0) : vec4(0.0);
                     vec4 right = x + d < columns ? texelFetch(HorizonRaw, ivec2(x + d, 0), 0) : vec4(0.0);
-                    if (left.a > 0.0 || right.a > 0.0) {
-                        fragColor = vec4((left.rgb * left.a + right.rgb * right.a) / (left.a + right.a), 1.0);
+                    float leftSky = left.a > 0.0 ? 1.0 : 0.0;
+                    float rightSky = right.a > 0.0 ? 1.0 : 0.0;
+                    if (leftSky + rightSky > 0.0) {
+                        fragColor = (left * leftSky + right * rightSky) / (leftSky + rightSky);
                         return;
                     }
                 }
@@ -231,14 +284,17 @@ public final class LensEffects {
                 int columns = textureSize(HorizonRaw, 0).x;
                 vec4 sum = vec4(0.0);
                 float weights = 0.0;
+                float covered = 0.0;
                 for (int d = -RADIUS; d <= RADIUS; d++) {
                     int column = clamp(x + d, 0, columns - 1);
                     float weight = float(RADIUS + 1 - abs(d));
                     vec4 colour = texelFetch(HorizonRaw, ivec2(column, 0), 0);
-                    sum += vec4(colour.rgb * colour.a, colour.a) * weight;
+                    float sky = colour.a > 0.0 ? weight : 0.0;
+                    sum += colour * sky;
+                    covered += sky;
                     weights += weight;
                 }
-                fragColor = sum.a > 0.5 * weights ? vec4(sum.rgb / sum.a, 1.0) : vec4(0.0);
+                fragColor = covered > 0.5 * weights ? sum / covered : vec4(0.0);
             }
             """;
 
@@ -264,10 +320,10 @@ public final class LensEffects {
             // texture. Where a march grazes a cloud's flat base, its texels speckle between the
             // shaded base and the lit cloud; the runtime's denoiser smooths that speckle out of
             // the image but keeps the clouds' outlines. So the colour is averaged over the
-            // neighbours whose opacity matches, and the opacity only deep inside the cloud: read
-            // texel by texel, the speckle showed through the lens's clouds as grainy patches on
-            // their bases, and with the opacity averaged out to the soft edges, the outlines
-            // spread into pale rims against the sky.
+            // neighbours whose opacity matches, and the opacity only deep inside the cloud, for
+            // the calibration to compare like with like and the sky behind thin clouds to read
+            // true: with the opacity averaged out to the soft edges, the outlines spread into
+            // pale rims against the sky.
             vec4 shownClouds(vec2 uv) {
                 vec2 centre = panoramaUv(normalize(viewRay(uv)));
                 vec2 dx = panoramaUv(normalize(viewRay(uv + vec2(1.0 / ScreenSize.x, 0.0)))) - centre;
@@ -295,11 +351,21 @@ public final class LensEffects {
             }
             """;
 
-    // The light the image shows for clouds, from the calibration's brightness bands.
-    private static final String CLOUD_EXPOSURE = "const int CALIBRATION_BINS = " + CALIBRATION_BINS + ";\n" + """
-            uniform sampler2D CloudCalibration;
-
+    // The calibration's brightness bands, one stop each by a cloud's luminance: the sky matte is
+    // scene-linear, so clouds span a few stops either side of 1.
+    private static final String CALIBRATION_BANDS = "const int CALIBRATION_BINS = " + CALIBRATION_BINS + ";\n" + """
             const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+            const float LOWEST_BAND_LOG2 = -8.0;
+
+            // Where a colour's luminance falls among the bands, counted from the first band's centre.
+            float bandPosition(vec3 colour) {
+                return log2(max(dot(colour, LUMA), 1.0e-6)) - LOWEST_BAND_LOG2 - 0.5;
+            }
+            """;
+
+    // The light the image shows for clouds, from the calibration's brightness bands.
+    private static final String CLOUD_EXPOSURE = CALIBRATION_BANDS + """
+            uniform sampler2D CloudCalibration;
 
             // A calibration band, or the nearest one that has seen opaque cloud.
             vec4 calibrationBin(int bin) {
@@ -316,37 +382,21 @@ public final class LensEffects {
                 return vec4(1.0, 1.0, 1.0, 0.0);
             }
 
-            // What the image multiplies a cloud's decoded light by, between the bands around its brightness.
+            // What the image multiplies a cloud's light by, between the bands around its brightness.
             vec3 cloudExposure(vec3 colour) {
-                float position = clamp(dot(colour, LUMA) * float(CALIBRATION_BINS) - 0.5, 0.0,
-                    float(CALIBRATION_BINS - 1));
+                float position = clamp(bandPosition(colour), 0.0, float(CALIBRATION_BINS - 1));
                 int low = int(position);
                 return mix(calibrationBin(low).rgb, calibrationBin(min(low + 1, CALIBRATION_BINS - 1)).rgb,
                     position - float(low));
             }
 
             // The decoded light the image shows for clouds of this premultiplied light and
-            // opacity: the dome's colour, clamped per channel as the sky is, at its exposure,
-            // over their share.
+            // opacity, at the exposure their brightness gets.
             vec3 cloudLight(vec4 cloud) {
                 if (cloud.a <= 1.0e-3) {
                     return vec3(0.0);
                 }
-                vec3 colour = min(cloud.rgb / cloud.a, vec3(1.0));
-                return cloudExposure(colour) * srgbToLinear(colour) * cloud.a;
-            }
-
-            // The same, but brought within the sky's range by scaling, for the difference between
-            // the lens's clouds and the dome's: clamped per channel, a bright sunset rim lost its
-            // blue first, and where the lens's sharper rim and the dome's softer one differ the
-            // difference showed as a yellow and magenta fringe.
-            vec3 cloudLightInRange(vec4 cloud) {
-                if (cloud.a <= 1.0e-3) {
-                    return vec3(0.0);
-                }
-                vec3 colour = cloud.rgb / cloud.a;
-                colour /= max(1.0, max(colour.r, max(colour.g, colour.b)));
-                return cloudExposure(colour) * srgbToLinear(colour) * cloud.a;
+                return cloudExposure(cloud.rgb / cloud.a) * cloud.rgb;
             }
             """;
 
@@ -500,43 +550,71 @@ public final class LensEffects {
             }
             """;
 
+    // The screen sampled once on a coarse grid, one texel per sample, for the passes below that
+    // gather statistics from it: the decoded image with, for a sample showing sky, the sine of
+    // its elevation plus two in alpha (zero for land), and the dome's clouds there. Each of
+    // those passes is a handful of texels that loop over every sample, so the sampling work is
+    // done here, in parallel, rather than in their loops.
+    private static final String SAMPLES_FRAGMENT_SHADER = """
+            #version 330 core
+            layout(location = 0) out vec4 sampledScene;
+            layout(location = 1) out vec4 sampledClouds;
+            """ + "const vec2 SAMPLE_GRID = vec2(" + SAMPLE_COLUMNS + ".0, " + SAMPLE_ROWS + ".0);\n"
+            + CloudField.defines() + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE + PANORAMA_SAMPLING + """
+            uniform float Clouds;
+
+            void main() {
+                vec2 uv = gl_FragCoord.xy / SAMPLE_GRID;
+                // Sky only with sky on every side: the depth is not antialiased, and a silhouette
+                // texel whose depth says sky shows the building's colour.
+                vec2 texel = 1.0 / ScreenSize;
+                bool sky = isSky(distanceAt(uv)) && isSky(distanceAt(uv + vec2(texel.x, 0.0)))
+                    && isSky(distanceAt(uv - vec2(texel.x, 0.0))) && isSky(distanceAt(uv + vec2(0.0, texel.y)))
+                    && isSky(distanceAt(uv - vec2(0.0, texel.y)));
+                sampledScene = vec4(srgbToLinear(scene(uv)), sky ? 2.0 + normalize(viewRay(uv)).y : 0.0);
+                sampledClouds = sky && Clouds > 0.0 ? shownClouds(uv) : vec4(0.0);
+            }
+            """;
+
+    // The statistics passes read the samples above.
+    private static final String SAMPLE_READING = "const int SAMPLE_COLUMNS = " + SAMPLE_COLUMNS + ";\n"
+            + "const int SAMPLE_ROWS = " + SAMPLE_ROWS + ";\n" + """
+            uniform sampler2D Samples;
+            uniform sampler2D SampleClouds;
+            """;
+
     // How bright the image shows the sky's clouds against the light they were marched with,
-    // per brightness band, one texel each: the sky is drawn as display-encoded colour,
-    // clamped, and exposed and tone mapped with the rest of the frame, so opaque clouds the
-    // frame shows in the sky measure what the lens's clouds must be brought to, per channel,
-    // since the tone mapper shifts hue at dusk. Only clouds that hide the sky entirely are
-    // measured: through a cloud only nine tenths opaque the blue sky is a large share of a
-    // dark cloud's colour, and that tinted the dark bands blue. Eased toward from last
-    // frame's, and kept while the frame shows no opaque cloud of that brightness in the sky.
+    // per brightness band, one texel each: the sky matte is scene-linear (rtx.skyForceHDR) and
+    // exposed and tone mapped with the rest of the frame, so opaque clouds the frame shows in
+    // the sky measure what the lens's clouds must be brought to, per channel, since the tone
+    // mapper shifts hue at dusk. Only clouds that hide the sky entirely are measured: through
+    // a cloud only nine tenths opaque the blue sky is a large share of a dark cloud's colour,
+    // and that tinted the dark bands blue. Eased toward from last frame's, and kept while the
+    // frame shows no opaque cloud of that brightness in the sky.
     private static final String CLOUD_CALIBRATION_FRAGMENT_SHADER = """
             #version 330 core
             out vec4 fragColor;
-            """ + "const int BINS = " + CALIBRATION_BINS + ";\n" + CloudField.defines() + SCENE_SAMPLING
-            + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE + PANORAMA_SAMPLING + """
+            """ + CALIBRATION_BANDS + SAMPLE_READING + """
             uniform sampler2D CalibrationPrevious;
             uniform float Follow;
-
-            const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-            const int COLUMNS = 64;
-            const int ROWS = 36;
 
             void main() {
                 int bin = int(gl_FragCoord.x);
                 vec3 shown = vec3(0.0);
                 vec3 marched = vec3(0.0);
                 float weights = 0.0;
-                for (int y = 0; y < ROWS; y++) {
-                    for (int x = 0; x < COLUMNS; x++) {
-                        vec2 uv = (vec2(x, y) + 0.5) / vec2(COLUMNS, ROWS);
-                        if (!isSky(distanceAt(uv))) {
+                for (int y = 0; y < SAMPLE_ROWS; y++) {
+                    for (int x = 0; x < SAMPLE_COLUMNS; x++) {
+                        vec4 image = texelFetch(Samples, ivec2(x, y), 0);
+                        if (image.a <= 0.0) {
                             continue;
                         }
-                        vec4 cloud = shownClouds(uv);
-                        vec3 colour = min(cloud.rgb, vec3(1.0));
+                        vec4 cloud = texelFetch(SampleClouds, ivec2(x, y), 0);
                         float w = smoothstep(0.95, 1.0, cloud.a);
-                        if (w > 0.0 && min(int(dot(colour, LUMA) * float(BINS)), BINS - 1) == bin) {
-                            shown += srgbToLinear(scene(uv)) * w;
-                            marched += srgbToLinear(colour) * w;
+                        int cloudBin = clamp(int(floor(bandPosition(cloud.rgb) + 0.5)), 0, CALIBRATION_BINS - 1);
+                        if (w > 0.0 && cloudBin == bin) {
+                            shown += image.rgb * w;
+                            marched += cloud.rgb * w;
                             weights += w;
                         }
                     }
@@ -558,32 +636,25 @@ public final class LensEffects {
     private static final String SKY_BEHIND_FRAGMENT_SHADER = """
             #version 330 core
             out vec4 fragColor;
-            """ + "const int BANDS = " + SKY_BANDS + ";\n" + CloudField.defines() + SCENE_SAMPLING + DEPTH_SAMPLING
-            + VIEW_RAY + COLOUR_SPACE + PANORAMA_SAMPLING + CLOUD_EXPOSURE + """
+            """ + "const int BANDS = " + SKY_BANDS + ";\n" + COLOUR_SPACE + CLOUD_EXPOSURE + SAMPLE_READING + """
             uniform sampler2D SkyBehindPrevious;
             uniform float Follow;
-
-            const int COLUMNS = 64;
-            const int ROWS = 36;
 
             void main() {
                 int band = int(gl_FragCoord.x);
                 vec3 sum = vec3(0.0);
                 float weights = 0.0;
-                for (int y = 0; y < ROWS; y++) {
-                    for (int x = 0; x < COLUMNS; x++) {
-                        vec2 uv = (vec2(x, y) + 0.5) / vec2(COLUMNS, ROWS);
-                        if (!isSky(distanceAt(uv))) {
+                for (int y = 0; y < SAMPLE_ROWS; y++) {
+                    for (int x = 0; x < SAMPLE_COLUMNS; x++) {
+                        vec4 image = texelFetch(Samples, ivec2(x, y), 0);
+                        if (image.a <= 0.0
+                                || clamp(int(((image.a - 2.0) * 0.5 + 0.5) * float(BANDS)), 0, BANDS - 1) != band) {
                             continue;
                         }
-                        vec3 direction = normalize(viewRay(uv));
-                        if (clamp(int((direction.y * 0.5 + 0.5) * float(BANDS)), 0, BANDS - 1) != band) {
-                            continue;
-                        }
-                        vec4 shown = shownClouds(uv);
+                        vec4 shown = texelFetch(SampleClouds, ivec2(x, y), 0);
                         float w = 1.0 - smoothstep(0.2, 0.6, shown.a);
                         if (w > 0.0) {
-                            sum += max(srgbToLinear(scene(uv)) - cloudLight(shown), 0.0) / (1.0 - shown.a) * w;
+                            sum += max(image.rgb - cloudLight(shown), 0.0) / (1.0 - shown.a) * w;
                             weights += w;
                         }
                     }
@@ -594,6 +665,40 @@ public final class LensEffects {
                     return;
                 }
                 vec3 current = sum / weights;
+                fragColor = vec4(previous.a > 0.0 ? mix(previous.rgb, current, Follow) : current, 1.0);
+            }
+            """;
+
+    // The sky the image shows, decoded, per band of elevation, from every pixel that shows sky:
+    // what the air in front of distant land fades toward at that height. Eased toward from last
+    // frame's, and kept while no sky shows in a band.
+    private static final String SKY_BANDS_FRAGMENT_SHADER = """
+            #version 330 core
+            out vec4 fragColor;
+            """ + "const int BANDS = " + SKY_BANDS + ";\n" + SAMPLE_READING + """
+            uniform sampler2D SkyBandsPrevious;
+            uniform float Follow;
+
+            void main() {
+                int band = int(gl_FragCoord.x);
+                vec3 sum = vec3(0.0);
+                float count = 0.0;
+                for (int y = 0; y < SAMPLE_ROWS; y++) {
+                    for (int x = 0; x < SAMPLE_COLUMNS; x++) {
+                        vec4 image = texelFetch(Samples, ivec2(x, y), 0);
+                        if (image.a > 0.0
+                                && clamp(int(((image.a - 2.0) * 0.5 + 0.5) * float(BANDS)), 0, BANDS - 1) == band) {
+                            sum += image.rgb;
+                            count += 1.0;
+                        }
+                    }
+                }
+                vec4 previous = texelFetch(SkyBandsPrevious, ivec2(band, 0), 0);
+                if (count < 1.0) {
+                    fragColor = previous;
+                    return;
+                }
+                vec3 current = sum / count;
                 fragColor = vec4(previous.a > 0.0 ? mix(previous.rgb, current, Follow) : current, 1.0);
             }
             """;
@@ -614,10 +719,116 @@ public final class LensEffects {
             }
             """;
 
+    // The sun mirrored on water and puddles, for the lens's glow and streaks: per
+    // quarter-resolution texel, the brightest of the four by four scene pixels it covers, kept
+    // where the tone mapper nearly saturated it and a level surface there mirrors the sun: the
+    // view ray turned back up off the horizontal comes within a few degrees of it. That light
+    // glows; alpha says how far it stands out from the pixels around it, which only a glint,
+    // a point, does and a sunlit white floor or the broad sheen under the sun does not, and
+    // only that much of it streaks. The bright pass's averaged texels let no single-pixel
+    // glint through. The image is display referred, so this goes by look rather than radiance.
+    private static final String GLINT_FRAGMENT_SHADER = """
+            #version 330 core
+            out vec4 fragColor;
+            """ + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + """
+            uniform vec2 ScreenSize;
+            uniform vec3 SunDirection;
+
+            const float THRESHOLD = 0.85;
+            const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+            const float INNER = radians(3.0);
+            const float OUTER = radians(16.0);
+
+            void main() {
+                vec2 texel = 1.0 / ScreenSize;
+                vec2 corner = floor(gl_FragCoord.xy) * 4.0 * texel;
+                vec3 brightest = vec3(0.0);
+                vec2 brightestUv = corner;
+                float peak = 0.0;
+                float total = 0.0;
+                for (int y = 0; y < 4; y++) {
+                    for (int x = 0; x < 4; x++) {
+                        vec2 uv = corner + (vec2(x, y) + 0.5) * texel;
+                        vec3 colour = scene(uv);
+                        float luminance = dot(colour, LUMA);
+                        total += luminance;
+                        if (luminance > peak) {
+                            peak = luminance;
+                            brightest = colour;
+                            brightestUv = uv;
+                        }
+                    }
+                }
+                float strength = clamp((peak - THRESHOLD) / (1.0 - THRESHOLD), 0.0, 1.0);
+                if (strength <= 0.0 || isSky(distanceAt(brightestUv))) {
+                    fragColor = vec4(0.0);
+                    return;
+                }
+                vec3 ray = normalize(viewRay(brightestUv));
+                float angle = acos(clamp(dot(vec3(ray.x, -ray.y, ray.z), SunDirection), -1.0, 1.0));
+                strength *= (1.0 - smoothstep(INNER, OUTER, angle)) * step(ray.y, 0.0);
+                fragColor = vec4(brightest * strength, smoothstep(0.05, 0.2, peak - total / 16.0));
+            }
+            """;
+
+    // The glints drawn out into six rays, like the sun's starburst from the same lens: three
+    // lines through each, fading with distance (Kawase 2003's streaks, gathered in one pass).
+    private static final String STREAK_FRAGMENT_SHADER = """
+            #version 330 core
+            out vec4 fragColor;
+            uniform sampler2D Glints;
+            uniform vec2 ViewportSize;
+
+            const int TAPS = 10;
+            const float FALLOFF = 0.84;
+            const float SPACING = 1.5;
+            const float PI = 3.14159265358979323846;
+
+            void main() {
+                vec2 texel = 1.0 / ViewportSize;
+                vec2 uv = gl_FragCoord.xy * texel;
+                vec3 sum = vec3(0.0);
+                for (int axis = 0; axis < 3; axis++) {
+                    float angle = float(axis) * PI / 3.0;
+                    vec2 stride = vec2(cos(angle), sin(angle)) * SPACING * texel;
+                    float weight = 1.0;
+                    for (int i = 1; i <= TAPS; i++) {
+                        weight *= FALLOFF;
+                        vec4 ahead = textureLod(Glints, uv + stride * float(i), 0.0);
+                        vec4 behind = textureLod(Glints, uv - stride * float(i), 0.0);
+                        sum += (ahead.rgb * ahead.a + behind.rgb * behind.a) * weight;
+                    }
+                }
+                fragColor = vec4(sum, 1.0);
+            }
+            """;
+
+    // The glints' streaks and a small glow around each, added over the finished image.
+    private static final String GLINT_BLEND_FRAGMENT_SHADER = """
+            #version 330 core
+            out vec4 fragColor;
+            uniform sampler2D Glints;
+            uniform sampler2D Streaks;
+            uniform vec2 ViewportSize;
+            uniform float Strength;
+
+            const float STREAK_GAIN = 0.35;
+            const float GLOW_GAIN = 0.45;
+
+            void main() {
+                vec2 uv = gl_FragCoord.xy / ViewportSize;
+                vec3 glow = textureLod(Glints, uv, 1.0).rgb * 0.5 + textureLod(Glints, uv, 2.0).rgb * 0.3
+                    + textureLod(Glints, uv, 3.0).rgb * 0.2;
+                vec3 light = (texture(Streaks, uv).rgb * STREAK_GAIN + glow * GLOW_GAIN) * Strength;
+                // A soft limit, so a sea full of glints brightens without going flat white.
+                fragColor = vec4(light / (1.0 + light), 1.0);
+            }
+            """;
+
     private static final String COMPOSITE_FRAGMENT_SHADER = """
             #version 330 core
             out vec4 fragColor;
-            """ + "const int MAX_SOURCES = " + MAX_SOURCES + ";\n" + "const int SKY_BANDS = " + SKY_BANDS + ";\n"
+            """ + "const int MAX_SOURCES = " + MAX_SOURCES + ";\n" + BAND_READING
             + CloudField.defines() + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE + CLOUD_FIELD
             + PANORAMA_SAMPLING + CLOUD_EXPOSURE + """
 
@@ -626,11 +837,14 @@ public final class LensEffects {
             uniform sampler2D CloudLight;
             uniform sampler2D CloudDistance;
             uniform sampler2D SkyBehind;
+            uniform sampler2D SkyBands;
             uniform vec2 CloudSize;
             uniform float Clouds;
             uniform float Haze;
             // The rain's strength, 0 to 1.
             uniform float Rain;
+            // How far the clear sky overhead is deepened back toward its blue, 0 for none.
+            uniform float SkyDepth;
             // How dark the clouds' shadows on the land are, 0 to 1.
             uniform float CloudShadow;
             uniform float CameraY;
@@ -645,9 +859,10 @@ public final class LensEffects {
             uniform int SourceCount;
 
             // Blur radius, as a share of the screen height, per dioptre the distance is out of
-            // focus, and its cap: a light blur, a few pixels for the far distance at 1080p.
-            const float BLUR_PER_DIOPTRE = 0.02;
-            const float MAX_BLUR = 0.008;
+            // focus, and its cap: a light blur, a couple of pixels for the far distance at 1080p.
+            // Twice this read as too strong at the default.
+            const float BLUR_PER_DIOPTRE = 0.01;
+            const float MAX_BLUR = 0.004;
             // Nearer than this is the player's own hand, which stays sharp.
             const float HAND_DISTANCE = 1.5;
             const int TAPS = 24;
@@ -781,6 +996,18 @@ public final class LensEffects {
                 return sun * star * STAR_GAIN;
             }
 
+            // The share of a small patch around the sun that shows sky: the world's rays cover
+            // only loaded blocks, not distant terrain or entities in front of it.
+            float skyAround(vec2 sunUv) {
+                float open = 0.0;
+                for (int y = -1; y <= 1; y++) {
+                    for (int x = -1; x <= 1; x++) {
+                        open += isSky(distanceAt(sunUv + vec2(float(x) / Aspect, float(y)) * 0.004)) ? 1.0 : 0.0;
+                    }
+                }
+                return open / 9.0;
+            }
+
             vec4 horizonSky(float u) {
                 return texture(HorizonSky, vec2(u, 0.5));
             }
@@ -853,30 +1080,16 @@ public final class LensEffects {
                 return linearToSrgb(srgbToLinear(colour) * (1.0 - cloud.a) + cloudLight(cloud));
             }
 
-            // A band of the sky behind the clouds, or the nearest one that has seen it.
-            vec4 skyBand(int band) {
-                for (int d = 0; d < SKY_BANDS; d++) {
-                    vec4 below = texelFetch(SkyBehind, ivec2(max(band - d, 0), 0), 0);
-                    if (below.a > 0.0) {
-                        return below;
-                    }
-                    vec4 above = texelFetch(SkyBehind, ivec2(min(band + d, SKY_BANDS - 1), 0), 0);
-                    if (above.a > 0.0) {
-                        return above;
-                    }
-                }
-                return vec4(0.0);
-            }
-
             vec3 skyBehindAt(float rise) {
-                float position = clamp((rise * 0.5 + 0.5) * float(SKY_BANDS) - 0.5, 0.0, float(SKY_BANDS - 1));
-                int low = int(position);
-                return mix(skyBand(low).rgb, skyBand(min(low + 1, SKY_BANDS - 1)).rgb, position - float(low));
+                return skyBandAt(SkyBehind, rise).rgb;
             }
 
-            // The marched clouds over the sky in place of the dome's. Where the dome's clouds are
-            // thin the sky behind them reads straight out of the image, and where they hide it,
-            // from its band of elevation; where the two marches agree the image is unchanged.
+            // The marched clouds over the sky in place of the dome's, drawn over the sky behind
+            // the dome's: read straight out of the image where the dome's clouds are thin, and
+            // from its band of elevation where they hide it. Nothing of the dome's clouds is kept.
+            // Its panorama speckles where a march grazes a flat cloud base and the denoiser
+            // smooths that out of the image but keeps the outlines, so the difference between the
+            // two drew grain over the bases of clouds overhead and lines along their outlines.
             // Rain closes the sky into a featureless overcast the dome shows as well, and its
             // lightning changes the light faster than the dome follows, so rain hands the sky
             // back to the dome.
@@ -888,24 +1101,17 @@ public final class LensEffects {
                 }
                 vec3 direction = normalize(viewRay(uv));
                 vec4 shown = shownClouds(uv);
-                vec3 shownLight = cloudLight(shown);
                 vec3 image = srgbToLinear(colour);
-                // Read through the dome's clouds only where they are nearly clear: dividing by
-                // what they let pass magnifies any error in their light, which coloured the rims
-                // of sunset clouds magenta and yellow; and kept near the band's colour.
+                // Dividing by what the dome's clouds let pass magnifies any error in their light,
+                // which coloured the rims of sunset clouds magenta and yellow, so the sky read
+                // through them is kept near the band's colour, and taken from the band where they
+                // are thick. Clear sky, the sun's disc in it, is left as it is.
                 vec3 band = skyBehindAt(direction.y);
-                vec3 behind = max(image - shownLight, 0.0) / max(1.0 - shown.a, 1.0e-3);
-                behind = clamp(behind, band * 0.5, band * 2.0 + 0.01);
-                behind = mix(band, behind, smoothstep(0.4, 0.1, shown.a));
-                vec3 change = cloudLightInRange(marched) - cloudLightInRange(shown);
-                // Where the lens's clouds are thicker, they hide more of the sky, but never more
-                // sky than the image holds beside the dome's clouds: a band brightened by a
-                // lightning flash otherwise took the image below black.
-                vec3 hidden = (marched.a - shown.a) * behind;
-                if (marched.a > shown.a) {
-                    hidden = min(hidden, max(image - shownLight, 0.0));
-                }
-                return mix(colour, linearToSrgb(max(image + change - hidden, 0.0)), 1.0 - Rain);
+                vec3 behind = max(image - cloudLight(shown), 0.0) / max(1.0 - shown.a, 1.0e-3);
+                behind = mix(behind, clamp(behind, band * 0.5, band * 2.0 + 0.01), smoothstep(0.02, 0.1, shown.a));
+                behind = mix(behind, band, smoothstep(0.1, 0.4, shown.a));
+                vec3 replaced = cloudLight(marched) + (1.0 - marched.a) * behind;
+                return mix(colour, linearToSrgb(replaced), 1.0 - Rain);
             }
 
             // The land in the clouds' shadows: the light the clouds above stop, times the share of
@@ -915,8 +1121,7 @@ public final class LensEffects {
             // block. Your hand lies in the shadow you stand in.
             const float SHADOW_DEPTH_AT_DEFAULT = 0.8;
 
-            vec3 cloudShadows(vec2 uv, vec3 colour) {
-                float axial = landDistance(uv);
+            vec3 cloudShadows(vec2 uv, vec3 colour, float axial) {
                 if (isSky(axial) || CloudShadow <= 0.0) {
                     return colour;
                 }
@@ -930,38 +1135,65 @@ public final class LensEffects {
                 return linearToSrgb(srgbToLinear(colour) * (1.0 - darkening));
             }
 
-            vec3 clouds(vec2 uv, vec3 colour) {
-                float axial = landDistance(uv);
+            vec3 clouds(vec2 uv, vec3 colour, float axial) {
                 return isSky(axial) ? cloudsOverSky(uv, colour) : cloudsOverLand(uv, colour, axial);
             }
 
-            vec3 aerialHaze(vec2 uv, vec3 colour) {
-                float axial = landDistance(uv);
-                vec4 sky = horizonSky(uv.x);
-                if (isSky(axial) || axial < HAND_DISTANCE || sky.a <= 0.0) {
+            // The tone mapper's shoulder bleaches a bright sky toward white channel by channel, so
+            // the blue overhead read nearly as pale as the horizon. Toward the zenith the sky's
+            // colour is pushed out from its grey and dimmed a little, as the eye sees a clear
+            // sky; the horizon, white from its long path through the air, is left as it is, and
+            // so is rain's overcast. Clouds are drawn over it afterwards.
+            vec3 deepenSky(vec2 uv, vec3 colour) {
+                float depth = SkyDepth * smoothstep(0.05, 0.7, normalize(viewRay(uv)).y) * (1.0 - Rain);
+                if (depth <= 0.0) {
+                    return colour;
+                }
+                vec3 linear = srgbToLinear(colour);
+                float luminance = dot(linear, LUMA);
+                linear = luminance * (1.0 - 0.3 * depth) + (linear - luminance) * (1.0 + 1.2 * depth);
+                return linearToSrgb(max(linear, vec3(0.0)));
+            }
+
+            vec3 aerialHaze(vec2 uv, vec3 colour, float axial) {
+                vec4 direction = horizonSky(uv.x);
+                if (isSky(axial) || axial < HAND_DISTANCE || direction.a <= 0.0) {
                     return colour;
                 }
                 vec3 ray = viewRay(uv);
+                vec4 band = skyBandAt(SkyBands, normalize(ray).y);
+                if (band.a <= 0.0) {
+                    return colour;
+                }
                 float pathLength = axial * length(ray);
                 float rise = axial * ray.y / HAZE_SCALE_HEIGHT;
                 float mean = abs(rise) > 1.0e-3 ? (1.0 - exp(-rise)) / rise : 1.0 - 0.5 * rise;
                 float startDensity = exp(-(CameraY - HAZE_SEA_LEVEL) / HAZE_SCALE_HEIGHT);
                 float opticalDepth = Haze * pathLength
                     * (HAZE_PER_BLOCK * min(startDensity * mean, 4.0) + RAIN_HAZE_PER_BLOCK * Rain);
-                return mix(colour, sky.rgb, 1.0 - exp(-opticalDepth));
+                // Land fades toward the sky the image shows at its own height, in its direction. Light
+                // from below that brightens the rain's fog near the ground has no depth, so it reads
+                // as sky at the bottom of a column; fading toward each column's lowest sky, whole
+                // towers rising out of it took its colour and glowed against the darker sky.
+                vec3 fade = linearToSrgb(band.rgb * direction.rgb);
+                return mix(colour, fade, 1.0 - exp(-opticalDepth));
             }
 
             void main() {
                 vec2 uv = gl_FragCoord.xy / ViewportSize;
                 vec3 colour = DepthOfField > 0.0 ? depthOfField(uv) : scene(uv);
+                float axial = Clouds > 0.0 || Haze > 0.0 ? landDistance(uv) : 0.0;
                 if (Clouds > 0.0) {
-                    colour = cloudShadows(uv, colour);
+                    colour = cloudShadows(uv, colour, axial);
                 }
                 if (Haze > 0.0) {
-                    colour = aerialHaze(uv, colour);
+                    colour = aerialHaze(uv, colour, axial);
+                }
+                if (isSky(distanceAt(uv))) {
+                    colour = deepenSky(uv, colour);
                 }
                 if (Clouds > 0.0) {
-                    colour = clouds(uv, colour);
+                    colour = clouds(uv, colour, axial);
                 }
                 if (Flare > 0.0) {
                     vec3 flare = vec3(0.0);
@@ -972,8 +1204,10 @@ public final class LensEffects {
                         }
                         vec3 light = lightAt(lightUv);
                         if (abs(Sources[i].z - 1.0) < 0.5) {
-                            // The sun stands in a bright sky, so its own glow decides the strength.
-                            light = bright(lightUv, 3.0);
+                            // The sun stands in a bright sky, so its own glow decides the strength,
+                            // as far as the rays toward it found the world open and the depth
+                            // around it shows sky.
+                            light = bright(lightUv, 3.0) * Sources[i].w * skyAround(lightUv);
                             flare += starburst(uv, lightUv, light);
                         }
                         flare += flareFrom(uv, lightUv, light);
@@ -1006,6 +1240,8 @@ public final class LensEffects {
     private final int[] previousSamplers = new int[UNIT_COUNT];
     private long lastFocusNanos;
     private final float[] sunDirection = new float[3];
+    /** The share of the sun the world leaves open, eased over {@link #SUN_VISIBILITY_SECONDS}. */
+    private float sunVisibility;
 
     private Program brightProgram;
     private Program horizonProgram;
@@ -1017,6 +1253,13 @@ public final class LensEffects {
     /** Ping-ponged, so a frame without sky can keep the last frame's colours. */
     private final int[] horizonFilled = new int[2];
     private int horizonCurrent;
+    private Program skyBandsProgram;
+    private Program samplesProgram;
+    private int sampleScene;
+    private int sampleClouds;
+    private int sampleFramebuffer;
+    private final int[] skyBands = new int[2];
+    private int skyBandsCurrent;
     private Program cloudMarchProgram;
     private Program cloudCalibrationProgram;
     private Program skyBehindProgram;
@@ -1047,6 +1290,14 @@ public final class LensEffects {
     private float calibrationFollow = 1.0f;
     private int vertexArray;
     private int framebuffer;
+    private Program glintProgram;
+    private Program streakProgram;
+    private Program glintBlendProgram;
+    /** Quarter resolution: the glints with their mips for the glow, and their streaks. */
+    private int glintTexture;
+    private int streakTexture;
+    private int glintWidth;
+    private int glintHeight;
     private int brightTexture;
     private int brightWidth;
     private int brightHeight;
@@ -1083,6 +1334,7 @@ public final class LensEffects {
         System.arraycopy(sunDirection, 0, this.sunDirection, 0, 3);
         long now = System.nanoTime();
         float seconds = lastFocusNanos == 0L ? Float.POSITIVE_INFINITY : (now - lastFocusNanos) / 1.0e9f;
+        updateSunVisibility(position, level, seconds);
         updateFocus(camera, level, now, seconds);
         calibrationFollow = 1.0f - (float) Math.exp(-seconds / CALIBRATION_SECONDS);
     }
@@ -1090,7 +1342,7 @@ public final class LensEffects {
     /** Projects the sun and this frame's flare lights onto the screen; returns how many land on it. */
     private int projectSources() {
         int count = 0;
-        if (sunDirection[1] > 0.0f) {
+        if (sunDirection[1] > 0.0f && sunVisibility > 1.0e-3f) {
             count = addSource(count, sunDirection[0], sunDirection[1], sunDirection[2], 0.0f, true, false);
         }
         for (int i = 0; i < FlareSources.count(); i++) {
@@ -1116,8 +1368,42 @@ public final class LensEffects {
         sources[at] = u;
         sources[at + 1] = v;
         sources[at + 2] = sun ? 1.0f : held ? 2.0f : 0.0f;
-        sources[at + 3] = clip.w;
+        sources[at + 3] = sun ? sunVisibility : clip.w;
         return count + 1;
+    }
+
+    private void updateSunVisibility(Vec3 eye, Level level, float seconds) {
+        float target = 0.0f;
+        if (level != null && sunDirection[1] > 0.0f) {
+            float x = sunDirection[0];
+            float y = sunDirection[1];
+            float z = sunDirection[2];
+            // Two directions across the sun: horizontal, then the one perpendicular to both.
+            float flat = (float) Math.sqrt(x * x + z * z);
+            float ax = flat > 1.0e-4f ? -z / flat : 1.0f;
+            float az = flat > 1.0e-4f ? x / flat : 0.0f;
+            float bx = y * az;
+            float by = z * ax - x * az;
+            float bz = -y * ax;
+            int open = 0;
+            for (int ray = 0; ray < 5; ray++) {
+                float a = ray == 1 ? 1.0f : ray == 2 ? -1.0f : 0.0f;
+                float b = ray == 3 ? 1.0f : ray == 4 ? -1.0f : 0.0f;
+                double dx = x + (a * ax + b * bx) * SUN_RAY_SPREAD;
+                double dy = y + b * by * SUN_RAY_SPREAD;
+                double dz = z + (a * az + b * bz) * SUN_RAY_SPREAD;
+                Vec3 end = eye.add(dx * SUN_RAY_LENGTH, dy * SUN_RAY_LENGTH, dz * SUN_RAY_LENGTH);
+                // Fluids too: from under water the sun shows no flare.
+                BlockHitResult hit = level.clip(new ClipContext(eye, end, ClipContext.Block.VISUAL,
+                        ClipContext.Fluid.ANY, CollisionContext.empty()));
+                if (hit.getType() == HitResult.Type.MISS) {
+                    open++;
+                }
+            }
+            target = open / 5.0f;
+        }
+        float follow = Float.isInfinite(seconds) ? 1.0f : 1.0f - (float) Math.exp(-seconds / SUN_VISIBILITY_SECONDS);
+        sunVisibility += (target - sunVisibility) * follow;
     }
 
     private void updateFocus(Camera camera, Level level, long now, float seconds) {
@@ -1207,17 +1493,60 @@ public final class LensEffects {
                 GL45C.glGenerateTextureMipmap(brightTexture);
             }
 
+            boolean glints = flare > 0.0f && sunDirection[1] > 0.0f;
+            if (glints) {
+                ensureGlintTextures(Math.max(1, screenWidth / 4), Math.max(1, screenHeight / 4));
+                bindTexture(UNIT_DEPTH, depthTexture, depthSampler);
+                GL45C.glNamedFramebufferTexture(framebuffer, GL45C.GL_COLOR_ATTACHMENT0, glintTexture, 0);
+                GlStateManager._viewport(0, 0, glintWidth, glintHeight);
+                glintProgram.use();
+                glintProgram.set("ViewportSize", glintWidth, glintHeight);
+                setView(glintProgram);
+                glintProgram.set("SunDirection", sunDirection[0], sunDirection[1], sunDirection[2]);
+                GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
+                GL45C.glGenerateTextureMipmap(glintTexture);
+
+                GL45C.glNamedFramebufferTexture(framebuffer, GL45C.GL_COLOR_ATTACHMENT0, streakTexture, 0);
+                bindTexture(UNIT_BRIGHT, glintTexture, brightSampler);
+                streakProgram.use();
+                streakProgram.set("ViewportSize", glintWidth, glintHeight);
+                GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
+            }
+
+            if (haze > 0.0f || clouds) {
+                GlStateManager._glBindFramebuffer(GL45C.GL_DRAW_FRAMEBUFFER, sampleFramebuffer);
+                GlStateManager._viewport(0, 0, SAMPLE_COLUMNS, SAMPLE_ROWS);
+                bindTexture(UNIT_DEPTH, depthTexture, depthSampler);
+                if (clouds) {
+                    bindTexture(UNIT_PANORAMA, CloudField.panoramaTexture(), panoramaSampler);
+                }
+                samplesProgram.use();
+                setView(samplesProgram);
+                samplesProgram.set("Clouds", clouds ? 1.0f : 0.0f);
+                GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
+                GlStateManager._glBindFramebuffer(GL45C.GL_DRAW_FRAMEBUFFER, framebuffer);
+            }
             if (haze > 0.0f) {
+                int next = 1 - skyBandsCurrent;
+                GlStateManager._viewport(0, 0, SKY_BANDS, 1);
+                GL45C.glNamedFramebufferTexture(framebuffer, GL45C.GL_COLOR_ATTACHMENT0, skyBands[next], 0);
+                bindTexture(UNIT_SKY_BANDS, skyBands[skyBandsCurrent], depthSampler);
+                bindTexture(UNIT_SAMPLES, sampleScene, depthSampler);
+                skyBandsProgram.use();
+                skyBandsProgram.set("Follow", calibrationFollow);
+                GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
+                skyBandsCurrent = next;
+
                 bindTexture(UNIT_DEPTH, depthTexture, depthSampler);
                 GlStateManager._viewport(0, 0, HORIZON_BINS, 1);
                 GL45C.glNamedFramebufferTexture(framebuffer, GL45C.GL_COLOR_ATTACHMENT0, horizonRaw, 0);
+                bindTexture(UNIT_SKY_BANDS, skyBands[skyBandsCurrent], depthSampler);
                 horizonProgram.use();
                 horizonProgram.set("ViewportSize", HORIZON_BINS, 1);
-                horizonProgram.set("Near", NEAR_PLANE);
-                horizonProgram.set("Far", farPlane);
+                setView(horizonProgram);
                 GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
 
-                int next = 1 - horizonCurrent;
+                next = 1 - horizonCurrent;
                 GL45C.glNamedFramebufferTexture(framebuffer, GL45C.GL_COLOR_ATTACHMENT0, horizonFilled[next], 0);
                 bindTexture(UNIT_BRIGHT, horizonRaw, depthSampler);
                 bindTexture(UNIT_HORIZON, horizonFilled[horizonCurrent], depthSampler);
@@ -1252,10 +1581,10 @@ public final class LensEffects {
                 int next = 1 - calibrationCurrent;
                 GlStateManager._viewport(0, 0, CALIBRATION_BINS, 1);
                 GL45C.glNamedFramebufferTexture(framebuffer, GL45C.GL_COLOR_ATTACHMENT0, calibration[next], 0);
-                bindTexture(UNIT_PANORAMA, CloudField.panoramaTexture(), panoramaSampler);
                 bindTexture(UNIT_CALIBRATION, calibration[calibrationCurrent], depthSampler);
+                bindTexture(UNIT_SAMPLES, sampleScene, depthSampler);
+                bindTexture(UNIT_SAMPLE_CLOUDS, sampleClouds, depthSampler);
                 cloudCalibrationProgram.use();
-                setView(cloudCalibrationProgram);
                 cloudCalibrationProgram.set("Follow", calibrationFollow);
                 GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
                 calibrationCurrent = next;
@@ -1266,7 +1595,6 @@ public final class LensEffects {
                 bindTexture(UNIT_CALIBRATION, calibration[calibrationCurrent], depthSampler);
                 bindTexture(UNIT_SKY_BEHIND, skyBehind[skyBehindCurrent], depthSampler);
                 skyBehindProgram.use();
-                setView(skyBehindProgram);
                 skyBehindProgram.set("Follow", calibrationFollow);
                 GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
                 skyBehindCurrent = next;
@@ -1284,6 +1612,7 @@ public final class LensEffects {
             bindTexture(UNIT_CALIBRATION, calibration[calibrationCurrent], depthSampler);
             bindTexture(UNIT_PANORAMA, clouds ? CloudField.panoramaTexture() : 0, panoramaSampler);
             bindTexture(UNIT_SKY_BEHIND, skyBehind[skyBehindCurrent], depthSampler);
+            bindTexture(UNIT_SKY_BANDS, skyBands[skyBandsCurrent], depthSampler);
             compositeProgram.use();
             compositeProgram.set("ViewportSize", mainTarget.width, mainTarget.height);
             setView(compositeProgram);
@@ -1299,10 +1628,24 @@ public final class LensEffects {
             compositeProgram.set("Aspect", aspect);
             compositeProgram.set("Haze", haze);
             compositeProgram.set("Rain", rain);
+            compositeProgram.set("SkyDepth", SKY_DEPTH_AT_DEFAULT * SkyLook.getSaturation());
             compositeProgram.set("CameraY", (float) cameraY);
             compositeProgram.setSources(sources, flare > 0.0f ? projectSources() : 0);
             GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
             historyValid = clouds;
+
+            if (glints) {
+                bindTexture(UNIT_BRIGHT, glintTexture, brightSampler);
+                bindTexture(UNIT_HORIZON, streakTexture, sceneSampler);
+                GlStateManager._enableBlend(0);
+                GlStateManager._blendFuncSeparate(GL45C.GL_ONE, GL45C.GL_ONE, GL45C.GL_ZERO, GL45C.GL_ONE);
+                GlStateManager._blendEquationSeparate(GL45C.GL_FUNC_ADD, GL45C.GL_FUNC_ADD);
+                glintBlendProgram.use();
+                glintBlendProgram.set("ViewportSize", mainTarget.width, mainTarget.height);
+                glintBlendProgram.set("Strength", flare);
+                GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
+                GlStateManager._disableBlend(0);
+            }
         } finally {
             GlStateManager._activeTexture(GL45C.GL_TEXTURE0 + UNIT_NOISE);
             GL45C.glBindTexture(GL45C.GL_TEXTURE_3D, 0);
@@ -1388,6 +1731,19 @@ public final class LensEffects {
             brightProgram.delete();
             brightProgram = null;
         }
+        if (glintProgram != null) {
+            glintProgram.delete();
+            glintProgram = null;
+            streakProgram.delete();
+            streakProgram = null;
+            glintBlendProgram.delete();
+            glintBlendProgram = null;
+        }
+        if (glintTexture != 0) {
+            GL45C.glDeleteTextures(glintTexture);
+            GL45C.glDeleteTextures(streakTexture);
+            glintTexture = streakTexture = glintWidth = glintHeight = 0;
+        }
         if (horizonProgram != null) {
             horizonProgram.delete();
             horizonProgram = null;
@@ -1397,12 +1753,23 @@ public final class LensEffects {
             horizonFillProgram = null;
             horizonSmoothProgram.delete();
             horizonSmoothProgram = null;
+            skyBandsProgram.delete();
+            skyBandsProgram = null;
+            samplesProgram.delete();
+            samplesProgram = null;
+        }
+        if (sampleFramebuffer != 0) {
+            GL45C.glDeleteFramebuffers(sampleFramebuffer);
+            GL45C.glDeleteTextures(sampleScene);
+            GL45C.glDeleteTextures(sampleClouds);
+            sampleFramebuffer = sampleScene = sampleClouds = 0;
         }
         if (horizonRaw != 0) {
             GL45C.glDeleteTextures(horizonRaw);
             GL45C.glDeleteTextures(horizonFilled);
             GL45C.glDeleteTextures(horizonSmooth);
-            horizonRaw = horizonFilled[0] = horizonFilled[1] = horizonSmooth = 0;
+            GL45C.glDeleteTextures(skyBands);
+            horizonRaw = horizonFilled[0] = horizonFilled[1] = horizonSmooth = skyBands[0] = skyBands[1] = 0;
         }
         if (compositeProgram != null) {
             compositeProgram.delete();
@@ -1446,6 +1813,11 @@ public final class LensEffects {
     }
 
     private void ensureObjects() {
+        if (glintProgram == null) {
+            glintProgram = new Program(GLINT_FRAGMENT_SHADER);
+            streakProgram = new Program(STREAK_FRAGMENT_SHADER);
+            glintBlendProgram = new Program(GLINT_BLEND_FRAGMENT_SHADER);
+        }
         if (brightProgram == null) {
             brightProgram = new Program(BRIGHT_FRAGMENT_SHADER);
         }
@@ -1453,12 +1825,27 @@ public final class LensEffects {
             horizonProgram = new Program(HORIZON_FRAGMENT_SHADER);
             horizonFillProgram = new Program(HORIZON_FILL_FRAGMENT_SHADER);
             horizonSmoothProgram = new Program(HORIZON_SMOOTH_FRAGMENT_SHADER);
+            skyBandsProgram = new Program(SKY_BANDS_FRAGMENT_SHADER);
+            samplesProgram = new Program(SAMPLES_FRAGMENT_SHADER);
+        }
+        if (sampleFramebuffer == 0) {
+            sampleScene = GL45C.glCreateTextures(GL45C.GL_TEXTURE_2D);
+            GL45C.glTextureStorage2D(sampleScene, 1, GL45C.GL_RGBA16F, SAMPLE_COLUMNS, SAMPLE_ROWS);
+            sampleClouds = GL45C.glCreateTextures(GL45C.GL_TEXTURE_2D);
+            GL45C.glTextureStorage2D(sampleClouds, 1, GL45C.GL_RGBA16F, SAMPLE_COLUMNS, SAMPLE_ROWS);
+            sampleFramebuffer = GL45C.glCreateFramebuffers();
+            GL45C.glNamedFramebufferTexture(sampleFramebuffer, GL45C.GL_COLOR_ATTACHMENT0, sampleScene, 0);
+            GL45C.glNamedFramebufferTexture(sampleFramebuffer, GL45C.GL_COLOR_ATTACHMENT1, sampleClouds, 0);
+            GL45C.glNamedFramebufferDrawBuffers(sampleFramebuffer,
+                    new int[] {GL45C.GL_COLOR_ATTACHMENT0, GL45C.GL_COLOR_ATTACHMENT1});
         }
         if (horizonRaw == 0) {
             horizonRaw = horizonTexture();
             horizonFilled[0] = horizonTexture();
             horizonFilled[1] = horizonTexture();
             horizonSmooth = horizonTexture();
+            skyBands[0] = colourTexture(SKY_BANDS);
+            skyBands[1] = colourTexture(SKY_BANDS);
         }
         if (compositeProgram == null) {
             compositeProgram = new Program(COMPOSITE_FRAGMENT_SHADER);
@@ -1502,6 +1889,23 @@ public final class LensEffects {
         GL45C.glTextureStorage2D(brightTexture, levels, GL45C.GL_RGBA16F, width, height);
         brightWidth = width;
         brightHeight = height;
+    }
+
+    private void ensureGlintTextures(int width, int height) {
+        if (glintTexture != 0 && width == glintWidth && height == glintHeight) {
+            return;
+        }
+        if (glintTexture != 0) {
+            GL45C.glDeleteTextures(glintTexture);
+            GL45C.glDeleteTextures(streakTexture);
+        }
+        glintTexture = GL45C.glCreateTextures(GL45C.GL_TEXTURE_2D);
+        int levels = Math.min(4, 32 - Integer.numberOfLeadingZeros(Math.max(width, height)));
+        GL45C.glTextureStorage2D(glintTexture, levels, GL45C.GL_RGBA16F, width, height);
+        streakTexture = GL45C.glCreateTextures(GL45C.GL_TEXTURE_2D);
+        GL45C.glTextureStorage2D(streakTexture, 1, GL45C.GL_RGBA16F, width, height);
+        glintWidth = width;
+        glintHeight = height;
     }
 
     /** The march's targets, in a framebuffer of their own, since they are smaller than the screen. */
@@ -1596,6 +2000,10 @@ public final class LensEffects {
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "SceneColor"), UNIT_SCENE);
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "SceneDepth"), UNIT_DEPTH);
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "Bright"), UNIT_BRIGHT);
+            // The glint passes run before the composite binds its own textures to these units,
+            // and the blend after it.
+            GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "Glints"), UNIT_BRIGHT);
+            GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "Streaks"), UNIT_HORIZON);
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "HorizonSky"), UNIT_HORIZON);
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "HorizonRaw"), UNIT_BRIGHT);
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "HorizonPrevious"), UNIT_HORIZON);
@@ -1605,6 +2013,10 @@ public final class LensEffects {
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "SkyBehind"), UNIT_SKY_BEHIND);
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "SkyBehindPrevious"), UNIT_SKY_BEHIND);
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "CloudHistory"), UNIT_HISTORY);
+            GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "SkyBands"), UNIT_SKY_BANDS);
+            GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "Samples"), UNIT_SAMPLES);
+            GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "SampleClouds"), UNIT_SAMPLE_CLOUDS);
+            GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "SkyBandsPrevious"), UNIT_SKY_BANDS);
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "HistoryDistance"), UNIT_HISTORY_DISTANCE);
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "CloudLight"), UNIT_CLOUDS);
             GL45C.glProgramUniform1i(id, GL45C.glGetUniformLocation(id, "CloudDistance"), UNIT_CLOUD_DISTANCE);

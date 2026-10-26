@@ -7,7 +7,7 @@ layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(rgba32f, binding = 0) uniform image2D TransmittanceLutImage;
 layout(rgba32f, binding = 1) uniform image2D UpperSingleImage;
-layout(rgba32f, binding = 2) uniform image2D UpperViewImage;
+layout(rgba32f, binding = 2) uniform image2D MultipleScatteringImage;
 layout(rgba16f, binding = 3) uniform image2D FinalSkyImage;
 
 layout(binding = 0) uniform sampler2D TransmittanceLut;
@@ -38,11 +38,11 @@ layout(std140, binding = 0) uniform SkyParameters {
 #define RainbowStrength LookParameters.w
 
 shared vec3 Reduction[64];
-shared vec3 ReducedUpperMean;
 
 const int PASS_BUILD_LUT = 0;
 const int PASS_SINGLE_SCATTERING = 1;
 const int PASS_REDUCE_AND_COMPOSE = 2;
+const int PASS_MULTIPLE_SCATTERING = 3;
 
 #ifndef SKY_WIDTH
 #define SKY_WIDTH 64
@@ -50,9 +50,12 @@ const int PASS_REDUCE_AND_COMPOSE = 2;
 #ifndef SKY_HEIGHT
 #define SKY_HEIGHT 32
 #endif
+#ifndef MS_HEIGHTS
+#define MS_HEIGHTS 32
+#endif
 const int UPPER_HEIGHT = SKY_HEIGHT / 2;
-const int VIEW_STEPS = 16;
-const int LIGHT_STEPS = 16;
+const int VIEW_STEPS = 32;
+const int LIGHT_STEPS = 40;
 const int LUT_WIDTH = 1024;
 const int LUT_HEIGHT = 256;
 
@@ -61,15 +64,40 @@ const float EARTH_RADIUS = 6371000.0;
 const float ATMOSPHERE_RADIUS = 6471000.0;
 const float ATMOSPHERE_HEIGHT = ATMOSPHERE_RADIUS - EARTH_RADIUS;
 const float RAYLEIGH_HEIGHT = 8000.0;
+// Rayleigh scattering at 680, 550 and 440 nm (Hillaire 2020, Bruneton 2017). A blue of
+// 22.4e-6, the value at about 480 nm, left the zenith pale.
+const vec3 RAYLEIGH_SCATTERING = vec3(5.802e-6, 13.558e-6, 33.1e-6);
+// Aerosols of optical depth 0.1 at 550 nm over a 1.2 km scale height, Angstrom exponent
+// 1.3, nine tenths of their extinction scattered: an ordinary clear day. They hug the
+// ground, so they whiten the horizon's long paths and leave the zenith blue.
 const float MIE_HEIGHT = 1200.0;
-const vec3 BETA_R = vec3(5.5e-6, 13.0e-6, 22.4e-6);
-const float BETA_M = 21.0e-6;
-const float SUN_MIE_HALO_BOOST = 10.35;
+const vec3 MIE_EXTINCTION = vec3(6.33e-5, 8.33e-5, 11.1e-5);
+const vec3 MIE_SCATTERING = MIE_EXTINCTION * 0.9;
+// Ozone absorbs green and red in a tent around 25 km. It does little by day but keeps the
+// zenith blue while the low sun's light crosses the stratosphere.
+const vec3 OZONE_ABSORPTION = vec3(0.650e-6, 1.881e-6, 0.085e-6);
+const float OZONE_CENTRE = 25000.0;
+const float OZONE_HALF_WIDTH = 15000.0;
+// The sun's aureole, a narrow forward lobe over the aerosols' own phase, scaled by the sun
+// glare look. Boosting the whole Mie phase tenfold instead filled the zenith, 30 degrees
+// from the highest sun, with grey.
+const float SUN_HALO_G = 0.96;
+const float SUN_HALO_WEIGHT = 0.5;
 // The sun disc's light, spread over about a texel either way: the narrower, the brighter
 // each glint for the same light.
 const float SUN_DISC_SPREAD = radians(0.5);
-const float MOON_MIE_HALO_BOOST = 1.0;
-const float MULTIPLE_SCATTERING_SCALE = 0.65;
+// A wide, faint skirt around it holding this much light beside the disc's own
+// (LightManager.SUN_DISC_SKIRT), so more ripple facets catch a glint and a low sun lays a
+// broad, sparkling path on water.
+const float SUN_SKIRT_SPREAD = radians(2.5);
+const float SUN_SKIRT_SHARE = 0.6;
+// Below half float's largest value, which the texture and the runtime's output both use.
+const float MAX_SKY_RADIANCE = 60000.0;
+// Higher orders of scattering (Hillaire 2020): per height, the light scattered once toward
+// it from every direction, the ground's reflection among them, summed as a geometric series.
+const int MS_DIRECTIONS = 64;
+const int MS_STEPS = 20;
+const float GROUND_ALBEDO = 0.3;
 const float GROUND_HORIZON_SCALE = 0.9;
 const float GROUND_NADIR_SCALE = 0.3;
 const vec3 LUMINANCE = vec3(0.2126, 0.7152, 0.0722);
@@ -101,6 +129,47 @@ float raySphere(vec3 origin, vec3 direction, float radius) {
     return nearDistance < 0.0 ? farDistance : nearDistance;
 }
 
+// Distance along a ray to the ground, or -1 when it misses or the ground lies behind.
+float rayGround(vec3 origin, vec3 direction) {
+    float b = dot(origin, direction);
+    float c = dot(origin, origin) - EARTH_RADIUS * EARTH_RADIUS;
+    float discriminant = b * b - c;
+    if (b >= 0.0 || discriminant < 0.0) {
+        return -1.0;
+    }
+    return -b - sqrt(discriminant);
+}
+
+float ozoneDensity(float height) {
+    return max(0.0, 1.0 - abs(height - OZONE_CENTRE) / OZONE_HALF_WIDTH);
+}
+
+vec3 extinctionAt(float height) {
+    return RAYLEIGH_SCATTERING * exp(-height / RAYLEIGH_HEIGHT)
+        + MIE_EXTINCTION * exp(-height / MIE_HEIGHT)
+        + OZONE_ABSORPTION * ozoneDensity(height);
+}
+
+vec3 scatteringAt(float height) {
+    return RAYLEIGH_SCATTERING * exp(-height / RAYLEIGH_HEIGHT)
+        + MIE_SCATTERING * exp(-height / MIE_HEIGHT);
+}
+
+// Where step i of n along a path of the given length begins: the steps lengthen with the
+// square, short in the dense air near the start and long where it thins out. Evenly
+// spaced, a ray just above the horizon took 70 km steps through the aerosols near the ground.
+float stepBoundary(int i, int n, float distance) {
+    float t = float(i) / float(n);
+    return distance * t * t;
+}
+
+// The share of light scattered along a step of this extinction and length that leaves it
+// toward its start, per unit of scattering coefficient: closed form, so a long step through
+// dense air keeps the light it scatters (Hillaire 2020).
+vec3 stepReach(vec3 extinction, float stepSize) {
+    return (vec3(1.0) - exp(-extinction * stepSize)) / max(extinction, vec3(1.0e-12));
+}
+
 vec3 skyDirection(ivec2 pixel) {
     float u = (float(pixel.x) + 0.5) / float(SKY_WIDTH);
     float v = (float(pixel.y) + 0.5) / float(SKY_HEIGHT);
@@ -125,22 +194,15 @@ void buildTransmittanceLut(ivec2 pixel) {
     vec3 origin = vec3(0.0, radius, 0.0);
     vec3 direction = vec3(lightSin, lightCos, 0.0);
     float lightDistance = raySphere(origin, direction, ATMOSPHERE_RADIUS);
-    float stepSize = lightDistance / float(LIGHT_STEPS);
-    vec3 opticalR = vec3(0.0);
-    float opticalM = 0.0;
+    vec3 optical = vec3(0.0);
     for (int step = 0; step < LIGHT_STEPS; step++) {
-        float distance = (float(step) + 0.5) * stepSize;
-        vec3 samplePosition = origin + direction * distance;
+        float start = stepBoundary(step, LIGHT_STEPS, lightDistance);
+        float end = stepBoundary(step + 1, LIGHT_STEPS, lightDistance);
+        vec3 samplePosition = origin + direction * (0.5 * (start + end));
         float height = max(0.0, length(samplePosition) - EARTH_RADIUS);
-        float densityR = exp(-height / RAYLEIGH_HEIGHT) * stepSize;
-        float densityM = exp(-height / MIE_HEIGHT) * stepSize;
-        opticalR += BETA_R * densityR;
-        opticalM += BETA_M * densityM;
+        optical += extinctionAt(height) * (end - start);
     }
-    imageStore(
-        TransmittanceLutImage,
-        pixel,
-        vec4(exp(-(opticalR + vec3(opticalM))), 1.0));
+    imageStore(TransmittanceLutImage, pixel, vec4(exp(-optical), 1.0));
 }
 
 bool sampleLight(
@@ -165,12 +227,14 @@ bool sampleLight(
     return true;
 }
 
+// Adds a step's Rayleigh and Mie scattering of a light, given the share of it that reaches the
+// viewer (the transmittance to the step times its reach).
 void accumulateLight(
     vec3 position,
     float radius,
-    float densityR,
-    float densityM,
-    vec3 viewTransmittance,
+    vec3 rayleighScattering,
+    vec3 mieScattering,
+    vec3 reach,
     vec3 lightDirection,
     inout vec3 rayleigh,
     inout vec3 mie) {
@@ -178,9 +242,14 @@ void accumulateLight(
     if (!sampleLight(position, radius, lightDirection, lightTransmittance)) {
         return;
     }
-    vec3 attenuation = viewTransmittance * lightTransmittance;
-    rayleigh += densityR * BETA_R * attenuation;
-    mie += densityM * BETA_M * attenuation;
+    vec3 attenuation = reach * lightTransmittance;
+    rayleigh += rayleighScattering * attenuation;
+    mie += mieScattering * attenuation;
+}
+
+float henyeyGreenstein(float cosAngle, float g) {
+    float g2 = g * g;
+    return (1.0 - g2) / (4.0 * PI * pow(1.0 + g2 - 2.0 * g * cosAngle, 1.5));
 }
 
 vec3 finishScattering(
@@ -189,7 +258,7 @@ vec3 finishScattering(
     vec3 lightRadiance,
     vec3 rayleigh,
     vec3 mie,
-    float mieHaloBoost) {
+    float haloWeight) {
     float cosAngle = dot(viewDirection, lightDirection);
     float phaseR = 3.0 / (16.0 * PI) * (1.0 + cosAngle * cosAngle);
     float g2 = MieScatteringAnisotropy * MieScatteringAnisotropy;
@@ -197,8 +266,86 @@ vec3 finishScattering(
         * ((1.0 - g2) * (1.0 + cosAngle * cosAngle))
         / ((2.0 + g2)
             * pow(1.0 + g2 - 2.0 * MieScatteringAnisotropy * cosAngle, 1.5));
-    return (rayleigh * phaseR + mie * phaseM * mieHaloBoost)
+    phaseM += haloWeight * henyeyGreenstein(cosAngle, SUN_HALO_G);
+    return (rayleigh * phaseR + mie * phaseM)
         * lightRadiance * AtmosphereScale;
+}
+
+// The multiple-scattering table's heights, spaced by the square like the transmittance table's.
+float multipleScatteringHeight(int index) {
+    float t = (float(index) + 0.5) / float(MS_HEIGHTS);
+    return t * t * ATMOSPHERE_HEIGHT;
+}
+
+// Psi for a point at a height and a light (Hillaire 2020): L2, the light scattered once toward
+// the point from every direction with an isotropic phase plus the ground's reflection, over
+// 1 - f, f the share of light from every direction the atmosphere scatters toward it, which
+// sums the orders beyond the second as a geometric series. Per unit of the light's irradiance.
+vec3 multipleScattering(float height, vec3 lightDirection) {
+    vec3 origin = vec3(0.0, EARTH_RADIUS + height, 0.0);
+    vec3 secondOrder = vec3(0.0);
+    vec3 transfer = vec3(0.0);
+    for (int i = 0; i < MS_DIRECTIONS; i++) {
+        // Spread evenly over the sphere on a Fibonacci spiral.
+        float z = 1.0 - (2.0 * float(i) + 1.0) / float(MS_DIRECTIONS);
+        float phi = float(i) * 2.39996323;
+        float r = sqrt(max(0.0, 1.0 - z * z));
+        vec3 direction = vec3(r * cos(phi), z, r * sin(phi));
+        float groundDistance = rayGround(origin, direction);
+        float distance = groundDistance > 0.0
+            ? groundDistance
+            : raySphere(origin, direction, ATMOSPHERE_RADIUS);
+        distance = max(distance, 0.0);
+        vec3 transmittance = vec3(1.0);
+        vec3 radiance = vec3(0.0);
+        vec3 scattered = vec3(0.0);
+        for (int s = 0; s < MS_STEPS; s++) {
+            float start = stepBoundary(s, MS_STEPS, distance);
+            float end = stepBoundary(s + 1, MS_STEPS, distance);
+            vec3 position = origin + direction * (0.5 * (start + end));
+            float radius = length(position);
+            float sampleHeight = max(0.0, radius - EARTH_RADIUS);
+            vec3 extinction = extinctionAt(sampleHeight);
+            vec3 scattering = scatteringAt(sampleHeight) * transmittance * stepReach(extinction, end - start);
+            vec3 lightTransmittance;
+            if (sampleLight(position, radius, lightDirection, lightTransmittance)) {
+                radiance += scattering * lightTransmittance / (4.0 * PI);
+            }
+            scattered += scattering;
+            transmittance *= exp(-extinction * (end - start));
+        }
+        if (groundDistance > 0.0) {
+            vec3 ground = origin + direction * groundDistance;
+            vec3 lightTransmittance;
+            if (sampleLight(ground, EARTH_RADIUS, lightDirection, lightTransmittance)) {
+                radiance += transmittance * lightTransmittance * GROUND_ALBEDO / PI
+                    * max(dot(ground / EARTH_RADIUS, lightDirection), 0.0);
+            }
+        }
+        secondOrder += radiance;
+        transfer += scattered;
+    }
+    secondOrder /= float(MS_DIRECTIONS);
+    transfer /= float(MS_DIRECTIONS);
+    return secondOrder / max(vec3(1.0) - transfer, vec3(1.0e-3));
+}
+
+void generateMultipleScattering(ivec2 pixel) {
+    vec3 lightDirection = pixel.y == 0 ? SunDirection : MoonDirection;
+    imageStore(
+        MultipleScatteringImage,
+        pixel,
+        vec4(multipleScattering(multipleScatteringHeight(pixel.x), lightDirection), 1.0));
+}
+
+// Psi at a height for the sun (row 0) or the moon (row 1), between the table's heights.
+vec3 multipleScatteringAt(float height, int row) {
+    float position = clamp(sqrt(height / ATMOSPHERE_HEIGHT) * float(MS_HEIGHTS) - 0.5,
+        0.0, float(MS_HEIGHTS - 1));
+    int low = int(position);
+    vec3 below = imageLoad(MultipleScatteringImage, ivec2(low, row)).rgb;
+    vec3 above = imageLoad(MultipleScatteringImage, ivec2(min(low + 1, MS_HEIGHTS - 1), row)).rgb;
+    return mix(below, above, position - float(low));
 }
 
 void generateSingleScattering(ivec2 pixel) {
@@ -208,67 +355,56 @@ void generateSingleScattering(ivec2 pixel) {
         origin,
         viewDirection,
         ATMOSPHERE_RADIUS);
-    float stepSize = atmosphereDistance / float(VIEW_STEPS);
-    vec3 opticalR = vec3(0.0);
-    float opticalM = 0.0;
+    vec3 viewTransmittance = vec3(1.0);
     vec3 sunRayleigh = vec3(0.0);
     vec3 sunMie = vec3(0.0);
     vec3 moonRayleigh = vec3(0.0);
     vec3 moonMie = vec3(0.0);
+    vec3 sunMultiple = vec3(0.0);
+    vec3 moonMultiple = vec3(0.0);
 
     for (int step = 0; step < VIEW_STEPS; step++) {
-        float distance = (float(step) + 0.5) * stepSize;
-        vec3 samplePosition = origin + viewDirection * distance;
+        float start = stepBoundary(step, VIEW_STEPS, atmosphereDistance);
+        float end = stepBoundary(step + 1, VIEW_STEPS, atmosphereDistance);
+        vec3 samplePosition = origin + viewDirection * (0.5 * (start + end));
         float radius = length(samplePosition);
         float height = max(0.0, radius - EARTH_RADIUS);
-        float densityR = exp(-height / RAYLEIGH_HEIGHT) * stepSize;
-        float densityM = exp(-height / MIE_HEIGHT) * stepSize;
-        opticalR += BETA_R * densityR;
-        opticalM += BETA_M * densityM;
-        vec3 viewTransmittance = exp(-(opticalR + vec3(opticalM)));
-        accumulateLight(
-            samplePosition,
-            radius,
-            densityR,
-            densityM,
-            viewTransmittance,
-            SunDirection,
-            sunRayleigh,
-            sunMie);
-        accumulateLight(
-            samplePosition,
-            radius,
-            densityR,
-            densityM,
-            viewTransmittance,
-            MoonDirection,
-            moonRayleigh,
-            moonMie);
+        vec3 rayleighScattering = RAYLEIGH_SCATTERING * exp(-height / RAYLEIGH_HEIGHT);
+        vec3 mieScattering = MIE_SCATTERING * exp(-height / MIE_HEIGHT);
+        vec3 extinction = extinctionAt(height);
+        vec3 reach = viewTransmittance * stepReach(extinction, end - start);
+        vec3 scattered = (rayleighScattering + mieScattering) * reach;
+        sunMultiple += scattered * multipleScatteringAt(height, 0);
+        moonMultiple += scattered * multipleScatteringAt(height, 1);
+        accumulateLight(samplePosition, radius, rayleighScattering, mieScattering, reach,
+            SunDirection, sunRayleigh, sunMie);
+        accumulateLight(samplePosition, radius, rayleighScattering, mieScattering, reach,
+            MoonDirection, moonRayleigh, moonMie);
+        viewTransmittance *= exp(-extinction * (end - start));
     }
 
-    vec3 viewTransmittance = exp(-(opticalR + vec3(opticalM)));
-    vec3 singleScattering = finishScattering(
+    vec3 scattering = finishScattering(
         viewDirection,
         SunDirection,
         SunRadiance,
         sunRayleigh,
         sunMie,
-        SUN_MIE_HALO_BOOST * SunGlare);
-    singleScattering += finishScattering(
+        SUN_HALO_WEIGHT * SunGlare);
+    scattering += finishScattering(
         viewDirection,
         MoonDirection,
         MoonRadiance,
         moonRayleigh,
         moonMie,
-        MOON_MIE_HALO_BOOST);
+        0.0);
+    scattering += (sunMultiple * SunRadiance + moonMultiple * MoonRadiance) * AtmosphereScale;
 
     float moonCos = dot(viewDirection, MoonDirection);
     if (acos(clamp(moonCos, -1.0, 1.0)) < MoonAngularRadius) {
-        singleScattering += MoonRadiance * viewTransmittance;
+        scattering += MoonRadiance * viewTransmittance;
     }
 
-    imageStore(UpperSingleImage, pixel, vec4(singleScattering, 1.0));
-    imageStore(UpperViewImage, pixel, vec4(viewTransmittance, 1.0));
+    imageStore(UpperSingleImage, pixel, vec4(scattering, 1.0));
 }
 
 // Hue along a bow, 0 on its inner edge (violet) to 1 on its outer edge (red), fading out at both edges.
@@ -314,38 +450,20 @@ vec3 applyLook(vec3 radiance, vec3 viewDirection) {
 // The sun disc covers a fraction of a texel, so a test of each texel's centre showed it at
 // some sun positions and lost it at others. Its light is spread over the texels around it
 // instead, its total kept, and it stays out of the sky's means so it adds no ambient light.
+float gaussianSpread(float angle, float spread) {
+    return exp(-0.5 * angle * angle / (spread * spread)) / (2.0 * PI * spread * spread);
+}
+
 vec3 sunDisc(vec3 viewDirection) {
     float angle = acos(clamp(dot(viewDirection, SunDirection), -1.0, 1.0));
     float discSolidAngle = PI * SunAngularRadius * SunAngularRadius;
-    float spread = exp(-0.5 * angle * angle / (SUN_DISC_SPREAD * SUN_DISC_SPREAD))
-        / (2.0 * PI * SUN_DISC_SPREAD * SUN_DISC_SPREAD);
+    float spread = gaussianSpread(angle, SUN_DISC_SPREAD)
+        + SUN_SKIRT_SHARE * gaussianSpread(angle, SUN_SKIRT_SPREAD);
     return SunDiscRadiance * (discSolidAngle * spread);
 }
 
 void reduceAndComposeSky() {
     uint invocation = gl_LocalInvocationIndex;
-    vec3 sum = vec3(0.0);
-    if (invocation < 32u) {
-        int sampleIndex = int(invocation);
-        sum = imageLoad(
-            UpperSingleImage,
-            ivec2(
-                (sampleIndex % 8) * SKY_WIDTH / 8,
-                (sampleIndex / 8) * UPPER_HEIGHT / 4)).rgb;
-    }
-    Reduction[invocation] = sum;
-    barrier();
-    for (uint stride = 32u; stride > 0u; stride >>= 1u) {
-        if (invocation < stride) {
-            Reduction[invocation] += Reduction[invocation + stride];
-        }
-        barrier();
-    }
-    if (invocation == 0u) {
-        ReducedUpperMean = Reduction[0] / 32.0;
-    }
-    barrier();
-
     vec3 finalSum = vec3(0.0);
     for (uint index = invocation;
             index < uint(SKY_WIDTH * UPPER_HEIGHT);
@@ -353,21 +471,16 @@ void reduceAndComposeSky() {
         ivec2 pixel = ivec2(
             int(index) % SKY_WIDTH,
             int(index) / SKY_WIDTH);
-        vec3 singleScattering =
-            imageLoad(UpperSingleImage, pixel).rgb;
-        vec3 viewTransmittance =
-            imageLoad(UpperViewImage, pixel).rgb;
         vec3 radiance = applyLook(max(
-            singleScattering
-            + ReducedUpperMean * (vec3(1.0) - viewTransmittance)
-            * MULTIPLE_SCATTERING_SCALE,
+            imageLoad(UpperSingleImage, pixel).rgb,
             vec3(0.0)), skyDirection(pixel));
         vec2 quantizedRg =
             unpackHalf2x16(packHalf2x16(radiance.rg));
         vec2 quantizedBa =
             unpackHalf2x16(packHalf2x16(vec2(radiance.b, 1.0)));
         finalSum += vec3(quantizedRg, quantizedBa.x);
-        imageStore(FinalSkyImage, pixel, vec4(radiance + sunDisc(skyDirection(pixel)), 1.0));
+        imageStore(FinalSkyImage, pixel,
+            vec4(min(radiance + sunDisc(skyDirection(pixel)), vec3(MAX_SKY_RADIANCE)), 1.0));
     }
     memoryBarrierImage();
     Reduction[invocation] = finalSum;
@@ -391,10 +504,7 @@ void reduceAndComposeSky() {
     for (int x = int(invocation); x < SKY_WIDTH; x += 64) {
         ivec2 horizonPixel = ivec2(x, UPPER_HEIGHT - 1);
         vec3 horizon = applyLook(
-            imageLoad(UpperSingleImage, horizonPixel).rgb
-            + ReducedUpperMean
-            * (vec3(1.0) - imageLoad(UpperViewImage, horizonPixel).rgb)
-            * MULTIPLE_SCATTERING_SCALE,
+            imageLoad(UpperSingleImage, horizonPixel).rgb,
             skyDirection(horizonPixel));
         for (int y = UPPER_HEIGHT; y < SKY_HEIGHT; y++) {
             float amount = float(y - UPPER_HEIGHT)
@@ -420,5 +530,9 @@ void main() {
         }
     } else if (Pass == PASS_REDUCE_AND_COMPOSE) {
         reduceAndComposeSky();
+    } else if (Pass == PASS_MULTIPLE_SCATTERING) {
+        if (pixel.x < MS_HEIGHTS && pixel.y < 2) {
+            generateMultipleScattering(pixel);
+        }
     }
 }

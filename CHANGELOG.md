@@ -52,6 +52,30 @@ also part of every mod file name.
   and round into the base instead of standing like walls.
 - Rain closes the view: distant land fades into the grey of the overcast sky
   instead of standing dark against it.
+- A rainy day is brighter, and a thunderstorm about as dark as rain was, so
+  neither is mistaken for night.
+- Where thousands of lights are in reach, as in a city lit by sea lanterns,
+  the light reach shrinks until about four thousand are drawn, the faintest
+  where you stand going first. The frame rate no longer sinks there, and the
+  lights around you no longer go missing or leave the floor noisy. The
+  `rtxremix.chunk.maxDrawnLights` JVM property sets the count.
+- The lens effects take half the GPU time with Unbound clouds and aerial haze.
+- Depth of field blurs half as much at the same setting.
+- The daytime sky deepens to a richer blue overhead and pales to white at the
+  horizon, as a clear sky does: its scattering now follows measured
+  atmospheres (aerosols of an ordinary clear day, ozone, and multiple
+  scattering), the glow around the sun stays close to it instead of greying
+  the whole sky, and the blue overhead that the tone mapping bleaches is
+  deepened back. Sky Saturation scales that, and Sun Glare now sets the glow
+  close around the sun.
+- Unbound clouds are lit more like real clouds: sunlit tops are bright white,
+  their shaded sides cooler, and their bases grey instead of black, lit by the
+  ground below and by light scattered deep inside the cloud. Sunlit clouds
+  next to the sun are no longer duller than the sky behind them.
+- The sun mirrored on water and puddles glows, and its glints throw streaks in
+  the same six directions as the sun's starburst, scaled by Lens Flare; the
+  sun's reflection is wider, and daytime bloom spreads from the brightest
+  glints.
 
 ### Fixed
 
@@ -81,6 +105,14 @@ also part of every mod file name.
 - The aerial haze no longer flickers toward the edges of the screen while you
   look down or into trees.
 - The bases of Unbound clouds near the horizon no longer show grainy patches.
+- The bases of Unbound clouds overhead no longer show grain, or dark lines
+  along their outlines.
+- Distant towers in the rain no longer glow against the sky where lights below
+  brighten the fog.
+- Your own body no longer drops out of shadows and reflections where many
+  entities are in view, such as rooms full of item frames.
+- The sun's flare and starburst no longer shine through ceilings, glass and
+  other blocks between you and the sun.
 - The flare from a torch in your hand starts at the flame on screen.
 - When the time of day jumps, as with `/time set`, sleeping or a camera path,
   riverbeds and shaded ground no longer keep glowing with the old daylight
