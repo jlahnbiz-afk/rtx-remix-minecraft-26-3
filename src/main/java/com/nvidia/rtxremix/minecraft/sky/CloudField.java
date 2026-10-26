@@ -35,6 +35,7 @@ public final class CloudField {
     private static float brightness;
     private static float cirrusAngle;
     private static float cirrusStrength;
+    private static float shadowStrength;
     private static float hazeDistance = 1.0f;
     private static boolean framed;
 
@@ -124,9 +125,15 @@ public final class CloudField {
         return cirrusStrength;
     }
 
-    static void publish(int noise, int cirrus, double cameraX, double cameraY, double cameraZ) {
+    /** How dark the clouds' shadows on the land are, the Cloud Shadows setting, 0 to 1. */
+    public static float shadowStrength() {
+        return shadowStrength;
+    }
+
+    static void publish(int noise, int cirrus, double cameraX, double cameraY, double cameraZ, float shadow) {
         noiseTexture = noise;
         cirrusTexture = cirrus;
+        shadowStrength = shadow;
         CAMERA[0] = (float) cameraX;
         CAMERA[1] = (float) cameraY;
         CAMERA[2] = (float) cameraZ;

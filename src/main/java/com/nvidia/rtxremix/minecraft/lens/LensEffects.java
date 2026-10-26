@@ -174,11 +174,14 @@ public final class LensEffects {
                 float u = gl_FragCoord.x / ViewportSize.x;
                 for (int i = 0; i < ROWS; i++) {
                     float v = (float(i) + 0.5) / float(ROWS);
-                    if (isSky(distanceAt(vec2(u, v)))) {
-                        // A little above the land's edge, where antialiasing no longer mixes it in.
-                        vec3 colour = scene(vec2(u, min(v + 2.0 / float(ROWS), 1.0)))
-                            + scene(vec2(u, min(v + 4.0 / float(ROWS), 1.0)));
-                        fragColor = vec4(colour * 0.5, 1.0);
+                    // A little above the land's edge, where antialiasing no longer mixes it in.
+                    vec2 above = vec2(u, min(v + 2.0 / float(ROWS), 1.0));
+                    vec2 higher = vec2(u, min(v + 4.0 / float(ROWS), 1.0));
+                    // The sky must run on up to where its colour is read: a lone texel with
+                    // nothing drawn, a gap in leaves that the unantialiased depth shows on some
+                    // frames and not others, would read the land and flicker the haze.
+                    if (isSky(distanceAt(vec2(u, v))) && isSky(distanceAt(above)) && isSky(distanceAt(higher))) {
+                        fragColor = vec4((scene(above) + scene(higher)) * 0.5, 1.0);
                         return;
                     }
                 }
@@ -240,9 +243,12 @@ public final class LensEffects {
             """;
 
     // Where the panorama the dome shows holds a direction, as
-    // VolumetricCloudGenerator.rowCoordinate lays it out, and what it shows there.
-    private static final String PANORAMA_SAMPLING = CloudField.defines() + """
+    // VolumetricCloudGenerator.rowCoordinate lays it out, and what it shows there. The includer
+    // puts CloudField.defines() first.
+    private static final String PANORAMA_SAMPLING = """
             uniform sampler2D Panorama;
+            // The screen's size in pixels.
+            uniform vec2 ScreenSize;
 
             vec2 panoramaUv(vec3 direction) {
                 float elevation = degrees(asin(clamp(direction.y, -1.0, 1.0)));
@@ -253,9 +259,38 @@ public final class LensEffects {
                 return vec2(atan(direction.x, -direction.z) * (0.5 / 3.14159265358979323846), row);
             }
 
-            // Premultiplied light and opacity.
-            vec4 shownClouds(vec3 direction) {
-                vec4 cloud = textureLod(Panorama, panoramaUv(direction), 0.0);
+            // Premultiplied light and opacity toward a screen position, as the image shows them.
+            // The panorama is read over the pixel's footprint, as the runtime mipmaps the dome's
+            // texture. Where a march grazes a cloud's flat base, its texels speckle between the
+            // shaded base and the lit cloud; the runtime's denoiser smooths that speckle out of
+            // the image but keeps the clouds' outlines. So the colour is averaged over the
+            // neighbours whose opacity matches, and the opacity only deep inside the cloud: read
+            // texel by texel, the speckle showed through the lens's clouds as grainy patches on
+            // their bases, and with the opacity averaged out to the soft edges, the outlines
+            // spread into pale rims against the sky.
+            vec4 shownClouds(vec2 uv) {
+                vec2 centre = panoramaUv(normalize(viewRay(uv)));
+                vec2 dx = panoramaUv(normalize(viewRay(uv + vec2(1.0 / ScreenSize.x, 0.0)))) - centre;
+                vec2 dy = panoramaUv(normalize(viewRay(uv + vec2(0.0, 1.0 / ScreenSize.y)))) - centre;
+                // Across the seam where the azimuth wraps.
+                dx.x -= round(dx.x);
+                dy.x -= round(dy.x);
+                vec4 middle = textureGrad(Panorama, centre, dx, dy);
+                vec2 texel = 1.0 / vec2(textureSize(Panorama, 0));
+                vec4 sum = middle;
+                float weights = 1.0;
+                for (int y = -1; y <= 1; y++) {
+                    for (int x = -1; x <= 1; x++) {
+                        if (x != 0 || y != 0) {
+                            vec4 near = textureGrad(Panorama, centre + vec2(x, y) * texel, dx, dy);
+                            float w = max(1.0 - abs(near.a - middle.a) * 8.0, 0.0);
+                            sum += near * w;
+                            weights += w;
+                        }
+                    }
+                }
+                float opacity = mix(middle.a, sum.a / weights, smoothstep(0.7, 0.95, middle.a));
+                vec4 cloud = vec4(sum.rgb / max(sum.a, 1.0e-4) * opacity, opacity);
                 return vec4(max(cloud.rgb, vec3(0.0)), clamp(cloud.a, 0.0, 1.0));
             }
             """;
@@ -318,8 +353,8 @@ public final class LensEffects {
     // The clouds' field reads these, by the names cloud_field.glsl expects. Each pixel's march
     // has fewer steps through the cumulus than the dome's, since the history averages several
     // frames' marches, and more through the altostratus, which the dome's panorama blurs but
-    // a pixel resolves.
-    private static final String CLOUD_FIELD = CloudField.defines() + """
+    // a pixel resolves. The includer puts CloudField.defines() first.
+    private static final String CLOUD_FIELD = """
             #define CLOUD_MIN_STEPS 20
             #define CLOUD_MAX_STEPS 40
             #define CLOUD_ALTO_STEPS 6
@@ -354,7 +389,7 @@ public final class LensEffects {
             layout(location = 1) out vec2 fragDistance;
             uniform vec2 ViewportSize;
             uniform float FrameIndex;
-            """ + DEPTH_SAMPLING + VIEW_RAY + CLOUD_FIELD + """
+            """ + CloudField.defines() + DEPTH_SAMPLING + VIEW_RAY + CLOUD_FIELD + """
 
             void main() {
                 // Of the four pixels under this texel, alternate texels march to the nearest land
@@ -476,8 +511,8 @@ public final class LensEffects {
     private static final String CLOUD_CALIBRATION_FRAGMENT_SHADER = """
             #version 330 core
             out vec4 fragColor;
-            """ + "const int BINS = " + CALIBRATION_BINS + ";\n" + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY
-            + COLOUR_SPACE + PANORAMA_SAMPLING + """
+            """ + "const int BINS = " + CALIBRATION_BINS + ";\n" + CloudField.defines() + SCENE_SAMPLING
+            + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE + PANORAMA_SAMPLING + """
             uniform sampler2D CalibrationPrevious;
             uniform float Follow;
 
@@ -496,7 +531,7 @@ public final class LensEffects {
                         if (!isSky(distanceAt(uv))) {
                             continue;
                         }
-                        vec4 cloud = shownClouds(normalize(viewRay(uv)));
+                        vec4 cloud = shownClouds(uv);
                         vec3 colour = min(cloud.rgb, vec3(1.0));
                         float w = smoothstep(0.95, 1.0, cloud.a);
                         if (w > 0.0 && min(int(dot(colour, LUMA) * float(BINS)), BINS - 1) == bin) {
@@ -523,8 +558,8 @@ public final class LensEffects {
     private static final String SKY_BEHIND_FRAGMENT_SHADER = """
             #version 330 core
             out vec4 fragColor;
-            """ + "const int BANDS = " + SKY_BANDS + ";\n" + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE
-            + PANORAMA_SAMPLING + CLOUD_EXPOSURE + """
+            """ + "const int BANDS = " + SKY_BANDS + ";\n" + CloudField.defines() + SCENE_SAMPLING + DEPTH_SAMPLING
+            + VIEW_RAY + COLOUR_SPACE + PANORAMA_SAMPLING + CLOUD_EXPOSURE + """
             uniform sampler2D SkyBehindPrevious;
             uniform float Follow;
 
@@ -545,7 +580,7 @@ public final class LensEffects {
                         if (clamp(int((direction.y * 0.5 + 0.5) * float(BANDS)), 0, BANDS - 1) != band) {
                             continue;
                         }
-                        vec4 shown = shownClouds(direction);
+                        vec4 shown = shownClouds(uv);
                         float w = 1.0 - smoothstep(0.2, 0.6, shown.a);
                         if (w > 0.0) {
                             sum += max(srgbToLinear(scene(uv)) - cloudLight(shown), 0.0) / (1.0 - shown.a) * w;
@@ -583,7 +618,8 @@ public final class LensEffects {
             #version 330 core
             out vec4 fragColor;
             """ + "const int MAX_SOURCES = " + MAX_SOURCES + ";\n" + "const int SKY_BANDS = " + SKY_BANDS + ";\n"
-            + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE + PANORAMA_SAMPLING + CLOUD_EXPOSURE + """
+            + CloudField.defines() + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE + CLOUD_FIELD
+            + PANORAMA_SAMPLING + CLOUD_EXPOSURE + """
 
             uniform sampler2D Bright;
             uniform sampler2D HorizonSky;
@@ -595,6 +631,8 @@ public final class LensEffects {
             uniform float Haze;
             // The rain's strength, 0 to 1.
             uniform float Rain;
+            // How dark the clouds' shadows on the land are, 0 to 1.
+            uniform float CloudShadow;
             uniform float CameraY;
             uniform float FocusDistance;
             uniform float DepthOfField;
@@ -606,7 +644,6 @@ public final class LensEffects {
             uniform vec4 Sources[MAX_SOURCES];
             uniform int SourceCount;
 
-            const float PI = 3.14159265;
             // Blur radius, as a share of the screen height, per dioptre the distance is out of
             // focus, and its cap: a light blur, a few pixels for the far distance at 1080p.
             const float BLUR_PER_DIOPTRE = 0.02;
@@ -850,7 +887,7 @@ public final class LensEffects {
                     return colour;
                 }
                 vec3 direction = normalize(viewRay(uv));
-                vec4 shown = shownClouds(direction);
+                vec4 shown = shownClouds(uv);
                 vec3 shownLight = cloudLight(shown);
                 vec3 image = srgbToLinear(colour);
                 // Read through the dome's clouds only where they are nearly clear: dividing by
@@ -869,6 +906,28 @@ public final class LensEffects {
                     hidden = min(hidden, max(image - shownLight, 0.0));
                 }
                 return mix(colour, linearToSrgb(max(image + change - hidden, 0.0)), 1.0 - Rain);
+            }
+
+            // The land in the clouds' shadows: the light the clouds above stop, times the share of
+            // the land's light, per channel, that comes straight from the sun or moon rather than
+            // the sky, which falls as the light sinks. At the setting's default a full shadow
+            // keeps the sky's blue share and a little bounce, as dark as Remix's own shadow of a
+            // block. Your hand lies in the shadow you stand in.
+            const float SHADOW_DEPTH_AT_DEFAULT = 0.8;
+
+            vec3 cloudShadows(vec2 uv, vec3 colour) {
+                float axial = landDistance(uv);
+                if (isSky(axial) || CloudShadow <= 0.0) {
+                    return colour;
+                }
+                vec3 ray = viewRay(uv);
+                float along = axial < HAND_DISTANCE ? 0.0 : axial * length(ray);
+                vec3 world = vec3(CameraXZ.x, CameraHeight, CameraXZ.y) + normalize(ray) * along;
+                vec3 direct = LightIrradiance * max(LightDirection.y, 0.0);
+                vec3 share = direct / max(direct + AmbientTop, vec3(1.0e-4));
+                vec3 darkening = min(vec3(0.95), 2.0 * CloudShadow * SHADOW_DEPTH_AT_DEFAULT * share
+                    * (1.0 - shadowTransmittance(world)));
+                return linearToSrgb(srgbToLinear(colour) * (1.0 - darkening));
             }
 
             vec3 clouds(vec2 uv, vec3 colour) {
@@ -895,6 +954,9 @@ public final class LensEffects {
             void main() {
                 vec2 uv = gl_FragCoord.xy / ViewportSize;
                 vec3 colour = DepthOfField > 0.0 ? depthOfField(uv) : scene(uv);
+                if (Clouds > 0.0) {
+                    colour = cloudShadows(uv, colour);
+                }
                 if (Haze > 0.0) {
                     colour = aerialHaze(uv, colour);
                 }
@@ -930,6 +992,8 @@ public final class LensEffects {
     private float aspect = 16.0f / 9.0f;
     private float rain;
     private float farPlane = 1000.0f;
+    private int screenWidth = 1;
+    private int screenHeight = 1;
     private double cameraX;
     private double cameraY;
     private double cameraZ;
@@ -1102,6 +1166,8 @@ public final class LensEffects {
         if (!(mainTarget.getColorTexture() instanceof GlTexture targetColor)) {
             return;
         }
+        screenWidth = mainTarget.width;
+        screenHeight = mainTarget.height;
         ensureObjects();
         ensureBrightTexture(Math.max(1, mainTarget.width / 2), Math.max(1, mainTarget.height / 2));
         if (clouds) {
@@ -1222,6 +1288,10 @@ public final class LensEffects {
             compositeProgram.set("ViewportSize", mainTarget.width, mainTarget.height);
             setView(compositeProgram);
             compositeProgram.set("Clouds", clouds ? 1.0f : 0.0f);
+            if (clouds) {
+                setCloudField(compositeProgram);
+                compositeProgram.set("CloudShadow", CloudField.shadowStrength());
+            }
             compositeProgram.set("CloudSize", cloudWidth, cloudHeight);
             compositeProgram.set("FocusDistance", 1.0f / focusDioptres);
             compositeProgram.set("DepthOfField", depthOfField);
@@ -1288,6 +1358,7 @@ public final class LensEffects {
         program.set("CameraRight", cameraBasis[3], cameraBasis[4], cameraBasis[5]);
         program.set("CameraUp", cameraBasis[6], cameraBasis[7], cameraBasis[8]);
         program.set("TanHalfFov", tanHalfFovX, tanHalfFovY);
+        program.set("ScreenSize", screenWidth, screenHeight);
     }
 
     private static void setCloudField(Program program) {
@@ -1414,7 +1485,7 @@ public final class LensEffects {
             depthSampler = sampler(GL45C.GL_NEAREST, GL45C.GL_NEAREST);
             brightSampler = sampler(GL45C.GL_LINEAR_MIPMAP_LINEAR, GL45C.GL_LINEAR);
             // The panorama wraps around in azimuth.
-            panoramaSampler = sampler(GL45C.GL_LINEAR, GL45C.GL_LINEAR);
+            panoramaSampler = sampler(GL45C.GL_LINEAR_MIPMAP_LINEAR, GL45C.GL_LINEAR);
             GL45C.glSamplerParameteri(panoramaSampler, GL45C.GL_TEXTURE_WRAP_S, GL45C.GL_REPEAT);
         }
     }

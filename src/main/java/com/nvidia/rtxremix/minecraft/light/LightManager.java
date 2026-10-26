@@ -128,10 +128,10 @@ public class LightManager {
 
     private static float sunIntensity = DEFAULT_SUN_INTENSITY;
     private static float moonIntensity = DEFAULT_MOON_INTENSITY;
-    private static float cloudLightVisibility = 1.0f;
-    private static long cloudLightVisibilityNanos;
+    private static float sunDiscVisibility = 1.0f;
+    private static long sunDiscVisibilityNanos;
     /** A visibility the clouds have not refreshed for this long is stale, as when the sky stops drawing. */
-    private static final long CLOUD_LIGHT_VISIBILITY_STALE_NANOS = 500_000_000L;
+    private static final long SUN_DISC_VISIBILITY_STALE_NANOS = 500_000_000L;
 
     private final RemixRenderer renderer;
     private float lastTimeOfDay = Float.NaN;
@@ -179,18 +179,20 @@ public class LightManager {
     }
 
     /**
-     * Share of the sun's and moon's direct light that the sky's clouds let through, 0 to 1.
-     * It dims only the distant lights, not the state the sky and clouds are lit from.
+     * Share of the sun's disc that the sky's clouds leave in view, 0 to 1. It dims the disc
+     * painted into the sky's dome texture, which reflections read and which no cloud covers,
+     * so a glint on water goes out while a cloud hides the sun. The distant lights keep their
+     * light: the lens shades the land where each cloud's shadow falls.
      */
-    public static void setCloudLightVisibility(float value) {
-        cloudLightVisibility = Math.clamp(value, 0.0f, 1.0f);
-        cloudLightVisibilityNanos = System.nanoTime();
+    public static void setSunDiscVisibility(float value) {
+        sunDiscVisibility = Math.clamp(value, 0.0f, 1.0f);
+        sunDiscVisibilityNanos = System.nanoTime();
     }
 
-    /** The share {@link #setCloudLightVisibility} last set, or 1 once the clouds stop refreshing it. */
-    public static float cloudLightVisibility() {
-        return System.nanoTime() - cloudLightVisibilityNanos < CLOUD_LIGHT_VISIBILITY_STALE_NANOS
-                ? cloudLightVisibility
+    /** The share {@link #setSunDiscVisibility} last set, or 1 once the clouds stop refreshing it. */
+    public static float sunDiscVisibility() {
+        return System.nanoTime() - sunDiscVisibilityNanos < SUN_DISC_VISIBILITY_STALE_NANOS
+                ? sunDiscVisibility
                 : 1.0f;
     }
 
@@ -1089,10 +1091,10 @@ public class LightManager {
 
         try {
             sunLight = updateDistantLight(sunLight, skyLightState.sunPosition(),
-                    scaleRadiance(skyLightState.sunDirectRadiance(), cloudLightVisibility() * (1.0f - SUN_DISC_SHARE)),
+                    scaleRadiance(skyLightState.sunDirectRadiance(), 1.0f - SUN_DISC_SHARE),
                     SUN_ANGULAR_DIAMETER_DEGREES);
             moonLight = updateDistantLight(moonLight, skyLightState.moonPosition(),
-                    scaleRadiance(skyLightState.moonDirectRadiance(), cloudLightVisibility()),
+                    skyLightState.moonDirectRadiance(),
                     MOON_ANGULAR_DIAMETER_DEGREES);
         } catch (RemixException e) {
             LOGGER.error("Failed to update sky light: {}", e.getMessage());

@@ -490,7 +490,7 @@ final class AtmosphericSkyGenerator {
         skyParameters.putFloat(64, mieScatteringAnisotropy);
         // The sun disc follows the light it stands for, filtered by the air, the weather and the clouds.
         float[] sunDirect = lightState.sunDirectRadiance();
-        float discScale = LightManager.cloudLightVisibility() * LightManager.SUN_DISC_GAIN;
+        float discScale = LightManager.sunDiscVisibility() * LightManager.SUN_DISC_GAIN;
         skyParameters.putFloat(68, sunDirect[0] * discScale);
         skyParameters.putFloat(72, sunDirect[1] * discScale);
         skyParameters.putFloat(76, sunDirect[2] * discScale);

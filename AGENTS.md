@@ -194,11 +194,13 @@ mesh with one transform. Reimagined uses the texture-chunk path over a generated
 mask (`ReimaginedCloudMask`) in one or two thick layers. Unbound is not drawn by
 `CloudRenderer`: `sky/VolumetricClouds` ray-marches three cloud layers (small
 and large cumulus, altostratus) and the cirrus on the GPU
-(`volumetric_clouds.comp`) into a panorama shown on a dome in the sky category,
-and dims the sun's distant light while a cloud covers it. On screen the lens
-draws them per pixel instead (see Lens); the dome stays as what the lens
-replaces and for the sun's occlusion. The density field, lighting and march
-live once in `cloud_field.glsl`, which both include (`CloudField`).
+(`volumetric_clouds.comp`) into a panorama shown on a dome in the sky category.
+On screen the lens draws them per pixel instead, and the shadows they cast on
+the land, since the runtime casts none (see Lens). The dome stays as what the
+lens replaces, and its opacity toward the sun hides the sun's disc in the
+atmosphere's dome texture, so a glint on water goes out under a cloud; the
+sun's distant light keeps its strength. The density field, lighting, march and
+shadow live once in `cloud_field.glsl`, which both include (`CloudField`).
 
 **Terrain.** Minecraft workers build section meshes, a low-concurrency executor
 merges them into chunk-column assets split into byte-capped pages per category,
@@ -270,15 +272,22 @@ the weather: depth of field focused on what the crosshair rests on, flares from
 the sun and the brightest drawn lights (`FlareSources`; the terrain light loop
 and the first-person flame offer them, and the list is cleared after the lens
 draws), aerial haze toward the horizon's sky colour, thickened by rain, and the
-Unbound clouds. It works on the runtime's tone-mapped image and the interop
-depth, which is not antialiased, so haze and clouds treat a sky pixel beside
-the land as land. The clouds are marched at half resolution for every pixel,
+Unbound clouds and their shadows on the land. It works on the runtime's
+tone-mapped image and the interop depth, which is not antialiased, so haze,
+clouds and shadows treat a sky pixel beside the land as land, and a column's
+horizon colour is read only where the sky runs on for a few rows, never from
+a lone texel with nothing drawn. A shadow darkens the land per channel by the
+share of its light that comes straight from the sun or moon. The clouds are marched at half resolution for every pixel,
 between the camera and the land or through the whole sky, and folded into a
 history reprojected by the camera's motion. Their light is brought to the
 image's exposure by comparing the dome's opaque clouds on screen with the
 panorama, per brightness band; over the sky the dome's own clouds are taken
 back out of the image using the panorama the dome shows
-(`VolumetricCloudGenerator.shownPanoramaTexture`) and the sky behind them.
+(`VolumetricCloudGenerator.shownPanoramaTexture`) and the sky behind them. That
+copy is mipmapped and read over the pixel's footprint, its colour averaged
+over neighbours of matching opacity and its opacity only deep inside a cloud,
+because the runtime mips the dome's texture and its denoiser smooths the
+march's speckle out of the image but keeps the outlines.
 
 **Particles.** Slot preparation and CPU mesh snapshots run on a dedicated worker
 and are double buffered: the render thread publishes the previous frame's

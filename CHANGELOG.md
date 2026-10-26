@@ -17,8 +17,8 @@ also part of every mod file name.
   after rain, star brightness, high cirrus and northern aurora.
 - Two cloud styles. Reimagined draws large rounded blocky clouds in one or two
   thick layers. Unbound draws soft volumetric clouds out to the horizon in
-  three layers, small and large cumulus and an altostratus sheet, that dim
-  the sunlight as they pass in front of the sun.
+  three layers, small and large cumulus and an altostratus sheet, that cast
+  shadows on the land as they drift.
 - Cloud coverage, speed and Unbound shape and lighting settings.
 - LOD Terrain: with Distant Horizons 3.3.4 installed, its distant terrain is
   path traced beyond Minecraft's render distance, and the view fade moves out
@@ -48,7 +48,8 @@ also part of every mod file name.
 - Puddles reflect more of the sky, and raindrop rings land more often and
   ripple harder.
 - Unbound clouds are brighter on the sun's side and greyer on the far side,
-  and the bases of the cumulus are flat rather than frayed.
+  and the bases of the cumulus are flat rather than frayed. Their sides bulge
+  and round into the base instead of standing like walls.
 - Rain closes the view: distant land fades into the grey of the overcast sky
   instead of standing dark against it.
 
@@ -77,6 +78,9 @@ also part of every mod file name.
   the sky: aerial haze now covers the pixels along a silhouette.
 - In the rain, the aerial haze, the Unbound clouds over the land and the depth
   of field are no longer undone wherever rain falls.
+- The aerial haze no longer flickers toward the edges of the screen while you
+  look down or into trees.
+- The bases of Unbound clouds near the horizon no longer show grainy patches.
 - The flare from a torch in your hand starts at the flame on screen.
 - When the time of day jumps, as with `/time set`, sleeping or a camera path,
   riverbeds and shaded ground no longer keep glowing with the old daylight

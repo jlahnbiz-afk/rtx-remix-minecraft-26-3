@@ -23,6 +23,7 @@ import org.lwjgl.opengl.GL32;
 import org.lwjgl.opengl.GL42;
 import org.lwjgl.opengl.GL43;
 import org.lwjgl.opengl.GL44;
+import org.lwjgl.opengl.GL45C;
 
 /**
  * Ray marches the Unbound clouds into a panorama of the upper sky with a compute shader and
@@ -57,6 +58,8 @@ final class VolumetricCloudGenerator {
     private static final int PASS_NOISE = 0;
     private static final int PASS_MARCH = 1;
     private static final int READBACK_RING_SIZE = 3;
+    /** The full mip chain of a shown copy, down to one texel across. */
+    private static final int SHOWN_LEVELS = Integer.SIZE - Integer.numberOfLeadingZeros(WIDTH);
     // Outside the twelve units whose bindings the GL backend caches, and apart from the
     // atmosphere's units 14 and 15.
     private static final int TEXTURE_UNIT = 13;
@@ -118,10 +121,10 @@ final class VolumetricCloudGenerator {
         }
 
         noiseTexture = createNoiseTexture();
-        historyTexture = createTexture(WIDTH, HEIGHT, GL30.GL_RGBA16F);
-        outputTexture = createTexture(WIDTH, HEIGHT + 1, GL30.GL_RGBA16F);
+        historyTexture = createTexture(WIDTH, HEIGHT, GL30.GL_RGBA16F, 1);
+        outputTexture = createTexture(WIDTH, HEIGHT + 1, GL30.GL_RGBA16F, 1);
         for (int slot = 0; slot < READBACK_RING_SIZE; slot++) {
-            shownTextures[slot] = createTexture(WIDTH, HEIGHT, GL30.GL_RGBA16F);
+            shownTextures[slot] = createTexture(WIDTH, HEIGHT, GL30.GL_RGBA16F, SHOWN_LEVELS);
         }
         cirrusTexture = createCirrusTexture();
         uploadCirrus(new byte[4], 1);
@@ -179,8 +182,11 @@ final class VolumetricCloudGenerator {
             GL42.glMemoryBarrier(GL42.GL_TEXTURE_UPDATE_BARRIER_BIT | GL42.GL_PIXEL_BUFFER_BARRIER_BIT
                     | GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
 
+            int shown = shownTextures[panoramaReadback.nextSlot()];
             GL43.glCopyImageSubData(outputTexture, GL11.GL_TEXTURE_2D, 0, 0, 0, 0,
-                    shownTextures[panoramaReadback.nextSlot()], GL11.GL_TEXTURE_2D, 0, 0, 0, 0, WIDTH, HEIGHT, 1);
+                    shown, GL11.GL_TEXTURE_2D, 0, 0, 0, 0, WIDTH, HEIGHT, 1);
+            // The runtime mips the dome's texture too.
+            GL45C.glGenerateTextureMipmap(shown);
             panoramaReadback.queue(outputTexture);
         } finally {
             GL42.glBindImageTexture(1, 0, 0, false, 0, GL15.GL_READ_WRITE, GL30.GL_RGBA16F);
@@ -434,14 +440,14 @@ final class VolumetricCloudGenerator {
         return texture;
     }
 
-    private static int createTexture(int width, int height, int internalFormat) {
+    private static int createTexture(int width, int height, int internalFormat, int levels) {
         int previous = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
         int texture = GL11.glGenTextures();
         try {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
             GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
-            GL42.glTexStorage2D(GL11.GL_TEXTURE_2D, 1, internalFormat, width, height);
+            GL42.glTexStorage2D(GL11.GL_TEXTURE_2D, levels, internalFormat, width, height);
         } finally {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, previous);
         }

@@ -36,9 +36,11 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The Unbound cloud style: volumetric clouds marched on the GPU into a panorama and shown
- * on a dome in the sky category, over the sun, moon, stars and high sky layers. Because the
- * panorama is part of the sky, the clouds reach the horizon however far the view distance
- * ends, and the sky behind them shows through their thin edges.
+ * on a dome in the sky category, over the sun, moon, stars and high sky layers, out to the
+ * horizon however far the view distance ends. On screen the lens draws the same clouds per
+ * pixel in place of the dome's, and their shadows on the land, from what this class
+ * publishes in {@link CloudField}; the panorama's opacity toward the sun dims the sun's disc
+ * that glints on water.
  *
  * <p>Render thread only.
  */
@@ -76,9 +78,9 @@ final class VolumetricClouds {
     private static final float HAZE_DISTANCE = 9000.0f;
     private static final float GROUND_ALBEDO = 0.3f;
     /**
-     * Seconds for the direct light to follow a cloud moving over the sun or away from it. Slow
-     * enough that the sun racing past cloud edges, as it does when time is sped up, dims and
-     * brightens the world gently instead of flashing it.
+     * Seconds for the sun's disc in the sky's dome texture to follow a cloud moving over the
+     * sun or away from it. Slow enough that the sun racing past cloud edges, as it does when
+     * time is sped up, fades a glint on water gently instead of flashing it.
      */
     private static final float SHADOW_FADE_SECONDS = 2.0f;
     /** Texels on each side of the light's direction averaged for its occlusion. */
@@ -107,8 +109,8 @@ final class VolumetricClouds {
     private boolean failed;
     private int builtSkyMeshGeneration;
     private int uploadedCirrusVersion = -1;
-    private float lightVisibility = 1.0f;
-    private float targetLightVisibility = 1.0f;
+    private float discVisibility = 1.0f;
+    private float targetDiscVisibility = 1.0f;
     private long lastNanos;
 
     VolumetricClouds() {
@@ -160,17 +162,16 @@ final class VolumetricClouds {
             ByteBuffer pixels = generator.consumeCompletedReadback();
             if (pixels != null) {
                 // Inside a cloud the cloud toward the sun is mostly the one around the camera,
-                // which the world sees through too; the world under it keeps the sun.
+                // whose mist the lens already draws over everything, a glint included.
                 float inside = 1.0f - (float) Math.exp(-generator.cameraExtinction() * INSIDE_CLOUD_PATH);
-                targetLightVisibility = 1.0f - clouds.getUnboundShadow() * (1.0f - inside)
-                        * opacityToward(pixels, frame.lightDirection);
+                targetDiscVisibility = 1.0f - (1.0f - inside) * opacityToward(pixels, frame.lightDirection);
                 publish(api, pixels);
                 CloudField.show(generator.shownPanoramaTexture());
             }
             float seconds = lastNanos == 0 ? 0.0f : Math.min(0.25f, (now - lastNanos) / 1.0e9f);
             lastNanos = now;
-            lightVisibility += (targetLightVisibility - lightVisibility) * Math.min(1.0f, seconds / SHADOW_FADE_SECONDS);
-            LightManager.setCloudLightVisibility(lightVisibility);
+            discVisibility += (targetDiscVisibility - discVisibility) * Math.min(1.0f, seconds / SHADOW_FADE_SECONDS);
+            LightManager.setSunDiscVisibility(discVisibility);
             // Remix draws sky meshes in the order they were created, not the order they are
             // drawn in, so the dome is rebuilt after any newer sky mesh to stay over it.
             if (mesh != null && skyMeshGeneration != builtSkyMeshGeneration) {
@@ -198,7 +199,8 @@ final class VolumetricClouds {
         double drift = (world.getGameTime() + (double) tickDelta) * WIND_BLOCKS_PER_TICK * clouds.getSpeed();
         double period = WRAP_PERIOD * clouds.getCloudSize();
         CloudField.publish(generator.noiseTexture(), generator.cirrusTexture(),
-                wrap(cameraPos.x + drift * WIND_X, period), cameraPos.y, wrap(cameraPos.z + drift * WIND_Z, period));
+                wrap(cameraPos.x + drift * WIND_X, period), cameraPos.y, wrap(cameraPos.z + drift * WIND_Z, period),
+                clouds.getUnboundShadow());
     }
 
     private boolean dispatch(ClientLevel world, Vec3 cameraPos, float tickDelta, CloudRenderer clouds, float base,
@@ -399,10 +401,10 @@ final class VolumetricClouds {
         blendPNext = 0;
         CloudField.withdraw();
         restart = true;
-        lightVisibility = 1.0f;
-        targetLightVisibility = 1.0f;
+        discVisibility = 1.0f;
+        targetDiscVisibility = 1.0f;
         lastNanos = 0;
-        LightManager.setCloudLightVisibility(1.0f);
+        LightManager.setSunDiscVisibility(1.0f);
     }
 
     /** Releases the GL resources; call on the render thread with the context current. */

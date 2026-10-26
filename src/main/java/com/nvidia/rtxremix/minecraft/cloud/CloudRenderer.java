@@ -944,7 +944,7 @@ public final class CloudRenderer {
         unboundRainInfluence = Math.clamp(value, 0.0f, 1.0f);
     }
 
-    /** How much of the sun's direct light an Unbound cloud in front of it takes away, 0 to 1. */
+    /** How dark the shadows Unbound clouds cast on the land are, 0 to 1. */
     public float getUnboundShadow() {
         return unboundShadow;
     }

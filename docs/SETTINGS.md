@@ -58,9 +58,10 @@ sun, moon and high sky layers, in three layers: small cumulus just above
 Minecraft's cloud height, large cumulus above them, and a thin altostratus
 sheet far higher, each shading the ones below. You can fly into and through
 them, and from above you look down on them with the land showing through the
-gaps. They are drawn over the image rather than as world geometry, so they
-cast no shadows of their own shape; instead, while one passes in front of the
-sun or moon, the direct light dims by the Sun Shading amount.
+gaps. They are drawn over the image rather than as world geometry, so the
+runtime casts no shadows from them; the shadows they drop on the land, drifting
+with them, are drawn over the image too, as dark as the Cloud Shadows amount
+(at the default about as dark as a block's shadow at noon).
 Coverage and speed apply to Reimagined and Unbound; the other Unbound rows set
 the large cumulus thickness (the small cumulus are half as tall), density,
 brightness, edge detail and how far rain thickens them toward an overcast sky.

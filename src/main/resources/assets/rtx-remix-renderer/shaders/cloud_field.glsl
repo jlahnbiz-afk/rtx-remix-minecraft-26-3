@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// The Unbound clouds' density field, lighting and march, shared by the march that draws them
-// into the sky (volumetric_clouds.comp) and the lens's march in front of the land
-// (LensEffects), so both show the same clouds lit the same way. The includer defines PI and
+// The Unbound clouds' density field, lighting, march and shadow, shared by the march that
+// draws them into the sky (volumetric_clouds.comp) and the lens (LensEffects), which marches
+// them in front of the land and shades the land beneath them, so both show the same clouds
+// lit the same way. The includer defines PI and
 // declares the 3D noise as Noise, the layer inputs CloudBase, CloudThickness, Coverage,
 // Density, FeatureScale and Detail, the light LightDirection, LightIrradiance, AmbientTop and
 // AmbientBottom, the camera in the clouds' frame as CameraXZ and CameraHeight, the look as
@@ -111,12 +112,19 @@ float layerCover(int layer, vec2 xz) {
     return clamp((field - (1.0 - coverage)) / max(coverage, 0.08), 0.0, 1.0);
 }
 
+// The cover a cumulus dome is built on, eased in from the edge: the dome rises as the square
+// root of the cover, so cover climbing straight from zero stood the cloud's side up as a wall;
+// eased, the side bulges out and rounds into the base.
+float domeCover(float cover) {
+    return cover * cover * (3.0 - 2.0 * cover);
+}
+
 // Density, 0 to 1 before the layer's density scale, at height fraction h through a cumulus layer.
 float cumulusShape(int layer, vec3 world, float h, bool detailed) {
     if (h <= 0.0 || h >= 1.0) {
         return 0.0;
     }
-    float cover = layerCover(layer, world.xz);
+    float cover = domeCover(layerCover(layer, world.xz));
     if (cover <= 0.0) {
         return 0.0;
     }
@@ -216,6 +224,29 @@ float lightOpticalDepth(int layer, vec3 world, float jitter) {
             * (1.0 - abs(LightDirection.y));
     }
     return (depth + shade * Density) * EXTINCTION;
+}
+
+// Cloud straight up through a cumulus dome, per block of the layer's thickness: the density,
+// EDGE_GAIN times the dome cover less the height fraction squared and full once that passes
+// 1, summed over the height. Detail erosion is left out.
+float domeColumn(float cover) {
+    float full = sqrt(max(cover - 1.0 / EDGE_GAIN, 0.0));
+    float edge = sqrt(cover);
+    return full + EDGE_GAIN * (cover * (edge - full) - (edge * edge * edge - full * full * full) / 3.0);
+}
+
+// The share of the light the clouds above a point let through toward it, each layer read once
+// where the line toward the light crosses its middle: a cumulus layer by the column of its
+// dome there, so a shadow has its cloud's outline, and the altostratus by its sheet crossed
+// on the slant.
+float shadowTransmittance(vec3 world) {
+    float depth = domeColumn(domeCover(coverAbove(LAYER_SMALL, world, LightDirection)))
+            * layerThickness(LAYER_SMALL) * SMALL_DENSITY
+        + domeColumn(domeCover(coverAbove(LAYER_LARGE, world, LightDirection)))
+            * layerThickness(LAYER_LARGE) * LARGE_DENSITY
+        + coverAbove(LAYER_ALTO, world, LightDirection) * LARGE_DENSITY * ALTO_THICKNESS
+            / max(LightDirection.y, 0.1);
+    return exp(-depth * Density * EXTINCTION);
 }
 
 // Thin edges scatter forward in a narrow lobe, the silver lining against the sun, while the
