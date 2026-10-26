@@ -1,17 +1,70 @@
-# RTX Remix for Minecraft
+# RTX Remix for Minecraft 26.3
+
+**English** | [日本語](README.ja.md)
 
 Play Minecraft Java Edition 26.3 with real-time path tracing on a GeForce RTX
 GPU, powered by NVIDIA RTX Remix.
 
+This is a community fork of NVIDIA's
+[RTX Remix for Minecraft](https://github.com/NVIDIAGameWorks/rtx-remix-minecraft),
+which targets Minecraft 1.21.1. The fork ports it to 26.3 and gives it its own
+sky, clouds, lens effects and rain. NVIDIA does not maintain or support this
+fork; report its problems [here](https://github.com/kazumasa200/rtx-remix-minecraft-26-3/issues),
+not upstream.
+
+![The sun over the sea, with Unbound clouds, a starburst and its glint on the water](docs/images/water-glint.webp)
+
+| ![Unbound clouds in a blue sky over a treehouse among cherry trees](docs/images/treehouse-clouds.webp) | ![Sunlight and a starburst between skyscrapers](docs/images/skyscrapers-sun.webp) |
+|---|---|
+| Unbound clouds and the sky | Sunlight between skyscrapers |
+| ![Sunrise colouring the clouds and the water](docs/images/sunrise-water.webp) | ![Clouds reflected in a river between snowy forests](docs/images/snowy-river.webp) |
+| Sunrise on the water | Clouds reflected in a snowy river |
+| ![A wet city street in the rain, reflecting the buildings](docs/images/rainy-street.webp) | ![Street lights reflected on a wet road at night](docs/images/rainy-night-street.webp) |
+| A wet street in the rain | Street lights on a wet road at night |
+| ![Torches lighting village houses at night](docs/images/village-torches.webp) | ![An aurora and the moon over a snowfield](docs/images/aurora-snow.webp) |
+| Torchlight in a village at night | Aurora and moonlight over snow |
+| ![City lights across the water on a misty night](docs/images/misty-city-night.webp) | ![Overhead wires and a lamp in the night rain](docs/images/night-rain-wires.webp) |
+| A city across the water on a misty night | Overhead wires in the night rain |
+
+The sea and treehouse screenshots were taken in the
+[showcase world](#showcase-world-and-art-pack) with the RTX art pack; the others
+in other worlds and resource packs.
+
+## What This Fork Adds
+
+- **Minecraft 26.3.** The port follows vanilla's render-state and frame-graph
+  pipeline. [PORTING.md](PORTING.md) (in Japanese) records what changed, why,
+  and what is still open.
+- **A physically based sky.** The atmosphere is computed from measured values,
+  aerosols and ozone included, with multiple scattering, so a clear sky
+  deepens to blue overhead and pales to white at the horizon. Rainbows after
+  rain, high cirrus and a northern aurora come with it.
+- **Volumetric clouds.** Unbound draws soft clouds for every pixel out to the
+  horizon, with white sunlit tops and grey bases, and casts their shadows on
+  the land; you can fly into them. Reimagined draws large, rounded blocky
+  clouds.
+- **Lens effects.** A light depth of field that focuses on what the crosshair
+  rests on, lens flare and a starburst on the sun, distant haze, and glints on
+  rippling water.
+- **Rain.** Puddles form on open ground, and distant land fades into the
+  overcast.
+- **Distant terrain.** With Distant Horizons 3.3.4 installed, its terrain
+  beyond the render distance is path traced too (experimental).
+- **Lighter in busy places.** Where thousands of lights are in reach, as in a
+  city lit by sea lanterns, about 4,000 are drawn, so the frame rate holds.
+
+[Settings](docs/SETTINGS.md) lists every option and
+[CHANGELOG.md](CHANGELOG.md) every release.
+
 ## What To Expect
 
-This is a beta. It was built as a technology showcase, but we love Minecraft
-and want it to succeed as a rendering mod. We tuned it against one showcase
-world, built for this project by [BlockWorks](https://www.blockworks.uk/) (see
+This is a beta. Upstream was built as a technology showcase and tuned against
+one showcase world, built for that project by
+[BlockWorks](https://www.blockworks.uk/) (see
 [Showcase World And Art Pack](#showcase-world-and-art-pack)), and the places
-that world visits are where it looks and runs best. We have worked hard to fix
-as many issues as we could, but it ships with
-[known issues](https://github.com/NVIDIAGameWorks/rtx-remix-minecraft/issues),
+that world visits are where it looks and runs best. The fork is developed and
+checked on one Windows machine with an RTX 5090. It ships with
+[known issues](https://github.com/kazumasa200/rtx-remix-minecraft-26-3/issues),
 and there are certainly bugs yet to be discovered.
 
 Three areas have had less attention than the rest:
@@ -19,21 +72,19 @@ Three areas have had less attention than the rest:
 - **Other mods.** It has had limited testing alongside other mods, and a
   renderer that takes over the scene the way this one does is likely to
   conflict with anything that changes rendering or the chunk pipeline.
+  Distant Horizons 3.3.4 is the one tested companion.
 - **A full playthrough.** Blocks, mobs, dimensions, and situations the showcase
   never reaches have had less care, and some will look wrong or run slowly.
-- **Other versions.** It targets Minecraft 26.3 only. The original release
-  targeted 1.21.1; this port follows vanilla's render-state and frame-graph
-  pipeline, and [PORTING.md](PORTING.md) records what changed and what is
-  still open.
+- **Other versions.** It targets Minecraft 26.3 only. For 1.21.1, use
+  [upstream](https://github.com/NVIDIAGameWorks/rtx-remix-minecraft).
 
-We hope the community helps fill it out. If something breaks,
-[report it](docs/PLAYING.md#reporting-a-bug); if you can fix it, see
-[Contributing](#contributing).
+If something breaks, [report it](docs/PLAYING.md#reporting-a-bug); if you can
+fix it, see [Contributing](#contributing).
 
 ## Download
 
 Download the release archive from the
-[Releases page](https://github.com/NVIDIAGameWorks/rtx-remix-minecraft/releases/latest).
+[Releases page](https://github.com/kazumasa200/rtx-remix-minecraft-26-3/releases/latest).
 
 ## Install in three steps
 
@@ -46,7 +97,7 @@ The step-by-step version, with launcher advice and troubleshooting, is in
 
 ## Requirements
 
-- Windows 10 or 11, x64 or ARM64.
+- Windows 10 or 11, x64. This fork's releases carry no ARM64 build.
 - Minecraft Java Edition 26.3, on a Microsoft account that owns the game.
 - A GeForce RTX 30-series or newer GPU with NVIDIA driver 616.92 or newer.
 - About 5 GB of free disk space while installing; about 3 GB stays in use.
@@ -86,9 +137,9 @@ standing in it.
 **Camera flythroughs.** Record a path by walking it, then replay it, for a video
 or for an exact before-and-after comparison.
 
-**A settings screen in the game.** Distances, framerate, sky, lighting,
-exposure, and materials, all in Options, with no config files to edit, and a
-button into Remix's own Graphics Settings for the quality tier.
+**A settings screen in the game.** Distances, framerate, sky, clouds, lens,
+lighting, exposure, and materials, all in Options, with no config files to
+edit, and a button into Remix's own Graphics Settings for the quality tier.
 
 ## Showcase World And Art Pack
 
@@ -114,7 +165,7 @@ into the world with the pack on.
 | You want to | Read |
 |---|---|
 | Play with path tracing | [Playing](docs/PLAYING.md) |
-| Check the known issues | [Issue tracker](https://github.com/NVIDIAGameWorks/rtx-remix-minecraft/issues) |
+| Check the known issues | [Issue tracker](https://github.com/kazumasa200/rtx-remix-minecraft-26-3/issues) |
 | Play on a server | [Multiplayer](docs/PLAYING.md#multiplayer) |
 | Configure the renderer | [Settings](docs/SETTINGS.md) |
 | Look up a command, a key, or a mod-added block | [In-Game Guide](docs/IN_GAME_GUIDE.md) |
@@ -125,6 +176,7 @@ into the world with the pack on.
 | Build and run from source | [Getting Started](docs/GETTING_STARTED.md) |
 | Tune the developer knobs behind the renderer | [Tuning](docs/TUNING.md) |
 | Diagnose a rendering or native integration problem | [Rendering Diagnostics](docs/RENDERING_DIAGNOSTICS.md) |
+| Read what the 26.3 port changed (Japanese) | [PORTING.md](PORTING.md) |
 | Contribute a change | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Report a bug | [Reporting a Bug](docs/PLAYING.md#reporting-a-bug) |
 | Report a security vulnerability | [SECURITY.md](SECURITY.md) |
@@ -141,9 +193,9 @@ into the world with the pack on.
 | `packaging/` | Public installer, runtime defaults, and distribution payload |
 | `docs/` | Player, authoring, and source-build guides |
 
-NVIDIA maintains some release and CI tooling outside this repository. It is
-not required by the public Gradle build, the developer tools, or the installed
-mod.
+NVIDIA maintains some release and CI tooling for upstream outside this
+repository. It is not required by the public Gradle build, the developer tools,
+or the installed mod.
 
 ## Contributing
 

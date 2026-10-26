@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "shots": [
+    {"name": "water-glint", "x": 470.7, "y": 69.4, "z": -145.3, "yaw": -73.4, "pitch": 3.9, "timeOfDay": 1000, "weather": "clear", "rtx": true, "clouds": "unbound"},
+    {"name": "treehouse-clouds", "x": 353.1, "y": 158.8, "z": 36.8, "yaw": 69.6, "pitch": 8.1, "timeOfDay": 3000, "weather": "clear", "rtx": true, "clouds": "unbound"},
+    {"name": "sunrise-water", "x": 470.7, "y": 69.4, "z": -145.3, "yaw": -73.4, "pitch": 3.9, "timeOfDay": 23400, "weather": "clear", "rtx": true, "clouds": "unbound"}
+  ]
+}

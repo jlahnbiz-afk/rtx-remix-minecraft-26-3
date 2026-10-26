@@ -307,9 +307,11 @@ client framebuffer rather than a desktop grab.
 ### Documentation Screenshots
 
 Documentation images can be exported from named still shots and hosted as
-GitHub attachments. The repository ships no shot set. Mark poses in the
-selected world, whether the demo world or one you import, then refresh them
-when the build or art pack changes.
+GitHub attachments. The repository ships two shot sets: `readme`, the README's
+screenshots in the showcase world with the art pack, and `checks`, visual
+checks in a world of the developer's own. Mark poses in the selected world,
+whether the demo world or one you import, then refresh them when the build or
+art pack changes.
 
 `screenshots refresh` uses the shared selected world and pack, not the last
 `launch` arguments, so mark poses in that world with that pack. The shipped
@@ -378,7 +380,11 @@ whole set.
 The generated images stay under `build/`, outside the tracked source. To embed
 one in a public guide, upload the JPEG and its provenance to the project's
 chosen GitHub issue or pull request, then use the attachment URL GitHub returns.
-A recaptured image gets a new URL, so update the guide along with it.
+A recaptured image gets a new URL, so update the guide along with it. The
+README's screenshots are the exception: they are committed as WebP under
+`docs/images/`, so the README shows them on every branch and fork. The
+showcase-world ones are converted from `build/screenshots/readme/`; the others
+were taken in other worlds.
 
 ### Measured Scene
 

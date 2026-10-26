@@ -481,7 +481,7 @@ By making a contribution to this project, I certify that:
 ## Reporting Bugs
 
 A bug report is not a contribution you have to build: open an issue on the
-project's [issue tracker](https://github.com/NVIDIAGameWorks/rtx-remix-minecraft/issues),
+project's [issue tracker](https://github.com/kazumasa200/rtx-remix-minecraft-26-3/issues),
 and include everything listed in
 [Reporting a Bug](docs/PLAYING.md#reporting-a-bug).
 For wrapper failures, include the JDK version and failing Java stack trace or

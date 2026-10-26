@@ -8,9 +8,9 @@
         "NVIDIA"
     ],
     "contact": {
-        "homepage": "https://github.com/NVIDIAGameWorks/rtx-remix-minecraft",
-        "sources": "https://github.com/NVIDIAGameWorks/rtx-remix-minecraft",
-        "issues": "https://github.com/NVIDIAGameWorks/rtx-remix-minecraft/issues"
+        "homepage": "https://github.com/kazumasa200/rtx-remix-minecraft-26-3",
+        "sources": "https://github.com/kazumasa200/rtx-remix-minecraft-26-3",
+        "issues": "https://github.com/kazumasa200/rtx-remix-minecraft-26-3/issues"
     },
     "license": "Apache-2.0",
     "environment": "*",
