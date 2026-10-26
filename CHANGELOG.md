@@ -11,6 +11,12 @@ also part of every mod file name.
 
 ## Unreleased
 
+## 0.2.1 - 2026-10-26
+
+The fork's own look since 0.2.0: sky, clouds, lens, LOD terrain and rain, and
+a much lighter frame in places full of lights. PORTING.md records the design
+changes.
+
 ### Added
 
 - Sky Appearance settings: saturation, sunset warmth, sun glare, rainbows
