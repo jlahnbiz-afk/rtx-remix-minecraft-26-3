@@ -1151,14 +1151,13 @@ VRAM が 20 GB ほどまで膨らむという報告があり、Java 側で解放
   `packaging/*.md`、`CONTRIBUTING.md`、`THIRD_PARTY_NOTICES.md`、
   `rtxremix-java/README.md`) は 26.3 に合わせて直しています。上流の更新を
   取り込むときは、これらと `installer.ps1`、`build.gradle` で衝突しやすいです。
-- `README.md` はこのフォークの README に書き直し (フォークの説明、加えた機能、
-  `docs/images/` に WebP で置いたスクリーンショット。海と樹上の家はショーケース
-  ワールドの `readme` 撮影セット、ほかはほかのワールドで撮ったもの)、日本語版の
-  `README.ja.md` を足しました (2026-10-26)。リリースと Issues へのリンクは
-  `README.md`、`docs/PLAYING.md`、`docs/GETTING_STARTED.md`、`packaging/INSTALL.md`、
-  `CONTRIBUTING.md`、`fabric.mod.json` でこのフォーク
-  (kazumasa200/rtx-remix-minecraft-26-3) を指しています。上流へ PR を送るときは
-  NVIDIAGameWorks/rtx-remix-minecraft に戻してください。
+- 2026-10-26 に `README.md` をこのフォーク向けに書き直し、日本語版の `README.ja.md` を
+  足しました。フォークの説明と加えた機能を書き、スクリーンショットを `docs/images/` に
+  WebP で置いています。海と樹上の家の画像はショーケースワールドの `readme` 撮影セットで、
+  ほかは別のワールドで撮りました。リリースと Issues へのリンクは `README.md`、
+  `docs/PLAYING.md`、`docs/GETTING_STARTED.md`、`packaging/INSTALL.md`、`CONTRIBUTING.md`、
+  `fabric.mod.json` でこのフォーク (kazumasa200/rtx-remix-minecraft-26-3) を指しています。
+  上流へ PR を送るときは NVIDIAGameWorks/rtx-remix-minecraft に戻してください。
 - 上流の `CONTRIBUTING.md` はすべてのコミットに DCO の `Signed-off-by` を
   求めています。このブランチのコミットには付いていません。DCO は人が内容を
   確認して署名するものなので、上流へ送る場合は確認のうえ

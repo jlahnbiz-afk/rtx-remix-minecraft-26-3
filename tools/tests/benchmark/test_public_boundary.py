@@ -100,6 +100,7 @@ BINARY_SUFFIXES = {
     ".gif",
     ".jpg",
     ".jpeg",
+    ".webp",
     ".class",
     ".dll",
     ".exe",
