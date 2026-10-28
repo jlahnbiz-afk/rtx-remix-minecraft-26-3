@@ -29,8 +29,10 @@ not upstream.
 | Light on the floor of a pond | Light on the sea floor, from under water |
 | ![Unbound clouds at sunset over the city and the sea](docs/images/sunset-clouds-city.webp) | ![A lens flare from a tower's lights over the city in the rain](docs/images/rain-tower-flare.webp) |
 | Sunset clouds over the city | A lens flare in the rain |
-| ![Lamps along a park path in the rain, reflected on the wet ground](docs/images/rainy-park-lamps.webp) | |
-| Lamps along a park path in the rain | |
+| ![Lamps along a park path in the rain, reflected on the wet ground](docs/images/rainy-park-lamps.webp) | ![Park lamps glowing in the night fog, with a lens flare](docs/images/night-park-fog.webp) |
+| Lamps along a park path in the rain | Park lamps in the night fog |
+| ![Bamboo, a lamp and lit skyscrapers by a river at night](docs/images/bamboo-river-towers.webp) | ![Looking up at a city plaza and its lit towers on a foggy night](docs/images/foggy-city-plaza.webp) |
+| Bamboo and skyscrapers by a river at night | A city plaza on a foggy night |
 
 The sea and treehouse screenshots were taken in the
 [showcase world](#showcase-world-and-art-pack) with the RTX art pack; the others

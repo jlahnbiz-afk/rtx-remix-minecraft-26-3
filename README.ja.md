@@ -23,8 +23,10 @@ GeForce RTX の GPU で、Minecraft Java Edition 26.3 をリアルタイムの�
 | 池の底の光の揺らぎ | 水中から見た海の底の光 |
 | ![街と海の上に広がる夕焼けのアンバウンドの雲](docs/images/sunset-clouds-city.webp) | ![雨の街を見下ろす塔の灯りと、レンズフレア](docs/images/rain-tower-flare.webp) |
 | 夕焼け雲と街 | 雨の中のレンズフレア |
-| ![雨の公園の小道に並ぶ街灯と、濡れた地面の照り返し](docs/images/rainy-park-lamps.webp) | |
-| 雨の公園の小道と街灯 | |
+| ![雨の公園の小道に並ぶ街灯と、濡れた地面の照り返し](docs/images/rainy-park-lamps.webp) | ![夜の霧の中で灯る公園の街灯と、レンズフレア](docs/images/night-park-fog.webp) |
+| 雨の公園の小道と街灯 | 霧の夜の公園の街灯 |
+| ![夜の川辺の竹と灯り、明かりのともる高層ビル](docs/images/bamboo-river-towers.webp) | ![霧の夜、明かりのともるビルに囲まれた街の広場を見上げる](docs/images/foggy-city-plaza.webp) |
+| 夜の川辺の竹と高層ビル | 霧の夜の街の広場 |
 
 海と樹上の家のスクリーンショットは[ショーケースワールド](#ショーケースワールドとアートパック)と RTX アートパックで、ほかは別のワールドとリソースパックで撮りました。
 
