@@ -46,6 +46,16 @@ public final class LodSection {
     int serial;
     int liveIndex = -1;
     boolean inBuildQueue;
+    /** Whether a mesh of the section's geometry has been installed, an empty one included. */
+    boolean installed;
+    /** Whether the section lies past what the mesh budget draws, so it waits unbuilt. */
+    boolean starved;
+    /** The section's part in a swap with the sections replacing it, one of {@code LodTerrain.SWAP_*}. */
+    byte swap;
+    /** The section's place in the list of its swap state. */
+    int swapIndex = -1;
+    /** The frame the section began to linger. */
+    int lingerSince;
 
     /** World block position of the section's minimum corner and its width in blocks. */
     public LodSection(int minX, int minY, int minZ, int width) {

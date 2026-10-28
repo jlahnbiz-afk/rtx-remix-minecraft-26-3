@@ -54,6 +54,8 @@ final class AtmosphericSkyGenerator {
     /** Heights the multiple-scattering table keeps, one row each for the sun and the moon. */
     private static final int MULTIPLE_SCATTERING_HEIGHTS = 32;
     private static final int READBACK_RING_SIZE = 3;
+    /** The sky regenerates at most once a game tick. */
+    private static final long MIN_DISPATCH_NANOS = 50_000_000L;
     // The render boundary owns texture unit 0 and an unbound pixel-pack buffer;
     // dedicated units avoid synchronous binding queries on every sky update.
     private static final int FINAL_SKY_TEXTURE_UNIT = 14;
@@ -79,6 +81,7 @@ final class AtmosphericSkyGenerator {
     private final ByteBuffer publishedSkyParameters =
             BufferUtils.createByteBuffer(6 * 4 * Float.BYTES);
     private boolean hasPublishedSkyParameters;
+    private long lastDispatchNanos;
     private int readbackWriteIndex;
     private int readbackReadIndex;
     private int pendingReadbacks;
@@ -94,6 +97,11 @@ final class AtmosphericSkyGenerator {
 
     AtmosphericSkyGenerator() {
         this(WIDTH, HEIGHT);
+    }
+
+    /** The sky the dome light shows, as {@code skyDirection} lays it out, and a last row of statistics. */
+    int skyTexture() {
+        return finalSkyTexture;
     }
 
     AtmosphericSkyGenerator(int width, int height) {
@@ -209,11 +217,15 @@ final class AtmosphericSkyGenerator {
 
         // The parameters derive from the sky angle, which is tick-quantised, so most frames
         // reproduce the previous block byte for byte and their dispatch and readback would
-        // recompute an identical image. Draining a readback still in flight is deliberate: the
-        // result of the last dispatch that did matter arrives some frames later, and dropping
-        // it here would leave the texture and the atmospheric mean one change behind forever.
-        // It reads a persistently mapped buffer through a sync object and needs no GL state.
-        if (!parametersChanged && publishedOutputValid) {
+        // recompute an identical image. The eased inputs beside it move a little every frame,
+        // though, and regenerating for them cost half a millisecond of GPU, a readback and an
+        // upload every frame at 4K, so the sky regenerates at most at the tick rate. Draining a
+        // readback still in flight is deliberate: the result of the last dispatch that did
+        // matter arrives some frames later, and dropping it here would leave the texture and the
+        // atmospheric mean one change behind forever. It reads a persistently mapped buffer
+        // through a sync object and needs no GL state.
+        long now = System.nanoTime();
+        if (publishedOutputValid && (!parametersChanged || now - lastDispatchNanos < MIN_DISPATCH_NANOS)) {
             try (ProfileScope ignored =
                     ProfileScope.begin("Sky.ProceduralGeneration.Readback")) {
                 return consumeCompletedReadback(upperMean);
@@ -261,6 +273,7 @@ final class AtmosphericSkyGenerator {
                                 | GL42.GL_TEXTURE_UPDATE_BARRIER_BIT);
             }
             markSkyParametersDispatched();
+            lastDispatchNanos = now;
 
             ByteBuffer completedReadback;
             try (ProfileScope ignored =

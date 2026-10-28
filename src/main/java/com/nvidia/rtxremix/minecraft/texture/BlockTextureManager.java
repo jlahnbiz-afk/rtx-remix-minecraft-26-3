@@ -755,7 +755,8 @@ public class BlockTextureManager {
     // ====================================================================
 
     private static final String WATER_NORMALS_DDS = "textures/water_normals_flipbook.dds";
-    private static final float WATER_TILE_SIZE = 10.0f;
+    /** Blocks across the water's normal texture, which repeats this often (see {@link WaterNormals}). */
+    private static final float WATER_TILE_SIZE = 40.0f;
     /** Kill switch for raindrop rings ({@code -Drtxremix.rain.ripples=false}). */
     public static final boolean RAIN_RIPPLES_ENABLED =
             !"false".equalsIgnoreCase(System.getProperty("rtxremix.rain.ripples"));

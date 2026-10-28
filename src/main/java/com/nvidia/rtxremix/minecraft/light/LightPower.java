@@ -13,7 +13,7 @@ public final class LightPower {
 
     private static final float PI = (float) Math.PI;
     /** Vanilla's torch light level, the calibration point for {@link #torchReference()}. */
-    private static final int TORCH_LIGHT_LEVEL = 14;
+    static final int TORCH_LIGHT_LEVEL = 14;
 
     private LightPower() {}
 

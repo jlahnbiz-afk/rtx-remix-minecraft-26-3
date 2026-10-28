@@ -297,6 +297,8 @@ public class TerrainState {
                                                   southFaceMask, northFaceMask,
                                                   opacityBitmap);
         lastReplacedEntry = col.putSection(sy, newEntry);
+        if (sy < airBottomSy) airBottomSy = sy;
+        if (sy > airTopSy) airTopSy = sy;
 
         // Incremental reachability update:
         // If sealing changed in a way that might disconnect sections, mark dirty.
@@ -317,6 +319,11 @@ public class TerrainState {
                 (existing.southFaceMask & ~southFaceMask) != 0 ||
                 (existing.northFaceMask & ~northFaceMask) != 0)) {
             // A sub-region that was open is now sealed, so it might disconnect.
+            reachabilityDirty = true;
+        } else if (existing == null && reachable3D.containsKey(pack3DKey(cx, cz, sy))
+                && (topFaceMask & bottomFaceMask & eastFaceMask & westFaceMask
+                        & southFaceMask & northFaceMask) != -1L) {
+            // The flood crossed this section as open air, and now part of it is sealed.
             reachabilityDirty = true;
         } else if (!reachabilityDirty) {
             expandReachability(cx, cz, sy);
@@ -575,6 +582,17 @@ public class TerrainState {
     private boolean reachabilityIncomplete = false;
 
     /**
+     * The section heights between the lowest and the highest section captured since the
+     * terrain was last cleared. Every section that holds a block is captured, even a solid
+     * one, so a missing section inside this band is open air and the flood crosses it: a light
+     * on a platform in the air, or under a bridge, is reached through the air around it.
+     * Outside the band lies only empty sky and the void below the world. Unloads never narrow
+     * it; that would cost a scan of every section, and a wider band only adds empty sky.
+     */
+    private int airBottomSy = Integer.MAX_VALUE;
+    private int airTopSy = Integer.MIN_VALUE;
+
+    /**
      * Per-frame entry: advances a rebuild in flight by one budget slice, or
      * starts one when the set is dirty and the cooldown has passed. Queries
      * later in the frame skip the dirty check.
@@ -660,6 +678,11 @@ public class TerrainState {
             return true;
         }
         return true;
+    }
+
+    /** Whether the flood may enter section {@code sy}, which is {@code entry} or missing. */
+    private boolean passable(SectionEntry entry, int sy) {
+        return entry != null || (sy >= airBottomSy && sy <= airTopSy);
     }
 
     private void continueFloodBuild() {
@@ -872,13 +895,14 @@ public class TerrainState {
         // Vertical neighbours (check boundary openness)
         if (col != null) {
             se = col.section(sy);
+            // A missing neighbour in the published set was reached as open air.
             SectionEntry above = col.section(sy + 1);
-            if (above != null && yBoundaryOpen(se, above)) {
+            if (yBoundaryOpen(se, above)) {
                 int d = reachable3D.getOrDefault(pack3DKey(cx, cz, sy + 1), -1);
                 if (d >= 0 && (best < 0 || d < best)) best = d;
             }
             SectionEntry below = col.section(sy - 1);
-            if (below != null && yBoundaryOpen(below, se)) {
+            if (yBoundaryOpen(below, se)) {
                 int d = reachable3D.getOrDefault(pack3DKey(cx, cz, sy - 1), -1);
                 if (d >= 0 && (best < 0 || d < best)) best = d;
             }
@@ -890,7 +914,7 @@ public class TerrainState {
             ChunkColumn ncol = columnMap.get(packKey(ncx, ncz));
             if (ncol != null) {
                 SectionEntry nse = ncol.section(sy);
-                if (nse == null || !hBoundaryOpen(se, nse, off[0], off[1])) continue;
+                if (!hBoundaryOpen(se, nse, off[0], off[1])) continue;
                 int d = reachable3D.getOrDefault(pack3DKey(ncx, ncz, sy), -1);
                 if (d >= 0 && (best < 0 || d < best)) best = d;
             }
@@ -931,7 +955,7 @@ public class TerrainState {
             SectionEntry curSe = col.section(sy);
 
             SectionEntry upSe = col.section(sy + 1);
-            if (upSe != null && yBoundaryOpen(curSe, upSe) && withinFloodRadius(cx, cz, sy + 1)) {
+            if (passable(upSe, sy + 1) && yBoundaryOpen(curSe, upSe) && withinFloodRadius(cx, cz, sy + 1)) {
                 long upKey = pack3DKey(cx, cz, sy + 1);
                 int prev = into.getOrDefault(upKey, -1);
                 if (prev < 0 || nextDist < prev) {
@@ -940,7 +964,7 @@ public class TerrainState {
                 }
             }
             SectionEntry dnSe = col.section(sy - 1);
-            if (dnSe != null && yBoundaryOpen(dnSe, curSe) && withinFloodRadius(cx, cz, sy - 1)) {
+            if (passable(dnSe, sy - 1) && yBoundaryOpen(dnSe, curSe) && withinFloodRadius(cx, cz, sy - 1)) {
                 long dnKey = pack3DKey(cx, cz, sy - 1);
                 int prev = into.getOrDefault(dnKey, -1);
                 if (prev < 0 || nextDist < prev) {
@@ -955,7 +979,7 @@ public class TerrainState {
                 ChunkColumn ncol = columnMap.get(packKey(ncx, ncz));
                 if (ncol == null) continue;
                 SectionEntry nse = ncol.section(sy);
-                if (nse == null) continue;
+                if (!passable(nse, sy)) continue;
                 if (!hBoundaryOpen(curSe, nse, d[0], d[1])) continue;
                 long nKey = pack3DKey(ncx, ncz, sy);
                 int prev = into.getOrDefault(nKey, -1);
@@ -1105,6 +1129,8 @@ public class TerrainState {
         buildingColumns.clear();
         floodBuildInFlight = false;
         buildingIncomplete = false;
+        airBottomSy = Integer.MAX_VALUE;
+        airTopSy = Integer.MIN_VALUE;
         incrementalFloodNanos = 0;
         bfsQReset();
         reachabilityDirty = true;

@@ -56,8 +56,10 @@ resource-pack rules under `rtx_remix/block_lights/`. One `BlockLightKey`
 (position, rule id, light index) owns one `RemixLight`; a rule can emit multiple
 lights per block, and lights are not clustered. `TerrainState` owns the
 section light set and connectivity flood; `ChunkManager.draw` applies the
-culls and counts their outcomes. The [resource-pack guide](RESOURCE_PACKS.md)
-describes authoring rules.
+culls and counts their outcomes. `/rtx lights` prints each rule's drawn and
+loaded counts: a light in view that reads 0 drawn was culled by the flood or
+the reach test. The [resource-pack guide](RESOURCE_PACKS.md) describes
+authoring rules.
 
 A Block Lights multiplier only scales radiance, so committing one never
 recaptures terrain. `ChunkManager.refreshBlockLightIntensities()` queues an

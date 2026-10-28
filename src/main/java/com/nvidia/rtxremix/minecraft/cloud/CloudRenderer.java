@@ -68,7 +68,7 @@ public final class CloudRenderer {
     private static final float SSS_RADIUS_SCALE = 5000.0f;
     private static final float SSS_MAX_SAMPLE_RADIUS = 1.0f;
 
-    public static final float DEFAULT_COVERAGE = 0.4f;
+    public static final float DEFAULT_COVERAGE = 0.3f;
     public static final boolean DEFAULT_SECOND_LAYER = true;
     public static final float DEFAULT_SPEED = 1.0f;
     public static final float MAX_SPEED = 10.0f;

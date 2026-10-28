@@ -55,6 +55,11 @@ public final class DistantHorizonsCompat {
         }
     }
 
+    /** Any thread. Whether Remix draws the LODs in place of Distant Horizons. */
+    public static boolean capturing() {
+        return capturing;
+    }
+
     /** Distant Horizons' LOD render radius in chunks, or 0 before it has started. */
     public static int lodRadiusChunks() {
         if (renderDistance == null) {

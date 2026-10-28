@@ -65,8 +65,17 @@ them, and from above you look down on them with the land showing through the
 gaps. They are drawn over the image rather than as world geometry, so the
 runtime casts no shadows from them; the shadows they drop on the land, drifting
 with them, are drawn over the image too, as dark as the Cloud Shadows amount
-(at the default about as dark as a block's shadow at noon).
-Coverage and speed apply to Reimagined and Unbound; the other Unbound rows set
+(at the default about as dark as a block's shadow at noon). The Unbound sky
+changes a little from day to day, with more cumulus on some days and a thicker
+altostratus on others, and it clouds over before the rain and clears after it. In single-player the clouds gather
+ahead of the rain; on a server they gather as it starts, since only the server
+knows when it will come. Rarely, on a calm day, a cloud takes the shape of a
+creeper's head.
+Coverage and speed apply to Reimagined and Unbound; for Unbound, Coverage sets an
+ordinary day's cover, which the weather moves a little either way. Coverage, like
+Moon Intensity, reads 1 at its default and scales from there; the default
+covers about three tenths of the sky. The other
+Unbound rows set
 the large cumulus thickness (the small cumulus are half as tall), density,
 brightness, edge detail and how far rain thickens them toward an overcast sky.
 
@@ -77,7 +86,9 @@ vanilla block that gives off light has a row, except the ones that come in
 large fields: lava, magma, portals, glow lichen and sea pickles glow through
 their surfaces instead, so **Block Glow Intensity** under Materials controls
 them. Emitting surfaces are not sampled directly, so a room lit only by them
-can be darker than one with separate lights.
+can be darker than one with separate lights. At 1 a light block lights about
+as far as a torch of the same light level: a glowing block such as a sea
+lantern, and a lantern's glass, shine from just outside their faces.
 
 The table commits changed rows together when you leave, then updates the
 loaded block lights in place over the next few frames; terrain is not rebuilt.
@@ -94,13 +105,19 @@ below.
 
 **Lens** draws a camera lens over the path-traced image. Depth of Field blurs
 what is nearer or farther than the block under the crosshair, focusing over a
-third of a second as an eye would; your own hand stays sharp. Lens Flare draws
+third of a second as an eye would; your own hand stays sharp. Depth of Field
+and Lens Flare read 1 at their defaults, a light blur and a faint flare. Lens Flare draws
 round ghosts and a rainbow ring along the line from a bright light through the
 screen centre, for the sun and for lamps within 64 blocks such as a held torch,
 and a starburst on the sun; a light behind a block or lost in the daylight does
 not flare, nor does the sun behind a roof or glass. It also sets the glow
 around the sun mirrored on water and puddles and the streaks on its glints.
-Both are drawn by the mod, not the Remix runtime, and 0 turns either off.
+Water Caustics draws the moving web of light that the waves gather on the
+floor of sunlit water up to about 250 blocks away, sharpest a few blocks down
+and fading out by about thirty; land between the floor and the sun and the
+Unbound clouds' shadows put it out, and it fades as the sun sets or the rain
+comes. All three are drawn by the mod, not the Remix
+runtime, and 0 turns any of them off.
 
 ## Materials
 

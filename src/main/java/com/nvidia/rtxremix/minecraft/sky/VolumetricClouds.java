@@ -57,8 +57,20 @@ final class VolumetricClouds {
     private static final int RINGS = 64;
     private static final int LOWER_RINGS = 24;
     private static final int SEGMENTS = 128;
-    /** Marches per second; each refreshes half the panorama and costs one readback and upload. */
+    /**
+     * Marches per second while the camera holds still; each refreshes half the panorama and
+     * costs one readback and upload.
+     */
     private static final long DISPATCH_INTERVAL_NANOS = 1_000_000_000L / 15;
+    /**
+     * Least time between marches while the camera moves: every other frame at sixty. The lens
+     * draws the clouds on screen per pixel, so only their reflections and the view from under
+     * water follow the panorama; marched every frame, its march, readback and upload cost about
+     * a millisecond and a half of each frame on the move at 4K.
+     */
+    private static final long MOVING_DISPATCH_INTERVAL_NANOS = 30_000_000L;
+    /** Blocks the camera moves between marches beyond which it is moving. */
+    private static final double MOVING_BLOCKS = 0.001;
     /** Averages a texel over about seven marches, which at 7.5 a second follows the light within a second. */
     private static final float HISTORY_WEIGHT = 0.15f;
     /** A camera move this far between dispatches is a teleport, and restarts the running average. */
@@ -112,6 +124,7 @@ final class VolumetricClouds {
     private float discVisibility = 1.0f;
     private float targetDiscVisibility = 1.0f;
     private long lastNanos;
+    private final CloudWeather weather = new CloudWeather();
 
     VolumetricClouds() {
         patch.width = VolumetricCloudGenerator.WIDTH;
@@ -154,7 +167,13 @@ final class VolumetricClouds {
                     ? SkyLook.getCirrusBrightness() * Math.clamp(weatherVisibility, 0.0f, 1.0f)
                     : 0.0f;
             long now = System.nanoTime();
-            if ((restart || now - lastDispatchNanos >= DISPATCH_INTERVAL_NANOS)
+            // The panorama is marched from where the camera stands, so as the camera moves the
+            // clouds' parallax changes every frame. Marched only fifteen times a second, the sky
+            // and its reflections stepped along with it; on the move it is marched thirty times.
+            boolean moving = cameraPos.distanceToSqr(lastCameraX, lastCameraY, lastCameraZ)
+                    > MOVING_BLOCKS * MOVING_BLOCKS;
+            long interval = moving ? MOVING_DISPATCH_INTERVAL_NANOS : DISPATCH_INTERVAL_NANOS;
+            if ((restart || now - lastDispatchNanos >= interval)
                     && dispatch(world, cameraPos, tickDelta, clouds, base, light, ambientTop, rain)) {
                 lastDispatchNanos = now;
             }
@@ -230,7 +249,11 @@ final class VolumetricClouds {
             frame.ambientTop[i] = ambientTop[i] * skyShare;
             frame.ambientBottom[i] = ambientTop[i] * skyShare * 0.35f + frame.lightIrradiance[i] * bounce;
         }
-        frame.coverage = clouds.getCoverage() + (0.95f - clouds.getCoverage()) * overcast;
+        float thunder = world.getThunderLevel(tickDelta);
+        weather.update(world, Math.clamp(rain, 0.0f, 1.0f), thunder, clouds.getCoverage());
+        for (int i = 0; i < 3; i++) {
+            frame.coverage[i] = weather.coverage[i] + (0.95f - weather.coverage[i]) * overcast;
+        }
         frame.density = clouds.getUnboundDensity() * (1.0f + overcast);
         frame.base = base;
         frame.thickness = clouds.getUnboundThickness();
@@ -245,6 +268,9 @@ final class VolumetricClouds {
         frame.parity = dispatches & 1;
         frame.hazeDistance = HAZE_DISTANCE;
         frame.detail = clouds.getUnboundDetail();
+        frame.shapes.update(wrap(cameraPos.x + drift * WIND_X, period), wrap(cameraPos.z + drift * WIND_Z, period),
+                period, base, frame.thickness, scale, weather.calm,
+                (world.getGameTime() + (double) tickDelta) / 24000.0);
         if (!generator.dispatch(frame)) {
             return false;
         }

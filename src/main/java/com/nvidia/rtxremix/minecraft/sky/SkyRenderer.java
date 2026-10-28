@@ -323,6 +323,7 @@ public class SkyRenderer {
             cloudAmbient[0] = atmosphericMeanR;
             cloudAmbient[1] = atmosphericMeanG;
             cloudAmbient[2] = atmosphericMeanB;
+            CloudField.showSky(atmosphericGenerator.skyTexture(), skyDomeMultiplier);
             volumetricClouds.render(api, world, cameraPos, tickDelta, renderer.getCloudRenderer(),
                     lightState, cloudAmbient, rainStrength, skyLayers, 1.0f - clamp01(weather.opacity()));
         }

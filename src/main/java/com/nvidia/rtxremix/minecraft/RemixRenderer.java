@@ -343,7 +343,7 @@ public class RemixRenderer {
             
             textureManager = new BlockTextureManager(this);
             chunkManager = new ChunkManager(this);
-            lodTerrain = new LodTerrain();
+            lodTerrain = new LodTerrain(perfTimer);
             lightManager = new LightManager(this);
             skyRenderer = new SkyRenderer(this);
             cloudRenderer = new CloudRenderer(this);
@@ -783,7 +783,7 @@ public class RemixRenderer {
             
             if (world == null || client.gameRenderer == null) {
                 if (chunkManager != null) chunkManager.hideRetainedInstances();
-                if (lodTerrain != null) lodTerrain.update(remixApi, null, null, false);
+                if (lodTerrain != null) lodTerrain.update(remixApi, null, null, false, null);
                 discardPendingParticleFrame();
                 // Closed by the finally, like the RTX-disabled branch below. endFrame is not
                 // idempotent: it re-adds elapsed from the same frame start and refolds min,
@@ -801,7 +801,7 @@ public class RemixRenderer {
             // intentionally left untouched so off<->on transitions don't desync.
             if (!RtxRemixMod.isRtxEnabled()) {
                 if (chunkManager != null) chunkManager.hideRetainedInstances();
-                if (lodTerrain != null) lodTerrain.update(remixApi, null, null, false);
+                if (lodTerrain != null) lodTerrain.update(remixApi, null, null, false, null);
                 // A payload prepared before the toggle holds world-space vertices from the
                 // old camera position; publishing it on re-enable would draw stale geometry.
                 discardPendingParticleFrame();
@@ -850,7 +850,7 @@ public class RemixRenderer {
                     LOGGER.error("Error updating chunks", e);
                 }
                 try (ProfileScope lodScope = ProfileScope.begin("LOD terrain")) {
-                    lodTerrain.update(remixApi, cameraPos, textureManager, true);
+                    lodTerrain.update(remixApi, cameraPos, textureManager, true, chunkManager);
                 } catch (Exception e) {
                     LOGGER.error("Error updating LOD terrain", e);
                 }
@@ -860,7 +860,7 @@ public class RemixRenderer {
                 }
             } else {
                 chunkManager.hideRetainedInstances();
-                lodTerrain.update(remixApi, cameraPos, textureManager, false);
+                lodTerrain.update(remixApi, cameraPos, textureManager, false, chunkManager);
             }
 
             entitySubmitter.beginFrame();
@@ -1270,6 +1270,9 @@ public class RemixRenderer {
                     ? lightManager.getSkyLightState() : LightManager.SkyLightState.empty();
             // Only a sky with a lit sun draws its starburst; the empty state's sun points up.
             float[] sunDirection = sky.sunDirectRadiance()[1] > 0.0f ? sky.sunPosition() : NO_SUN;
+            if (textureManager != null) {
+                lensEffects.setWaterIor(textureManager.getWaterIor());
+            }
             lensEffects.updateCamera(camera, client.level, worldFov, aspect, farPlane, sunDirection);
     
             CameraInfoParameterizedEXT worldCameraParams = CameraInfoParameterizedEXT.builder()

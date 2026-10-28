@@ -5,12 +5,14 @@
 // draws them into the sky (volumetric_clouds.comp) and the lens (LensEffects), which marches
 // them in front of the land and shades the land beneath them, so both show the same clouds
 // lit the same way. The includer defines PI and
-// declares the 3D noise as Noise, the layer inputs CloudBase, CloudThickness, Coverage,
+// declares the 3D noise as Noise, the layer inputs CloudBase, CloudThickness, LayerCoverage
+// (the small cumulus, the large cumulus and the altostratus, as CloudWeather has them),
 // Density, FeatureScale and Detail, the light LightDirection, LightIrradiance, AmbientTop and
 // AmbientBottom, the camera in the clouds' frame as CameraXZ and CameraHeight, the look as
 // Brightness and HazeDistance, and the cirrus layer as Cirrus, CirrusAngle, CirrusStrength and
-// CIRRUS_MIN_ELEVATION_DEGREES. It may define CLOUD_MIN_STEPS, CLOUD_MAX_STEPS and
-// CLOUD_ALTO_STEPS first.
+// CIRRUS_MIN_ELEVATION_DEGREES. It may define CLOUD_MIN_STEPS, CLOUD_MAX_STEPS,
+// CLOUD_ALTO_STEPS and CLOUD_SHAPE_STEPS first, and CLOUD_MAX_SHAPES as CloudShapes sizes it.
+// The shaped clouds' own uniforms are declared here.
 
 #ifndef CLOUD_MIN_STEPS
 #define CLOUD_MIN_STEPS 28
@@ -18,6 +20,21 @@
 #ifndef CLOUD_MAX_STEPS
 #define CLOUD_MAX_STEPS 56
 #endif
+#ifndef CLOUD_SHAPE_STEPS
+#define CLOUD_SHAPE_STEPS 96
+#endif
+#ifndef CLOUD_MAX_SHAPES
+#define CLOUD_MAX_SHAPES 1
+#endif
+
+// Shaped clouds (CloudShapes), each inside a bounding sphere of ShapeBounds (centre in the
+// clouds' frame, radius). ShapeForm: x the kind (1 a creeper's head), w the height of its
+// base. ShapeSize: x its height, y a head's half size, z its facing in radians, w the shape's
+// strength, 0 to 1, as it forms and fades.
+uniform int ShapeCount;
+uniform vec4 ShapeBounds[CLOUD_MAX_SHAPES];
+uniform vec4 ShapeForm[CLOUD_MAX_SHAPES];
+uniform vec4 ShapeSize[CLOUD_MAX_SHAPES];
 
 // Extinction per block at full density.
 const float EXTINCTION = 0.08;
@@ -30,8 +47,6 @@ const float ALTO_THICKNESS = 40.0;
 const float SMALL_DENSITY = 1.0;
 const float LARGE_DENSITY = 1.0;
 const float ALTO_DENSITY = 0.12;
-const float LARGE_COVERAGE = 0.8;
-const float ALTO_COVERAGE = 0.55;
 // Blocks per noise tile at feature scale 1, for each layer's weather cells and clumps.
 const float SMALL_BROAD_PERIOD = 5000.0;
 const float SMALL_FINE_PERIOD = 900.0;
@@ -53,6 +68,17 @@ const float DETAIL_EROSION = 0.9;
 // thin rim of a base would fray into holes that show as a speckled patch from below.
 const float BASE_EROSION_HEIGHT = 0.3;
 const float EDGE_GAIN = 3.0;
+// The least of the field's span over which a layer's cover climbs from its edge to full. A span
+// as small as a low coverage stood sparse clouds' edges up as walls under flat tops.
+const float COVER_EDGE_SPAN = 0.25;
+// The share of the noise tile a cumulus layer's clumps rise through from base to top: about a
+// cell of the Perlin-Worley, so a clump's outline changes on the way up.
+const float CLUMP_RISE = 0.35;
+// How far the detail's Perlin-Worley puffs push a cumulus surface out and in, in cover, and
+// that noise's middle and the half-width of its middle eight tenths, which map onto -1 to 1.
+const float PUFF_DEPTH = 0.35;
+const float PUFF_CENTRE = 0.74;
+const float PUFF_SPREAD = 0.11;
 
 // --- Layered clouds ---------------------------------------------------------------------
 // Three layers stacked as weather builds them: small cumulus just above the base, large
@@ -78,30 +104,42 @@ float layerThickness(int layer) {
 }
 
 float layerCoverage(int layer) {
-    float share = layer == LAYER_SMALL ? 1.0 : layer == LAYER_LARGE ? LARGE_COVERAGE : ALTO_COVERAGE;
-    return clamp(Coverage * share, 0.0, 1.0);
+    return clamp(layer == LAYER_SMALL ? LayerCoverage.x : layer == LAYER_LARGE ? LayerCoverage.y : LayerCoverage.z,
+        0.0, 1.0);
 }
 
-// The base shape noise, 0 to 1, read flat at one height of the noise tile.
-float flatShape(vec2 xz, float period, float slice) {
-    vec4 n = texture(Noise, vec3(xz.x / period, slice, xz.y / period));
+// The base shape noise, 0 to 1, at a point of the noise tile.
+float shapeNoise(vec3 uvw) {
+    vec4 n = texture(Noise, uvw);
     float lowFbm = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
     // The Perlin-Worley remap lands between about 0.7 and 0.95; stretching its middle over
     // 0 to 1 makes coverage roughly the share of sky the clouds fill.
     return clamp(remap(remap(n.r, lowFbm - 1.0, 1.0, 0.0, 1.0), BASE_LOW, BASE_HIGH, 0.0, 1.0), 0.0, 1.0);
 }
 
-// How strongly a layer is covered over a point, 0 to 1: broad weather cells and the clumps
-// inside them, thresholded by the layer's coverage.
-float layerCover(int layer, vec2 xz) {
+// The base shape noise read flat at one height of the noise tile.
+float flatShape(vec2 xz, float period, float slice) {
+    return shapeNoise(vec3(xz.x / period, slice, xz.y / period));
+}
+
+// The clumps read through the layer's height, h from base to top, as well: a clump's outline
+// changes as it rises, so its sides bulge and its top lumps. Read flat, every cloud was its
+// outline stood up, sheer-sided and flat-topped like a slab of castella.
+float clumpShape(vec2 xz, float h, float period, float slice) {
+    return shapeNoise(vec3(xz.x / period, slice + h * CLUMP_RISE, xz.y / period));
+}
+
+// How strongly a layer is covered at a point, h of the way up it, 0 to 1: broad weather cells
+// and the clumps inside them, thresholded by the layer's coverage.
+float layerCover(int layer, vec2 xz, float h) {
     float scale = FeatureScale;
     float broad, fine;
     if (layer == LAYER_SMALL) {
         broad = flatShape(xz, SMALL_BROAD_PERIOD * scale, 0.19);
-        fine = flatShape(xz, SMALL_FINE_PERIOD * scale, 0.53);
+        fine = clumpShape(xz, h, SMALL_FINE_PERIOD * scale, 0.53);
     } else if (layer == LAYER_LARGE) {
         broad = flatShape(xz.yx, LARGE_BROAD_PERIOD * scale, 0.71);
-        fine = flatShape(xz.yx, LARGE_FINE_PERIOD * scale, 0.37);
+        fine = clumpShape(xz.yx, h, LARGE_FINE_PERIOD * scale, 0.37);
     } else {
         broad = flatShape(xz, ALTO_BROAD_PERIOD * scale, 0.83);
         // Warped by the broad field, so the sheet tears into long streaks and rifts.
@@ -109,7 +147,7 @@ float layerCover(int layer, vec2 xz) {
     }
     float field = mix(fine, broad, BROAD_SHARE);
     float coverage = layerCoverage(layer);
-    return clamp((field - (1.0 - coverage)) / max(coverage, 0.08), 0.0, 1.0);
+    return clamp((field - (1.0 - coverage)) / max(coverage, COVER_EDGE_SPAN), 0.0, 1.0);
 }
 
 // The cover a cumulus dome is built on, eased in from the edge: the dome rises as the square
@@ -124,7 +162,7 @@ float cumulusShape(int layer, vec3 world, float h, bool detailed) {
     if (h <= 0.0 || h >= 1.0) {
         return 0.0;
     }
-    float cover = domeCover(layerCover(layer, world.xz));
+    float cover = domeCover(layerCover(layer, world.xz, h));
     if (cover <= 0.0) {
         return 0.0;
     }
@@ -133,12 +171,21 @@ float cumulusShape(int layer, vec3 world, float h, bool detailed) {
     // top, so strong cells tower while weak ones stay as low, flat puffs.
     float bottom = 1.0 - pow(1.0 - clamp(h * thickness / BASE_ROUNDING, 0.0, 1.0), 4.0);
     float top = 1.0 - h * h;
-    float shape = clamp(cover + bottom * top - 1.0, 0.0, 1.0);
-    if (detailed && shape > 0.0 && Detail > 0.0) {
+    float body = cover + bottom * top - 1.0;
+    // Above the flat base the surface puffs out and in.
+    float puffing = PUFF_DEPTH * Detail * smoothstep(0.0, BASE_EROSION_HEIGHT, h);
+    float shape = clamp(body, 0.0, 1.0);
+    if (detailed && body > -puffing && Detail > 0.0) {
         // Detail drifts downwind faster than the body, more so higher up, so tops shear over.
         vec3 sheared = world;
         sheared.xz += SHEAR * pow(h, 1.5) * thickness;
         vec4 n = texture(Noise, sheared / (DETAIL_PERIOD * FeatureScale));
+        // The Perlin-Worley's round puffs swell the surface into cauliflower, as Perlin-Worley
+        // swells the clumps; the body alone was smooth as a sculpted slab.
+        float puff = clamp((n.r - PUFF_CENTRE) / PUFF_SPREAD, -1.0, 1.0);
+        // Pushed out only half as far as in: pushed out alike, a thin edge grew into a scatter of
+        // crumbs and the sky clouded over more than the coverage asks.
+        shape = clamp(body + puff * puffing * (puff > 0.0 ? 0.5 : 1.0), 0.0, 1.0);
         float detail = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
         // Wispy low on the sides, billowing higher up.
         float erosion = mix(1.0 - detail, detail, clamp(h * 4.0, 0.0, 1.0));
@@ -156,11 +203,83 @@ float layerDensity(int layer, vec3 world, bool detailed) {
         if (h <= 0.0 || h >= 1.0) {
             return 0.0;
         }
-        float cover = layerCover(LAYER_ALTO, world.xz);
+        float cover = layerCover(LAYER_ALTO, world.xz, h);
         return cover * cover * ALTO_DENSITY * Density;
     }
     float density = layer == LAYER_SMALL ? SMALL_DENSITY : LARGE_DENSITY;
     return cumulusShape(layer, world, h, detailed) * density * Density;
+}
+
+// --- Shaped clouds ----------------------------------------------------------------------
+// Figures CloudShapes places. As in Cygames' arbitrary-shape clouds (GCC 2017), a shape only
+// says where cloud may stand; its surface is eroded at the edges by the field's own noise, as
+// the cumulus are, so a shape keeps the grain of the clouds around it.
+
+// The most cloud a shape puts between a point and the sky, and how high the ground's light
+// reaches up it, in blocks.
+const float SHAPE_LIT_THICKNESS = 300.0;
+// The share of the sky a shape's side cannot see, in UPPER_SKY_OCCLUSION's terms: the shape
+// itself hides half of it. Its top sees all of it.
+const float SHAPE_FLANK_SHADE = 0.83;
+// A creeper's face, eight pixels to a row with the top row first; the set pixels are its
+// eyes and mouth.
+const int CREEPER_FACE[8] = int[](0x00, 0x00, 0x66, 0x66, 0x18, 0x3C, 0x3C, 0x24);
+
+bool creeperPixel(int column, int row) {
+    return column >= 0 && column < 8 && row >= 0 && row < 8 && ((CREEPER_FACE[row] >> (7 - column)) & 1) == 1;
+}
+
+// How far inside a creeper's head a point is, in blocks, negative outside: a cube whose face's
+// dark pixels are holes through it, so the sky shows through its eyes and mouth.
+float creeperInside(int shape, vec3 world) {
+    vec3 offset = world - ShapeBounds[shape].xyz;
+    float c = cos(ShapeSize[shape].z);
+    float s = sin(ShapeSize[shape].z);
+    vec3 local = vec3(c * offset.x - s * offset.z, offset.y, s * offset.x + c * offset.z);
+    float size = ShapeSize[shape].y;
+    vec3 q = abs(local) - vec3(size);
+    float inside = -(length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0));
+    float pixel = size * 0.25;
+    vec2 face = vec2(local.x + size, size - local.y) / pixel;
+    int column = int(floor(face.x));
+    int row = int(floor(face.y));
+    if (creeperPixel(column, row)) {
+        // To the hole's edge, counting only the sides it does not share with another hole.
+        vec2 f = fract(face);
+        float hole = 1.0e9;
+        if (!creeperPixel(column - 1, row)) hole = min(hole, f.x);
+        if (!creeperPixel(column + 1, row)) hole = min(hole, 1.0 - f.x);
+        if (!creeperPixel(column, row - 1)) hole = min(hole, f.y);
+        if (!creeperPixel(column, row + 1)) hole = min(hole, 1.0 - f.y);
+        inside = min(inside, -hole * pixel);
+    }
+    return inside;
+}
+
+// How far inside a shape a point is, in blocks, before the noise erodes it.
+float shapeInside(int shape, vec3 world) {
+    return creeperInside(shape, world);
+}
+
+float shapeDensity(int shape, vec3 world, bool detailed) {
+    vec4 bounds = ShapeBounds[shape];
+    vec3 offset = world - bounds.xyz;
+    if (dot(offset, offset) >= bounds.w * bounds.w) {
+        return 0.0;
+    }
+    float height = ShapeSize[shape].x;
+    float h = clamp((world.y - ShapeForm[shape].w) / height, 0.0, 1.0);
+    float body = clamp(shapeInside(shape, world) / (ShapeSize[shape].y * 0.12), 0.0, 1.0);
+    if (detailed && body > 0.0 && Detail > 0.0) {
+        vec3 sheared = world;
+        sheared.xz += SHEAR * pow(h, 1.5) * height;
+        vec4 n = texture(Noise, sheared / (DETAIL_PERIOD * FeatureScale));
+        float detail = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
+        float erosion = mix(1.0 - detail, detail, clamp(h * 4.0, 0.0, 1.0)) * smoothstep(0.0, BASE_EROSION_HEIGHT, h);
+        // A figure frays half as much as a cloud, so it stays recognisable.
+        body = clamp(body - erosion * erosion * DETAIL_EROSION * Detail * 0.5 * (1.0 - body), 0.0, 1.0);
+    }
+    return clamp(body * EDGE_GAIN, 0.0, 1.0) * ShapeSize[shape].w * LARGE_DENSITY * Density;
 }
 
 // Light samples toward the sun, each twice as far as the one before so they cross the whole
@@ -168,6 +287,8 @@ float layerDensity(int layer, vec3 world, bool detailed) {
 // the same light. The first step, in blocks, for a 200-block layer, scaled with its thickness.
 const int LIGHT_STEPS = 4;
 const float LIGHT_STEP = 20.0;
+const int SHAPE_LIGHT_STEPS = 7;
+const float SHAPE_LIGHT_STEP = 8.0;
 const int ALTO_LIGHT_STEPS = 2;
 const float ALTO_LIGHT_STEP = 200.0;
 const float FORWARD_G = 0.8;
@@ -205,7 +326,7 @@ float coverAbove(int layer, vec3 world, vec3 toward) {
         return 0.0;
     }
     vec2 xz = world.xz + toward.xz * ((middle - world.y) / toward.y);
-    float cover = layerCover(layer, xz);
+    float cover = layerCover(layer, xz, 0.4);
     return layer == LAYER_ALTO ? cover * cover * ALTO_DENSITY / LARGE_DENSITY : cover;
 }
 
@@ -236,6 +357,48 @@ float lightOpticalDepth(int layer, vec3 world, float jitter) {
     return (depth + shade * Density) * EXTINCTION;
 }
 
+// The cloud a shape puts between a point and the light, its density summed over the chord the
+// line toward the light cuts through its bounds; the detail is left out, as for the layers.
+float shapeShadowDepth(int shape, vec3 world) {
+    vec4 bounds = ShapeBounds[shape];
+    vec3 offset = world - bounds.xyz;
+    float b = dot(offset, LightDirection);
+    float discriminant = b * b - dot(offset, offset) + bounds.w * bounds.w;
+    if (discriminant <= 0.0) {
+        return 0.0;
+    }
+    float root = sqrt(discriminant);
+    float start = max(-b - root, 0.0);
+    float end = -b + root;
+    if (end <= start) {
+        return 0.0;
+    }
+    float stepLength = (end - start) / 6.0;
+    float depth = 0.0;
+    for (int i = 0; i < 6; i++) {
+        depth += shapeDensity(shape, world + LightDirection * (start + stepLength * (float(i) + 0.5)), false);
+    }
+    return depth * stepLength;
+}
+
+// Optical depth toward the light from a point in a shape: steps through the shape, each twice
+// as long as the last, and the altostratus above read once, as it shades the cumulus.
+float shapeLightDepth(int shape, vec3 world, float jitter) {
+    float depth = 0.0;
+    // From a few blocks, so the shape's own edges shade it: a first step a sixteenth of the
+    // shape long crossed the terminator and lit every side alike.
+    float stepLength = SHAPE_LIGHT_STEP;
+    float travelled = 0.0;
+    for (int i = 0; i < SHAPE_LIGHT_STEPS; i++) {
+        depth += shapeDensity(shape, world + LightDirection * (travelled + stepLength * jitter), false) * stepLength;
+        travelled += stepLength;
+        stepLength *= 2.0;
+    }
+    float shade = coverAbove(LAYER_ALTO, world, LightDirection) * LARGE_DENSITY * ALTO_SHADOW_DEPTH
+        * (1.0 - abs(LightDirection.y));
+    return (depth + shade * Density) * EXTINCTION;
+}
+
 // Cloud straight up through a cumulus dome, per block of the layer's thickness: the density,
 // EDGE_GAIN times the dome cover less the height fraction squared and full once that passes
 // 1, summed over the height. Detail erosion is left out.
@@ -256,7 +419,14 @@ float shadowTransmittance(vec3 world) {
             * layerThickness(LAYER_LARGE) * LARGE_DENSITY
         + coverAbove(LAYER_ALTO, world, LightDirection) * LARGE_DENSITY * ALTO_THICKNESS
             / max(LightDirection.y, 0.1);
-    return exp(-depth * Density * EXTINCTION);
+    float shapes = 0.0;
+    for (int shape = 0; shape < CLOUD_MAX_SHAPES; shape++) {
+        if (shape >= ShapeCount) {
+            break;
+        }
+        shapes += shapeShadowDepth(shape, world);
+    }
+    return exp(-(depth * Density + shapes) * EXTINCTION);
 }
 
 // Thin edges scatter forward in a narrow lobe, the silver lining against the sun, while the
@@ -275,10 +445,13 @@ CloudPhase cloudPhase(float cosTheta) {
         henyeyGreenstein(cosTheta, WIDE_G), henyeyGreenstein(cosTheta, BACK_G));
 }
 
-// The light a unit of density scatters toward the viewer at a point h of the way up its layer.
-vec3 cloudSource(int layer, vec3 world, float density, float h, CloudPhase phase, float jitter) {
+// The light a unit of density scatters toward the viewer at a point h of the way up its cloud,
+// given the optical depth toward the light, the extinction through the cloud's height, the
+// share of the sky a cloud above hides from it, and how far the ground's light reaches it: from
+// below, a point high up a shape sees the sky about the horizon rather than the ground.
+vec3 scatteredLight(float depth, float density, float extinction, float h, float overhead, float ground,
+                    CloudPhase phase) {
     h = clamp(h, 0.0, 1.0);
-    float depth = lightOpticalDepth(layer, world, jitter);
     float powder = 1.0 - exp(-POWDER_RATE * density);
     float lobes = mix(phase.narrow, mix(phase.middle, phase.wide, powder), powder) + phase.back * powder * BACK_WEIGHT;
     // Light that has scattered inside reaches deeper than the direct beam, and leaves nearly
@@ -289,12 +462,16 @@ vec3 cloudSource(int layer, vec3 world, float density, float h, CloudPhase phase
     // cloud below it, so a base takes the ground's light unblocked (Photon's split): dimming
     // both by the depth into the cloud crushed the bases to black. The cloud around the point
     // stands in for the column above and below it.
-    float extinction = density * EXTINCTION * layerThickness(layer);
-    float overhead = layer == LAYER_SMALL ? coverAbove(LAYER_LARGE, world, vec3(0.0, 1.0, 0.0)) : 0.0;
     vec3 above = AmbientTop * (1.0 - overhead * UPPER_SKY_OCCLUSION)
         / (1.0 + DIFFUSION_PER_DEPTH * extinction * (1.0 - h));
-    vec3 below = AmbientBottom * exp(-extinction * h);
+    vec3 below = mix(AmbientTop, AmbientBottom, ground) * exp(-extinction * h);
     return sun + mix(below, above, h) * AMBIENT_GAIN;
+}
+
+vec3 cloudSource(int layer, vec3 world, float density, float h, CloudPhase phase, float jitter) {
+    float overhead = layer == LAYER_SMALL ? coverAbove(LAYER_LARGE, world, vec3(0.0, 1.0, 0.0)) : 0.0;
+    return scatteredLight(lightOpticalDepth(layer, world, jitter), density,
+        density * EXTINCTION * layerThickness(layer), h, overhead, 1.0, phase);
 }
 
 // A small planet, so the layers curve down to the horizon within the march distance.
@@ -402,27 +579,106 @@ vec4 marchLayer(int layer, vec3 direction, float jitter, float limit, out float 
     return vec4(scattered * Brightness, 1.0 - transmittance) * haze;
 }
 
-// Premultiplied radiance and opacity of the clouds along a direction out to limit blocks,
-// nearest layer first, and where the nearest begins, MAX_DISTANCE with none.
-vec4 marchCloudsTo(vec3 direction, float jitter, float limit, out float entry) {
-    vec4 layers[3];
-    float entries[3];
-    for (int layer = 0; layer < 3; layer++) {
-        layers[layer] = marchLayer(layer, direction, jitter, limit, entries[layer]);
+// Premultiplied radiance and opacity of one shape along a direction out to limit blocks, and
+// where it begins. Only the chord through its bounds is marched (Cygames lists the spheres a
+// ray meets and marches those alone), and on it the march strides through the empty air by
+// the distance to the shape's surface, as sphere tracing does (Nubis Cubed, SimonDev), and
+// steps finely only inside: even steps over a shape's chord sliced it into rings.
+vec4 marchShape(int shape, vec3 direction, float jitter, float limit, out float entry) {
+    entry = MAX_DISTANCE;
+    vec4 bounds = ShapeBounds[shape];
+    vec3 camera = vec3(CameraXZ.x, CameraHeight, CameraXZ.y);
+    vec3 offset = camera - bounds.xyz;
+    float b = dot(offset, direction);
+    float discriminant = b * b - dot(offset, offset) + bounds.w * bounds.w;
+    if (discriminant <= 0.0) {
+        return vec4(0.0);
     }
-    entry = min(entries[0], min(entries[1], entries[2]));
+    float root = sqrt(discriminant);
+    float start = max(-b - root, 0.0);
+    float end = min(-b + root, min(limit, MAX_DISTANCE));
+    if (end <= start) {
+        return vec4(0.0);
+    }
+    float height = ShapeSize[shape].x;
+    float stepLength = clamp(height / 80.0, 4.0, 20.0);
+    float t = start + stepLength * jitter;
+    CloudPhase phase = cloudPhase(dot(direction, LightDirection));
+    float horizontalLength = sqrt(max(0.0, 1.0 - direction.y * direction.y));
+    float curvature = horizontalLength * horizontalLength / (2.0 * PLANET_RADIUS);
+    vec3 scattered = vec3(0.0);
+    float transmittance = 1.0;
+    for (int i = 0; i < CLOUD_SHAPE_STEPS && t < end; i++) {
+        // Lifted with the ground's curve, as the layers are, so a shape stays above its layer.
+        vec3 world = camera + direction * t + vec3(0.0, curvature * t * t, 0.0);
+        float outside = -shapeInside(shape, world);
+        if (outside > stepLength) {
+            // Whole steps, so the samples stay on the ray's jittered grid: jumping by the
+            // distance itself put every first sample the same depth under the surface, and the
+            // noise drew contour lines there.
+            t += floor(outside / stepLength) * stepLength;
+            continue;
+        }
+        float density = shapeDensity(shape, world, true);
+        if (density > 0.0) {
+            entry = min(entry, t);
+            // A shape stands apart, so the sky lights it from the sides, through the cloud
+            // between a point and the nearest surface, rather than down a column as a layer is
+            // lit, and the ground's light reaches its foot alone.
+            float rise = world.y - ShapeForm[shape].w;
+            float cover = min(2.0 * max(-outside, 0.0), SHAPE_LIT_THICKNESS);
+            vec3 source = scatteredLight(shapeLightDepth(shape, world, jitter), density,
+                density * EXTINCTION * cover, rise / height,
+                SHAPE_FLANK_SHADE * (1.0 - smoothstep(0.75, 1.0, rise / height)),
+                1.0 - smoothstep(0.0, SHAPE_LIT_THICKNESS, rise), phase);
+            float stepTransmittance = exp(-density * EXTINCTION * stepLength);
+            scattered += transmittance * source * (1.0 - stepTransmittance);
+            transmittance *= stepTransmittance;
+            if (transmittance < 0.01) {
+                break;
+            }
+        }
+        t += stepLength;
+    }
+    if (entry >= MAX_DISTANCE) {
+        return vec4(0.0);
+    }
+    float haze = exp(-entry / HazeDistance);
+    return vec4(scattered * Brightness, 1.0 - transmittance) * haze;
+}
+
+// Premultiplied radiance and opacity of the clouds along a direction out to limit blocks,
+// nearest layer or shape first, and where the nearest begins, MAX_DISTANCE with none.
+vec4 marchCloudsTo(vec3 direction, float jitter, float limit, out float entry) {
+    vec4 parts[3 + CLOUD_MAX_SHAPES];
+    float entries[3 + CLOUD_MAX_SHAPES];
+    int count = 3;
+    for (int layer = 0; layer < 3; layer++) {
+        parts[layer] = marchLayer(layer, direction, jitter, limit, entries[layer]);
+    }
+    for (int shape = 0; shape < CLOUD_MAX_SHAPES; shape++) {
+        if (shape >= ShapeCount) {
+            break;
+        }
+        parts[count] = marchShape(shape, direction, jitter, limit, entries[count]);
+        count++;
+    }
+    entry = MAX_DISTANCE;
+    for (int i = 0; i < count; i++) {
+        entry = min(entry, entries[i]);
+    }
     vec4 result = vec4(0.0);
-    for (int pass = 0; pass < 3; pass++) {
+    for (int pass = 0; pass < count; pass++) {
         int nearest = -1;
-        for (int layer = 0; layer < 3; layer++) {
-            if (entries[layer] < MAX_DISTANCE && (nearest < 0 || entries[layer] < entries[nearest])) {
-                nearest = layer;
+        for (int i = 0; i < count; i++) {
+            if (entries[i] < MAX_DISTANCE && (nearest < 0 || entries[i] < entries[nearest])) {
+                nearest = i;
             }
         }
         if (nearest < 0) {
             break;
         }
-        result += (1.0 - result.a) * layers[nearest];
+        result += (1.0 - result.a) * parts[nearest];
         entries[nearest] = MAX_DISTANCE;
     }
     return result;

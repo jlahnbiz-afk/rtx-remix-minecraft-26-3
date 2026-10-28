@@ -72,4 +72,26 @@ class LightCullReachabilityTest {
         assertFalse(terrain.isSectionReachableForLights(5, 5, 0), "nothing behind the ring is reached");
         assertEquals(25, terrain.reachableCount());
     }
+
+    @Test
+    void theFloodCrossesOpenAirToAPlatformButNotIntoASealedSection() {
+        TerrainState terrain = new TerrainState(8 * 16, UNSLICED, 0L);
+        long open = -1L;
+        for (int cx = -2; cx <= 2; cx++) {
+            for (int cz = -2; cz <= 2; cz++) {
+                terrain.addSection(cx, 0, cz, 1, new Object(),
+                        open, 0L, open, open, open, open, new long[64]);
+            }
+        }
+        // Sections 1 and 2 hold only air, so nothing captures them.
+        terrain.addSection(2, 3, 0, 2, new Object(), open, open, open, open, open, open, new long[64]);
+        terrain.addSection(-2, 3, 0, 3, new Object(), 0L, 0L, 0L, 0L, 0L, 0L, new long[64]);
+        terrain.setPlayerPos(0, 0);
+        terrain.setPlayerBlockPos(8, 8, 8);
+        terrain.ensureReachabilityOnce();
+
+        assertTrue(terrain.isSectionReachableForLights(2, 0, 3), "the platform in the air");
+        assertFalse(terrain.isSectionReachableForLights(-2, 0, 3), "a sealed section stays sealed");
+        assertFalse(terrain.isSectionReachableForLights(0, 0, -1), "nothing below the lowest section");
+    }
 }

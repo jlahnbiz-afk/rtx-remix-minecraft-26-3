@@ -55,6 +55,29 @@ class BlockDataQueueTest {
         BlockDataQueue.drainBackpressureWaits();
         BlockDataQueue.drainBackpressureEvictions();
         BlockDataQueue.setPublishWaitBudgetNsForTest(productionBudgetNs);
+        BlockDataQueue.setConsumerSeenNanosForTest(0L);
+    }
+
+    @Test
+    void stalledRenderThreadIsNotWaitedFor() throws Exception {
+        int cx = 6;
+        int cz = 2;
+        BlockDataQueue.CaptureToken capture = BlockDataQueue.beginCapture(cx, cz);
+        for (int i = 0; i < BlockDataQueue.maxPendingItemsForTest(); i++) {
+            BlockDataQueue.enqueue(emptyCapture(cx, i, cz), capture);
+        }
+        // Last seen a second ago, as while it joins a pipeline compiling on the producers' pool.
+        BlockDataQueue.setConsumerSeenNanosForTest(System.nanoTime() - TimeUnit.SECONDS.toNanos(1));
+        ExecutorService producer = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> publish = producer.submit(() -> BlockDataQueue.enqueue(
+                    emptyCapture(cx, BlockDataQueue.maxPendingItemsForTest(), cz), capture));
+            // The budget is an hour; only the stall lets the producer through.
+            publish.get(5, TimeUnit.SECONDS);
+        } finally {
+            producer.shutdownNow();
+        }
+        assertEquals(1, BlockDataQueue.drainBackpressureEvictions());
     }
 
     @Test

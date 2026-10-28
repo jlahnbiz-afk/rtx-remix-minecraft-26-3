@@ -11,6 +11,91 @@ also part of every mod file name.
 
 ## Unreleased
 
+### Added
+
+- Water Caustics, a Lens setting: on the floor of sunlit water, up to about
+  250 blocks away, light that the waves gather plays in a moving web. It fades
+  with depth, so no line marks where it ends; a low sun draws it out along its
+  direction, and it stays on floors seen at a glancing angle and on the
+  shallows by a shore. Terrain and passing clouds shade it, and it fades as the
+  sun sets or the rain comes.
+- The Unbound sky varies from day to day: some days bring more cumulus, others
+  a thicker altostratus, and the sky clouds over before the rain and clears
+  after it. In single-player the clouds gather ahead of the rain.
+- Rarely, on a calm day, a cloud in the shape of a creeper's head.
+
+### Changed
+
+- New defaults: Depth of Field 0.4, Lens Flare 0.5, Moon Intensity 0.2 and
+  Cloud Coverage 0.3 of their old scales. Their sliders now read 1 at these
+  defaults, so values saved for them earlier are dropped.
+- Glowing blocks such as sea lanterns, redstone lamps and glowstone light their
+  surroundings about as far as a torch of the same light level, instead of
+  about fifteen times as much, and are drawn from about as far away, so
+  hundreds of distant ones no longer fill the list of lights in use; lanterns
+  shine out of their glass instead of lighting only its inside.
+- The water's waves no longer repeat every ten blocks in a lattice of swells
+  that stood out across open water; the surface repeats only every forty
+  blocks, with no lattice.
+- The lens and the Unbound clouds take far less GPU time: at 4K on an RTX 5090
+  the lens went from 7 to 10 milliseconds a frame to under 3.
+- With Distant Horizons, the LOD terrain's memory follows the graphics card: a
+  sixteenth of its video memory, at most 2 GiB as before, so a card with less
+  memory keeps less LOD terrain. Distant Horizons no longer keeps a GPU copy of
+  its terrain while Remix draws it.
+
+### Fixed
+
+- Opening a menu while chunks are loading, the first Escape menu or inventory
+  above all, no longer freezes the game, for minutes on a busy server.
+- With Distant Horizons, LOD terrain no longer stays drawn over nearby land
+  that Minecraft's terrain has already loaded, in worlds edited without their
+  heightmaps updated either.
+- The ground behind and beside you is path traced before you turn to it, so it
+  casts its shadows and shows in reflections, and turning round or moving no
+  longer shows holes or, with Distant Horizons, LOD terrain at arm's length
+  until Minecraft builds it.
+- Unbound cumulus are no longer flat-topped, sheer-sided slabs: their
+  outlines change with height and their surfaces puff up, so the sky breaks
+  into ragged, billowing clumps.
+- Unbound clouds no longer judder while you move. The sky and its reflections
+  in water stepped fifteen times a second; the clouds on screen now follow every
+  frame, and their reflections thirty times a second while the camera moves.
+- With Distant Horizons, the edges of the land and of the LOD terrain against
+  the sky no longer flicker or show a flickering blue line, and distant land no
+  longer flickers in and out of the clouds' shadows.
+- With Distant Horizons, there is no gap between Minecraft's terrain and the
+  LOD terrain, and the LOD terrain near you keeps its place when its memory
+  budget fills; the farthest gives way first.
+- The sun's flare no longer flickers.
+- Seen from under water, the clouds now wobble with the waves instead of
+  floating over them.
+- With JourneyMap installed, villagers no longer turn black.
+- Block lights on builds with open air below them, such as a platform in the
+  sky or a lamp under a bridge seen from its deck, now light their
+  surroundings; they glowed but cast no light.
+- With Distant Horizons, distant terrain no longer flickers as it changes
+  detail: the old terrain stays until the terrain replacing it is ready.
+- Aerial Haze no longer fades distant land toward a sky seen earlier from
+  higher up. In the rain, the land at the horizon could glow white under the
+  dark overcast.
+- Unbound clouds seen from above no longer turn flat white when no cloud lies
+  above you, as at a low Cloud Coverage.
+- At a low Cloud Coverage, sparse Unbound clouds no longer stand up as walls
+  under flat tops.
+- At night, Unbound clouds no longer show pale rims along their edges or a
+  white band at the horizon, and no longer take on the colour of nearby lamps:
+  the sky behind their thin edges is the sky beside them, with the moon's glow
+  only around the moon.
+- Unbound clouds no longer show pale or dark rims, or pale wisps beside them,
+  where the sky is brighter on one side than the other, as toward the moon or
+  the sunset.
+- The glow around lamps, glowing blocks and the moon lies over Unbound clouds as
+  it does over everything else; it stopped at the skyline.
+- With Distant Horizons, arriving somewhere new or flying fast no longer opens
+  pits in the ground where the LOD terrain gave way before Minecraft's terrain
+  was drawn there.
+
 ## 0.2.1 - 2026-10-26
 
 The fork's own look since 0.2.0: sky, clouds, lens, LOD terrain and rain, and

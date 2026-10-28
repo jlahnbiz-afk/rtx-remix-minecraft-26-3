@@ -78,7 +78,8 @@ final class VolumetricCloudGenerator {
         final float[] lightIrradiance = new float[3];
         final float[] ambientTop = new float[3];
         final float[] ambientBottom = new float[3];
-        float coverage;
+        /** Coverage of the small cumulus, the large cumulus and the altostratus. */
+        final float[] coverage = new float[3];
         float density;
         float base;
         float thickness;
@@ -92,6 +93,7 @@ final class VolumetricCloudGenerator {
         float cirrusAngle;
         /** How much of the cirrus layer shows: its brightness, with the weather taken out. */
         float cirrusStrength;
+        final CloudShapes shapes = new CloudShapes();
     }
 
     private final ByteBuffer parameters = BufferUtils.createByteBuffer(8 * 4 * Float.BYTES);
@@ -167,6 +169,7 @@ final class VolumetricCloudGenerator {
         int previousActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
         try {
             GL20.glUseProgram(program);
+            CloudField.setShapeUniforms(program, frame.shapes);
             GL13.glActiveTexture(GL13.GL_TEXTURE0 + CIRRUS_TEXTURE_UNIT);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, cirrusTexture);
             GL13.glActiveTexture(GL13.GL_TEXTURE0 + TEXTURE_UNIT);
@@ -286,12 +289,13 @@ final class VolumetricCloudGenerator {
         parameters.putFloat(frame.cameraX).putFloat(frame.cameraZ).putFloat(frame.cameraHeight).putFloat(frame.frameIndex);
         putVector(frame.lightDirection, 0.0f);
         putVector(frame.lightIrradiance, 0.0f);
-        putVector(frame.ambientTop, frame.coverage);
+        putVector(frame.ambientTop, frame.coverage[0]);
         putVector(frame.ambientBottom, frame.density);
         parameters.putFloat(frame.base).putFloat(frame.thickness).putFloat(frame.featureScale).putFloat(frame.historyWeight);
-        parameters.putFloat(0.0f).putFloat(frame.parity)
+        parameters.putFloat(frame.coverage[1]).putFloat(frame.parity)
                 .putFloat(frame.hazeDistance).putFloat(frame.brightness);
-        parameters.putFloat(frame.detail).putFloat(frame.cirrusAngle).putFloat(frame.cirrusStrength).putFloat(0.0f);
+        parameters.putFloat(frame.detail).putFloat(frame.cirrusAngle).putFloat(frame.cirrusStrength)
+                .putFloat(frame.coverage[2]);
         parameters.flip();
     }
 
@@ -485,13 +489,7 @@ final class VolumetricCloudGenerator {
             }
             String source = CloudField.expand(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
             int versionEnd = source.indexOf('\n', source.indexOf("#version")) + 1;
-            return source.substring(0, versionEnd)
-                    + "#define CLOUD_WIDTH " + WIDTH + "\n"
-                    + "#define CLOUD_HEIGHT " + HEIGHT + "\n"
-                    + "#define CLOUD_UPPER_ROWS " + UPPER_ROWS + "\n"
-                    + "#define MIN_ELEVATION_DEGREES " + MIN_ELEVATION_DEGREES + "\n"
-                    + "#define CIRRUS_MIN_ELEVATION_DEGREES " + SkyLayerTextures.CIRRUS_MIN_ELEVATION_DEGREES + "\n"
-                    + source.substring(versionEnd);
+            return source.substring(0, versionEnd) + CloudField.defines() + source.substring(versionEnd);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to read volumetric cloud shader " + SHADER_RESOURCE, e);
         }

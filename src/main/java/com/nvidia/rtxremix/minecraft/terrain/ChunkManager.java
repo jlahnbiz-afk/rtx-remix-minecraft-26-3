@@ -64,6 +64,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -91,6 +92,8 @@ public class ChunkManager {
     private final TerrainState terrain;
     private final BlockMeshBuilder meshBuilder;
     private final LongObjectMap<ColumnRenderState> renderColumns = new LongObjectMap<>();
+    /** Bumped whenever a column starts or stops being drawn, for LOD terrain to give way to. */
+    private long drawnGeneration;
     private final TerrainNativeCallStats nativeCallStats = new TerrainNativeCallStats();
     private final TerrainAssetRetirementQueue retirementQueue = new TerrainAssetRetirementQueue(nativeCallStats);
     private final ArrayList<ColumnRenderState> dirtyBuildScratch = new ArrayList<>();
@@ -462,6 +465,8 @@ public class ChunkManager {
         int dirtyMask;
         boolean buildInFlight;
         boolean hasPublishedState;
+        /** The highest captured section the published meshes were built with. */
+        int publishedTopSectionY = Integer.MIN_VALUE;
         boolean urgentBuild;
         long dirtySinceFrame = Long.MIN_VALUE;
         long settleUntilFrame;
@@ -481,19 +486,21 @@ public class ChunkManager {
         private final int categoryMask;
         private final int[] categoryFingerprints;
         private final int epoch;
+        private final int topSectionY;
         private volatile BlockMeshBuilder.MeshPage[] pages;
         private volatile long accountedBytes;
         private volatile Throwable failure;
         private volatile boolean complete;
 
         MeshBuildResult(ColumnRenderState owner, int generation, int categoryMask,
-                        int[] categoryFingerprints, int epoch, long estimatedBytes) {
+                        int[] categoryFingerprints, int epoch, long estimatedBytes, int topSectionY) {
             this.owner = owner;
             this.generation = generation;
             this.categoryMask = categoryMask;
             this.categoryFingerprints = categoryFingerprints;
             this.epoch = epoch;
             this.accountedBytes = estimatedBytes;
+            this.topSectionY = topSectionY;
         }
 
         ColumnRenderState owner() { return owner; }
@@ -994,6 +1001,7 @@ public class ChunkManager {
     }
 
     private int drainBlockData() {
+        BlockDataQueue.consumerAlive();
         if (pendingCaptureIndex >= pending.size()) {
             pending.clear();
             pendingCaptureIndex = 0;
@@ -1176,6 +1184,7 @@ public class ChunkManager {
     private void removeRenderColumn(int cx, int cz) {
         ColumnRenderState state = renderColumns.remove(packChunkKey(cx, cz));
         if (state == null) return;
+        if (state.hasPublishedState) drawnGeneration++;
         for (InstalledMeshPage page : state.activePages) {
             retirementQueue.retire(page.instance);
         }
@@ -1319,7 +1328,8 @@ public class ChunkManager {
         }
         if (categoryMask == 0) {
             if (!state.buildInFlight && state.dirtyMask == 0) {
-                state.hasPublishedState = true;
+                state.publishedTopSectionY = topSectionY(terrain.findColumn(cx, cz));
+                publish(state);
             }
             return state;
         }
@@ -1378,7 +1388,8 @@ public class ChunkManager {
             if (buildMask == 0) {
                 state.dirtyMask &= ~requestedMask;
                 clearDirtyTimingIfClean(state);
-                state.hasPublishedState = true;
+                state.publishedTopSectionY = topSectionY(column);
+                publish(state);
                 continue;
             }
 
@@ -1393,7 +1404,7 @@ public class ChunkManager {
             int submittedMask = buildMask;
             MeshBuildResult result = new MeshBuildResult(
                     state, generation, submittedMask, fingerprints,
-                    currentEpoch, estimatedBytes);
+                    currentEpoch, estimatedBytes, topSectionY(column));
             // The build reads the section buffers on the mesh thread while the
             // render thread may replace or unload those sections; the build's
             // own reference keeps the buffers out of the pool until it is done.
@@ -1651,7 +1662,8 @@ public class ChunkManager {
                 owner.categoryFingerprints[category] = result.categoryFingerprints()[category];
             }
         }
-        owner.hasPublishedState = true;
+        owner.publishedTopSectionY = result.topSectionY;
+        publish(owner);
         owner.buildInFlight = false;
         pendingMeshBytes.addAndGet(-result.accountedBytes());
     }
@@ -1679,6 +1691,47 @@ public class ChunkManager {
             owner.settleUntilFrame = terrainFrame + COLUMN_STREAM_SETTLE_FRAMES;
         }
         owner.dirtyMask |= result.categoryMask();
+    }
+
+    private static int topSectionY(TerrainState.ChunkColumn column) {
+        int top = Integer.MIN_VALUE;
+        if (column != null) {
+            for (TerrainState.SectionEntry entry : column.sectionEntries()) top = Math.max(top, entry.sy);
+        }
+        return top;
+    }
+
+    /** Every publish, since a column that gained its top section is drawn where it was not. */
+    private void publish(ColumnRenderState state) {
+        drawnGeneration++;
+        state.hasPublishedState = true;
+    }
+
+    /** Changes whenever a column may have started or stopped being drawn. */
+    public long drawnGeneration() {
+        return drawnGeneration;
+    }
+
+    /**
+     * Whether the terrain of a chunk column is drawn up to its highest section that holds a
+     * block. Minecraft builds a section only once it sees it, so a column can stand published
+     * with its caves and without the ground above them; LOD terrain giving way there left a pit.
+     * The heightmap is no measure of that: a world edited without updating it keeps a surface
+     * far above its blocks, and such a column never counted as drawn, so LOD terrain stayed
+     * over the city beside the camera. Captured is not drawn either: the column's meshes are
+     * built a few frames later, and LOD terrain giving way at the capture left a pit for them.
+     */
+    public boolean isColumnDrawn(int cx, int cz) {
+        ColumnRenderState state = renderColumns.get(packChunkKey(cx, cz));
+        if (state == null || !state.hasPublishedState || currentWorld == null) return false;
+        LevelChunk chunk = currentWorld.getChunkSource().getChunk(cx, cz, false);
+        if (chunk == null || terrain.findColumn(cx, cz) == null) return false;
+        for (int i = chunk.getSectionsCount() - 1; i >= 0; i--) {
+            if (!chunk.getSection(i).hasOnlyAir()) {
+                return state.publishedTopSectionY >= chunk.getSectionYFromSectionIndex(i);
+            }
+        }
+        return true;
     }
 
     private void markBuildRetry(ColumnRenderState state, int categoryMask) {
@@ -2018,6 +2071,7 @@ public class ChunkManager {
             state.activePages.clear();
         }
         renderColumns.clear();
+        drawnGeneration++;
         retainedPageCount = 0;
         retainedInstancesHidden = false;
         dirtyBuildScratch.clear();

@@ -56,7 +56,18 @@ final class BlockLightDefaults {
      * little wider than the cube: the caps that stand out of each face are what shine.
      */
     private static final float GLOWING_CUBE_RADIUS = 0.62f;
-    private static final float LANTERN_FLAME_RADIUS = 0.12f;
+    /** The share of a glowing cube's sphere that stands out of its six faces. */
+    private static final float GLOWING_CUBE_EXPOSED = exposedShare(GLOWING_CUBE_RADIUS,
+            0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f);
+    /**
+     * A lantern's flame, as wide as the glass around it and a little more, so it shines out of
+     * the glass the way a glowing cube shines out of its faces. As small as the flame itself, it
+     * lit the inside of the glass and little else.
+     */
+    private static final float LANTERN_LIGHT_RADIUS = 0.25f;
+    /** Half the width of a lantern's glass, and its height, standing and hanging. */
+    private static final float LANTERN_HALF_WIDTH = 3.0f / 16.0f;
+    private static final float LANTERN_HEIGHT = 7.0f / 16.0f;
 
     // Shared beacon geometry and path-specific radiance tuning live in
     // BeaconBeam; the block_display lighthouse remains independent.
@@ -207,8 +218,7 @@ final class BlockLightDefaults {
                 block("verdant_froglight"), LightEntry.ColorOverride.of(0.65f, 1.0f, 0.6f),
                 block("pearlescent_froglight"), LightEntry.ColorOverride.of(1.0f, 0.72f, 0.95f));
         add(rules, "froglights", state -> froglights.containsKey(state.getBlock()),
-                (id, state, pos, centroid) -> List.of(sphere(id, 0, state, pos, 0.5f, 0.5f, 0.5f,
-                        GLOWING_CUBE_RADIUS, froglights.get(state.getBlock()), null)));
+                (id, state, pos, centroid) -> List.of(cubeLight(id, state, pos, froglights.get(state.getBlock()))));
 
         add(rules, "glow_berries", blocks("cave_vines", "cave_vines_plant")
                         .and(state -> state.getValue(BlockStateProperties.BERRIES)),
@@ -234,8 +244,41 @@ final class BlockLightDefaults {
 
     private static void glowingCube(Map<Identifier, BlockLightRuleManager.Rule> rules, String path,
                                     Predicate<BlockState> matcher, LightEntry.ColorOverride color) {
-        add(rules, path, matcher, (id, state, pos, centroid) -> List.of(
-                sphere(id, 0, state, pos, 0.5f, 0.5f, 0.5f, GLOWING_CUBE_RADIUS, color, null)));
+        add(rules, path, matcher, (id, state, pos, centroid) -> List.of(cubeLight(id, state, pos, color)));
+    }
+
+    private static LightEntry cubeLight(Identifier id, BlockState state, BlockPos pos,
+                                        LightEntry.ColorOverride color) {
+        return sphere(id, 0, state, pos, 0.5f, 0.5f, 0.5f, GLOWING_CUBE_RADIUS, color,
+                torchParityIntensity(state.getLightEmission(), GLOWING_CUBE_RADIUS, GLOWING_CUBE_EXPOSED, color,
+                        DEFAULT_AUTHORED_INTENSITY_MULTIPLIER));
+    }
+
+    /**
+     * The intensity at which the part of a sphere light that stands out of its block, the share
+     * {@code exposed} of it, gives off a torch's power per light level times {@code lightLevel}.
+     * Vanilla rates a light by its level alone, so a lamp of level 15 lights about as far as a
+     * torch of 14; at the plain light-level radiance a glowing cube gave off about fifteen times
+     * a torch's light. Divided by the authored multiplier the rule applies afterwards.
+     */
+    static float torchParityIntensity(int lightLevel, float radius, float exposed,
+                                      LightEntry.ColorOverride color, float authoredMultiplier) {
+        float power = LightPower.of(LightShape.SPHERE, radius, 0f, 0f, 0f, color.r(), color.g(), color.b())
+                * exposed;
+        float target = LightPower.torchReference() / LightPower.TORCH_LIGHT_LEVEL * lightLevel;
+        return target / power / authoredMultiplier;
+    }
+
+    /**
+     * The share of a sphere of {@code radius} that stands out of the faces of the box around its
+     * centre, at {@code faceDistances} from it: a cap of height h has area 2πrh.
+     */
+    static float exposedShare(float radius, float... faceDistances) {
+        float height = 0f;
+        for (float distance : faceDistances) {
+            height += Math.max(0f, radius - distance);
+        }
+        return Math.min(1f, height / (2f * radius));
     }
 
     /** A light above the middle of the block, at {@code y} up it. */
@@ -269,8 +312,14 @@ final class BlockLightDefaults {
     /** The flame inside a lantern's body, which hangs a little higher than it stands. */
     private static LightEntry lanternFlame(Identifier id, BlockState state, BlockPos pos,
                                            LightEntry.ColorOverride color) {
-        float y = state.getValue(BlockStateProperties.HANGING) ? 0.3f : 0.22f;
-        return thinSphere(id, 0, state, pos, 0.5f, y, 0.5f, LANTERN_FLAME_RADIUS, color);
+        // A hanging lantern's glass sits a pixel higher.
+        float bottom = state.getValue(BlockStateProperties.HANGING) ? 1.0f / 16.0f : 0.0f;
+        float y = bottom + LANTERN_HEIGHT * 0.5f;
+        float exposed = exposedShare(LANTERN_LIGHT_RADIUS, LANTERN_HALF_WIDTH, LANTERN_HALF_WIDTH,
+                LANTERN_HALF_WIDTH, LANTERN_HALF_WIDTH, LANTERN_HEIGHT * 0.5f, LANTERN_HEIGHT * 0.5f);
+        return sphere(id, 0, state, pos, 0.5f, y, 0.5f, LANTERN_LIGHT_RADIUS, color,
+                torchParityIntensity(state.getLightEmission(), LANTERN_LIGHT_RADIUS, exposed, color,
+                        TORCH_AUTHORED_INTENSITY_MULTIPLIER));
     }
 
     /** The fire seen through a lit furnace's front opening, just outside its face. */

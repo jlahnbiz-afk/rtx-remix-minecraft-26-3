@@ -30,6 +30,7 @@ long a worker may wait.
 | Key | Effect | Owner |
 |---|---|---|
 | `rtxremix.chunk.sectionBuilders` | Concurrent vanilla section builds. Vanilla allocates one buffer per logical CPU, which floods the frame that a chunk-boundary crossing lands in | `SectionBuildConcurrency` |
+| `rtxremix.chunk.unseenCompilesPerFrame` | Dirty sections outside the frustum handed to vanilla's compile per frame, nearest first, while its queue holds fewer than 16; 0 turns this off and leaves the ground behind the camera uncaptured until it comes into view | `UnseenSectionCompiles` |
 | `rtxremix.blockDataQueue.maxPendingItems` | Section captures queued for the render thread | `BlockDataQueue` |
 | `rtxremix.blockDataQueue.maxPendingBytes` | Bytes of queued captures | `BlockDataQueue` |
 | `rtxremix.blockDataQueue.maxDrainItems` | Captures drained per render-thread pass | `BlockDataQueue` |
@@ -53,7 +54,12 @@ floor), then attempts FIFO eviction until its capture fits. Capacity held by
 reservations between reserve and enqueue cannot be evicted, so the worker
 rearms another 50 ms wait and retries while the capture remains current.
 The initial budget is not a hard upper bound on total waiting. The render
-thread's synchronous builds never wait because it is the sole consumer.
+thread's synchronous builds never wait because it is the sole consumer, and no
+worker waits for a render thread that has not come for captures in 250 ms: it
+evicts at once. The render thread reports in every frame, and is blocked when
+it does not, as it is while it joins a pipeline vanilla compiles on the same
+worker pool; workers waiting on it there kept that compile queued for minutes,
+which froze the game on the first menu blur while chunks loaded.
 
 The defaults bound worker captures to 512 items and 128 MiB. An evicted capture
 that still belongs to a resident section is re-flagged through
@@ -70,6 +76,7 @@ per-frame budgets.
 | Key | Effect | Owner |
 |---|---|---|
 | `rtxremix.chunk.meshBuildThreads` | Threads in the column merge executor | `ChunkManager` |
+| `rtxremix.lod.buildThreads` | Low-priority threads building LOD terrain meshes against the current clip, 3 by default | `LodTerrain` |
 | `rtxremix.chunk.maxPendingBuilds` | Merges outstanding at once | `ChunkManager` |
 | `rtxremix.chunk.maxPendingMeshBytes` | Bytes of merged but not yet installed geometry | `ChunkManager` |
 | `rtxremix.chunk.installBudgetNs` | Render-thread time per frame spent installing columns | `ChunkManager` |
@@ -105,8 +112,8 @@ keeps the frame tallies clock-free.
 Light creation and destruction are native calls like any other, so they run on
 the render thread under their own budget. Whether a surviving light is drawn is
 decided per frame: a connectivity flood from the camera's section marks which
-sections are reachable, and a reach test drops lights too dim to matter at
-their distance.
+sections are reachable, crossing sections of open air, and a reach test drops
+lights too dim to matter at their distance.
 
 | Key | Effect | Owner |
 |---|---|---|

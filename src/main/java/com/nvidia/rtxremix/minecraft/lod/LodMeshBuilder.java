@@ -61,14 +61,84 @@ final class LodMeshBuilder {
      * chunks of the centre chunk, measured between chunk positions. A negative
      * radius clips nothing.
      */
-    record Clip(int centerX, int centerZ, int radius) {
-        static final Clip NONE = new Clip(0, 0, -1);
+    /**
+     * The chunks where Minecraft's own terrain is drawn, over a square window of them around the
+     * camera. LOD terrain gives way there and nowhere else, so it neither lies over Minecraft's
+     * terrain nor leaves a ring of neither where chunks have yet to load or a server sends fewer.
+     */
+    static final class Clip {
+        static final Clip NONE = new Clip(0, 0, 0, new long[0]);
+
+        private final int originX;
+        private final int originZ;
+        private final int size;
+        private final long[] bits;
+
+        private Clip(int originX, int originZ, int size, long[] bits) {
+            this.originX = originX;
+            this.originZ = originZ;
+            this.size = size;
+            this.bits = bits;
+        }
+
+        /** The chunks {@code drawn} accepts within {@code radius} chunks of a centre chunk, each way. */
+        static Clip of(int centerX, int centerZ, int radius, ChunkTest drawn) {
+            if (radius < 0) return NONE;
+            int size = 2 * radius + 1;
+            long[] bits = new long[(size * size + 63) >> 6];
+            for (int z = 0; z < size; z++) {
+                for (int x = 0; x < size; x++) {
+                    if (drawn.test(centerX - radius + x, centerZ - radius + z)) {
+                        int i = z * size + x;
+                        bits[i >> 6] |= 1L << i;
+                    }
+                }
+            }
+            return new Clip(centerX - radius, centerZ - radius, size, bits);
+        }
+
+        /** Every chunk within a radius of a centre chunk. */
+        static Clip disk(int centerX, int centerZ, int radius) {
+            long squared = (long) radius * radius;
+            return of(centerX, centerZ, radius, (x, z) -> {
+                long dx = x - centerX;
+                long dz = z - centerZ;
+                return dx * dx + dz * dz <= squared;
+            });
+        }
 
         boolean clips(int chunkX, int chunkZ) {
-            if (radius < 0) return false;
-            long dx = chunkX - centerX;
-            long dz = chunkZ - centerZ;
-            return dx * dx + dz * dz <= (long) radius * radius;
+            int x = chunkX - originX;
+            int z = chunkZ - originZ;
+            if (x < 0 || z < 0 || x >= size || z >= size) return false;
+            int i = z * size + x;
+            return (bits[i >> 6] & 1L << i) != 0;
+        }
+
+        /** Whether a range of chunks reaches into the window, where some may be clipped. */
+        boolean reaches(int chunkX0, int chunkX1, int chunkZ0, int chunkZ1) {
+            return chunkX1 >= originX && chunkX0 < originX + size
+                    && chunkZ1 >= originZ && chunkZ0 < originZ + size;
+        }
+
+        /** Whether this clip removes every chunk of a section's footprint. */
+        boolean covers(int minX, int minZ, int width) {
+            int x0 = minX >> 4;
+            int x1 = (minX + width - 1) >> 4;
+            int z0 = minZ >> 4;
+            int z1 = (minZ + width - 1) >> 4;
+            if (x0 < originX || z0 < originZ || x1 >= originX + size || z1 >= originZ + size) return false;
+            for (int cx = x0; cx <= x1; cx++) {
+                for (int cz = z0; cz <= z1; cz++) {
+                    if (!clips(cx, cz)) return false;
+                }
+            }
+            return true;
+        }
+
+        /** Whether this clip removes any chunk of a section's footprint. */
+        boolean intersects(int minX, int minZ, int width) {
+            return signature(minX, minZ, width) != 0;
         }
 
         /**
@@ -76,11 +146,10 @@ final class LodMeshBuilder {
          * 0 when it removes none, so equal signatures build equal meshes.
          */
         long signature(int minX, int minZ, int width) {
-            if (radius < 0) return 0;
-            int x0 = Math.max(minX >> 4, centerX - radius);
-            int x1 = Math.min((minX + width - 1) >> 4, centerX + radius);
-            int z0 = Math.max(minZ >> 4, centerZ - radius);
-            int z1 = Math.min((minZ + width - 1) >> 4, centerZ + radius);
+            int x0 = Math.max(minX >> 4, originX);
+            int x1 = Math.min((minX + width - 1) >> 4, originX + size - 1);
+            int z0 = Math.max(minZ >> 4, originZ);
+            int z1 = Math.min((minZ + width - 1) >> 4, originZ + size - 1);
             long hash = 0;
             for (int cx = x0; cx <= x1; cx++) {
                 for (int cz = z0; cz <= z1; cz++) {
@@ -91,6 +160,12 @@ final class LodMeshBuilder {
             }
             return hash;
         }
+    }
+
+    /** Whether Minecraft's terrain draws a chunk column. */
+    @FunctionalInterface
+    interface ChunkTest {
+        boolean test(int chunkX, int chunkZ);
     }
 
     private LodMeshBuilder() {}
@@ -174,9 +249,8 @@ final class LodMeshBuilder {
         int cellRow0 = rowMin >> 4;
         int cellRow1 = (rowMax - 1) >> 4;
 
-        if (clip.radius() < 0
-                || !overlaps(cellRun0, cellRun1, alongX ? clip.centerX() : clip.centerZ(), clip.radius())
-                || !overlaps(cellRow0, cellRow1, alongX ? clip.centerZ() : clip.centerX(), clip.radius())) {
+        if (alongX ? !clip.reaches(cellRun0, cellRun1, cellRow0, cellRow1)
+                : !clip.reaches(cellRow0, cellRow1, cellRun0, cellRun1)) {
             emit(q, q.x0, q.x1, q.z0, q.z1, originX, originZ, color, bucket);
             return;
         }
@@ -208,10 +282,6 @@ final class LodMeshBuilder {
 
     private static boolean clipsCell(Clip clip, boolean alongX, int run, int row) {
         return alongX ? clip.clips(run, row) : clip.clips(row, run);
-    }
-
-    private static boolean overlaps(int cell0, int cell1, int center, int radius) {
-        return cell1 >= center - radius && cell0 <= center + radius;
     }
 
     private static void emit(QuadRect q, int x0, int x1, int z0, int z1,

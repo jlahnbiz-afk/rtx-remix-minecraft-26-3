@@ -43,6 +43,12 @@ public final class BlockDataQueue {
             Long.getLong("rtxremix.blockDataQueue.publishWaitBudgetNs", 500_000_000L));
     private static volatile long publishWaitBudgetNs = DEFAULT_PUBLISH_WAIT_BUDGET_NS;
     private static final long EVICTION_RETRY_WAIT_NS = 50_000_000L;
+    // A render thread that has not come for captures for this long is blocked,
+    // as it is while it joins a pipeline vanilla compiles on this very pool:
+    // producers waiting on it there kept that compile queued for minutes.
+    private static final long CONSUMER_STALL_NS = 250_000_000L;
+    /** When the render thread last came for captures; 0 until it first does. */
+    private static volatile long consumerSeenNanos;
 
     private static final AtomicLong BACKPRESSURE_WAITS = new AtomicLong();
     private static final AtomicLong BACKPRESSURE_EVICTIONS = new AtomicLong();
@@ -213,6 +219,23 @@ public final class BlockDataQueue {
         return outputCount;
     }
 
+    /**
+     * Called from the render thread once per frame, whether or not it drains: producers
+     * wait for its drain only while it keeps calling.
+     */
+    public static void consumerAlive() {
+        consumerSeenNanos = System.nanoTime();
+    }
+
+    static void setConsumerSeenNanosForTest(long nanos) {
+        consumerSeenNanos = nanos;
+    }
+
+    private static boolean consumerStalled() {
+        long seen = consumerSeenNanos;
+        return seen != 0L && System.nanoTime() - seen > CONSUMER_STALL_NS;
+    }
+
     /** Discards all pending data (e.g. on world unload). */
     public static void clear() {
         QueueState retired = STATE.getAndSet(new QueueState(allocateQueueGeneration()));
@@ -302,10 +325,14 @@ public final class BlockDataQueue {
             state.capacityLock.lockInterruptibly();
             state.capacityWaiters.incrementAndGet();
             try {
+                boolean retrying = false;
                 while (isCaptureCurrent(state, data, capture)) {
                     if (tryReserveCapacity(state, bytes)) return true;
-                    if (waitBudgetNs > 0L) {
-                        waitBudgetNs = state.capacityChanged.awaitNanos(waitBudgetNs);
+                    // Waited out in slices, so a render thread that blocks meanwhile
+                    // ends the wait within one.
+                    if (waitBudgetNs > 0L && (retrying || !consumerStalled())) {
+                        long slice = Math.min(waitBudgetNs, CONSUMER_STALL_NS);
+                        waitBudgetNs -= slice - state.capacityChanged.awaitNanos(slice);
                         continue;
                     }
                     // The drain freed no room for the whole wait budget, so it
@@ -316,6 +343,7 @@ public final class BlockDataQueue {
                     // Capacity is held by reservations still in flight
                     // between reserve and enqueue; re-arm a short wait.
                     waitBudgetNs = EVICTION_RETRY_WAIT_NS;
+                    retrying = true;
                 }
                 return false;
             } finally {

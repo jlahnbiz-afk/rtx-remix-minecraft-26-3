@@ -55,8 +55,26 @@ class ChunkManagerMeshInstallTest {
     }
 
     @Test
-    void rollbackHidesActivatedPrefixInReverseAndPreservesProgress() throws Exception {
+    void columnCountsAsDrawnOnlyUpToTheSectionsItsMeshesWereBuiltWith() throws Exception {
         ChunkManager manager = new ChunkManager(null);
+        try {
+            Object owner = readyEmptyColumn(manager, 4, 2);
+            invoke(manager, "installReadyMeshes",
+                    new Class<?>[]{RemixAPI.class}, new Object[]{null});
+            assertEquals(0, intField(owner, "publishedTopSectionY"));
+
+            // Captured above the published meshes: LOD terrain must not give way to it until
+            // the column is rebuilt with it, or the ground shows a pit meanwhile.
+            terrain(manager).addSection(4, 5, 2, 2, "roof");
+            markColumnDirty(manager, 4, 2, 1 << ChunkManager.CAT_SOLID);
+            assertEquals(0, intField(owner, "publishedTopSectionY"));
+        } finally {
+            manager.destroy();
+        }
+    }
+
+    @Test
+    void rollbackHidesActivatedPrefixInReverseAndPreservesProgress() throws Exception {        ChunkManager manager = new ChunkManager(null);
         TrackingInstance first = new TrackingInstance(false);
         TrackingInstance second = new TrackingInstance(false);
         try {
@@ -304,10 +322,11 @@ class ChunkManagerMeshInstallTest {
         Class<?> resultType = nested("MeshBuildResult");
         Constructor<?> constructor = resultType.getDeclaredConstructor(
                 nested("ColumnRenderState"), int.class, int.class,
-                int[].class, int.class, long.class);
+                int[].class, int.class, long.class, int.class);
         constructor.setAccessible(true);
+        // Every test column holds its sections at y 0.
         return constructor.newInstance(owner, generation, categoryMask,
-                fingerprints, epoch, accountedBytes);
+                fingerprints, epoch, accountedBytes, 0);
     }
 
     private static Object newCursor(Object result) throws Exception {

@@ -205,7 +205,11 @@ mask (`ReimaginedCloudMask`) in one or two thick layers. Unbound is not drawn by
 `CloudRenderer`: `sky/VolumetricClouds` ray-marches three cloud layers (small
 and large cumulus, altostratus) and the cirrus on the GPU
 (`volumetric_clouds.comp`) into a panorama shown on a dome in the sky category.
-On screen the lens draws them per pixel instead, and the shadows they cast on
+The panorama is marched from where the camera stands, fifteen times a second
+while the camera holds still and thirty while it moves: marched fifteen
+times a second on the move, the clouds' parallax stepped, in the sky and in
+their reflections, and marched every frame, its march, readback and upload cost
+about a millisecond and a half of each frame at 4K. On screen the lens draws them per pixel instead, and the shadows they cast on
 the land, since the runtime casts none (see Lens). The dome stays as what the
 lens replaces, and its opacity toward the sun hides the sun's disc in the
 atmosphere's dome texture, so a glint on water goes out under a cloud; the
@@ -215,14 +219,43 @@ sample is lit by the sun through light steps that double in length so they
 cross the layer, by light scattered many times that thins as one over the
 optical depth toward the sun, and by the sky through the cloud above it and the
 ground's light through the cloud below it, so bases stay grey rather than
-black.
+black. A cumulus layer's cover is broad weather cells read flat and clumps read
+through the layer's height as well, about a noise cell from base to top, so a
+cloud's outline changes on the way up and the sky breaks into ragged clumps;
+read flat, every cloud was its outline stood up, a flat-topped, sheer-sided
+slab. Above the flat base the detail noise's Perlin-Worley puffs the surface
+in, and out half as far, which a thin edge grew into crumbs.
+`CloudWeather` sets each layer's coverage and how calm the day is.
+Every layer keeps its share of the Cloud Coverage setting, and two moods a day,
+which turn into the next day's overnight, move it a little either way: how
+unstable the air is grows the cumulus, and how moist it is spreads the large
+cumulus and the altostratus.
+The large cumulus and the altostratus close in ahead of the rain, and broken
+cumulus linger after it. A layer's cover climbs from its edge over at least a
+quarter of the field's span, since a span as small as a low coverage stood
+sparse clouds up as walls. The day and the hour
+come from the world clock, so players agree; only the integrated server's
+weather timers say when rain will come, so the sky closes ahead of it in
+single-player alone. `CloudShapes` adds a shaped cloud to the field: rarely, on
+a calm day, a creeper's head, a function of its cell in the clouds' wrapped
+frame, the weather and the world's day, so clients agree with no network state.
+It lies inside a bounding sphere that the march clips its ray to and crosses by
+the distance to the surface, and takes the sky's light from its sides, through
+the cloud between a point and its surface, rather than down a column.
 
 **Terrain.** Minecraft workers build section meshes, a low-concurrency executor
 merges them into chunk-column assets split into byte-capped pages per category,
 and the render thread publishes them under a frame budget and retires replaced
 pages through a bounded queue. Concurrent vanilla section builds are capped.
 Visibility is vanilla's `SectionOcclusionGraph`; the 1.21.1 allocation-free
-walk and coarse frustum index were not ported. While capture is on,
+walk and coarse frustum index were not ported. Vanilla compiles a section only
+once it is in view, and the path tracer needs the ground behind and beside the
+camera, so `UnseenSectionCompiles` hands vanilla's section updates the dirty
+sections outside the frustum, a few a frame and nearest first, while vanilla's
+own compile queue is short (`LevelExtractorMixin`). Hidden sections inside the
+frustum, such as caves under the ground in view, are left alone: compiling them
+rebuilt the columns on screen one after another, and the runtime's depth left a
+rebuilt column out for a while, which the lens read as sky. While capture is on,
 integrated-server chunk delivery and chunk unloads are paced by measured
 render-thread cost under separate budgets, with chunk caps on delivery and a
 ring-edge bypass for unloads (`LocalChunkBatchPacing`, `PacedUnloadQueue`,
@@ -239,10 +272,33 @@ Each policy has a `rtxremix.*` kill switch listed in `docs/TUNING.md`;
 
 **LOD terrain.** With Distant Horizons 3.3.4 installed, `lod/LodTerrain` builds
 its far terrain as retained Remix instances beyond Minecraft's own terrain: the
-LOD mod decides which sections exist and which are drawn, one low-priority
-thread builds each section's mesh against the current clip (Minecraft's terrain
-is clipped two chunks inside its render distance), and the render thread
-installs them under a frame budget and a 2 GiB budget of mesh data.
+LOD mod decides which sections exist and which are drawn, three low-priority
+threads build each section's mesh against the current clip (one fell some
+eighty sections behind a camera flying across a city), and the render
+thread installs them under a frame budget and a budget of mesh data, a sixteenth
+of the video memory and at most 2 GiB (Remix's buffers and acceleration
+structures take about twice that). The
+clip is the chunks Minecraft draws, each column up to its highest section that
+holds a block, as the column's published meshes hold it (`ChunkManager.isColumnDrawn`;
+the heightmap is no measure, since a world edited without updating it keeps a
+surface far above its blocks, and a captured section is drawn only a few frames
+later, once its column is rebuilt, so going by the capture left pits after a
+jump), rebuilt when that set changes, at most every
+four frames, or the camera crosses a chunk: a section the set now covers retires
+at once and one it changed is rebuilt first, so the LOD terrain meets
+Minecraft's with neither a gap nor a square drawn over it. A build that
+finishes against an older clip is dropped when the set now covers its section,
+and otherwise installed and rebuilt first; installed with nothing queued, it
+stayed over Minecraft's terrain for good. When the mesh budget
+fills, the farthest sections give way, nearest first, and none is drawn beyond
+the nearest given up; that radius grows back by a tenth as the camera moves
+while a quarter of the budget is free. The LOD mod
+swaps detail once its own buffers are uploaded, before these threads have built
+the meshes, so a section it hides lingers, still drawn, while one it shows over
+the same ground awaits its mesh, and built ones are held hidden until the
+lingering ones go: the detail changes at once rather than through a hole. It
+draws nothing while capture is on, so its uploads complete without filling GPU
+buffers (`LodBufferContainerMixin`), and stopping capture rebuilds them.
 
 **Allocation.** The collector's concurrent work is what stretches frames at
 high render distance, so the hot vanilla paths that run per section or per
@@ -275,7 +331,12 @@ sprites translucent; doors, flowers and the like become cutout.
 
 **Water and weather.** `WaterNormals` holds the water normal map, and raindrop
 rings from `RainRipples` are written into it as texture content each frame by
-`RainSurfaces` (`-Drtxremix.rain.ripples=false` turns them off). `Puddles` and
+`RainSurfaces` (`-Drtxremix.rain.ripples=false` turns them off). The texture
+covers 40 blocks: the ocean flipbook, whose frame spans ten, laid three times
+over at one, two and four times its size, turned and on different frames, each
+without its longest waves, which drew a lattice of swells at whatever size a
+layer was laid. A frame is composed on a thread of its own and uploaded once
+done. `Puddles` and
 `PuddleMask` lay thin clear-water sheets on open ground in the rain.
 `RemixWeatherRenderer` redraws vanilla's rain and snow over the Remix image,
 occluded through the interop depth texture; rain refracts a copy of the main
@@ -287,29 +348,68 @@ the weather: depth of field focused on what the crosshair rests on, flares from
 the sun and the brightest drawn lights (`FlareSources`; the terrain light loop
 and the first-person flame offer them, and the list is cleared after the lens
 draws), aerial haze, thickened by rain, and the Unbound clouds and their
-shadows on the land. The sun flares only as far as rays cast toward it through
-the loaded world meet no block and the depth around it on screen shows sky:
-the depth alone let it through glass, which reads as sky, and lit ceilings.
+shadows on the land. Under water there is no haze, and the clouds are left to
+the runtime's image, which shows them through the waves. The sun flares only as
+far as rays cast toward it through the loaded world meet no block and the depth
+around it on screen shows sky: the depth alone let it through glass, which reads
+as sky, and lit ceilings. The sun's light for its flare is eased over a tenth of
+a second in a pass of one texel.
 It works on the runtime's tone-mapped image and the interop depth, which is
 not antialiased, so haze, clouds and shadows treat a sky pixel beside the land
-as land. Haze fades land toward the sky the image
+as land. The depth is jittered from frame to frame as well, so a silhouette
+flips between land and sky; the haze's amount is kept in a history reprojected
+by the camera's motion and clamped to its neighbours' range, and without it
+the edges of the land and the LOD terrain against the sky flickered. The same
+history settles the share of each pixel that shows sky, by which the clouds
+replace the dome's, the sky is deepened and the clouds' shadow darkens only the
+land's share (a sky pixel beside the land takes the land's distance, and
+darkening it drew a flickering blue line along ridges), and the shadow itself,
+taken at a distance settled over frames: the jitter moves distant land seen at
+a grazing angle by tens of blocks, and its shadow came and went. Haze fades
+land toward the sky the image
 shows at the land's own height, kept per band of elevation, times how each
-screen column's sky differs from its band where the column was read; that
+screen column's sky differs from its band where the column was read. A band
+that has shown no sky for about a second gives way to the nearest band in
+view, so land below the horizon takes the horizon's sky, not one seen earlier
+from higher up. The column's
 read takes only sky that runs on for a few rows, never a lone texel with
 nothing drawn. Fading toward a column's own lowest sky made whole towers glow
 in the rain, where light from below brightens fog that has no depth. The sky
-bands, the clouds' calibration and the sky behind the clouds all loop over one
-coarse sample of the screen taken once a frame. A shadow darkens the land per
+bands and the clouds' calibration loop over one coarse sample of the screen
+taken once a frame. A shadow darkens the land per
 channel by the share of its light that comes straight from the sun or moon.
 The clouds are marched at half resolution for every pixel, between the camera
 and the land or through the whole sky, and folded into a history reprojected
 by the camera's motion. Their light is brought to the image's exposure by
 comparing the dome's opaque clouds on screen with the panorama, per brightness
-band of one stop; the sky matte is scene-linear, so sunlit cloud is not clipped
-at 1 nor its shade crushed by an sRGB decode. Over the sky they replace the dome's clouds outright, over the sky behind
-those: read out of the image through thin dome clouds, using the panorama the
-dome shows (`VolumetricCloudGenerator.shownPanoramaTexture`), and from its band
-of elevation where they are thick. Keeping the image wherever the two marches
+band of one stop, less the atmosphere they let through, since at night the sky
+outshines a moonlit cloud; the sky matte is scene-linear, so sunlit cloud is not
+clipped at 1 nor its shade crushed by an sRGB decode. Until any band has been measured,
+as when the only clouds lie below the camera, each band holds a guess from how
+bright the clear upper sky shows against its radiance; without it the clouds'
+scene-linear light went onto the image unscaled and showed flat white. Over the
+sky they replace the dome's clouds outright, over the sky behind those: read out
+of the image through thin dome clouds, using the panorama the dome shows
+(`VolumetricCloudGenerator.shownPanoramaTexture`), and where they are thick, the
+atmosphere the dome light shows (`CloudField.skyTexture`). The image shows that
+atmosphere about half as bright as the clouds' calibration would bring it, and
+its tone mapper mixes the channels, so the clear sky on screen is measured
+against it twice more: per brightness band, a mean in stops that drops the
+samples more than a stop from the plain mean, so no star, moon or lamp's bloom
+passes for sky, and per band of elevation for what that still leaves. Each of
+these rows reads every other sample each way on one thread per band, and a
+median found by halving there cost four to seven milliseconds a frame at 4K;
+the composite reads the rows once resolved, one linear read each. A
+sky kept per band of elevation instead held whatever it last saw, the day's
+white at the horizon into the night, and spread the moon's glow and the lamps'
+bloom along its band, which the clouds' thin edges showed as pale rims. Within a
+band the atmosphere still ran from half to twice the image's sky, toward the moon
+and away, and showed as pale or dark rims where the dome's clouds outlast the
+marched ones, so a quarter-resolution pass also maps, read coarse, how the
+image's clear sky around differs from it, in stops. The same pass maps what the
+image shows over the dome's thick clouds beyond their light and the sky behind
+them: the runtime's bloom, which the replacement drops and the composite puts
+back on top, since a lamp's glow otherwise stopped at the skyline. Keeping the image wherever the two marches
 agreed drew the panorama's speckle and outlines, which the denoiser smooths out
 of the image, onto the bases of clouds overhead. The panorama copy is mipmapped
 and read over the pixel's footprint, its colour averaged over neighbours of
@@ -321,6 +421,30 @@ After the composite, the sun mirrored on level water glows and its glints
 streak: quarter-resolution passes keep the near-saturated pixels whose view ray,
 turned back up off the horizontal, nears the sun, and streak only those that
 stand out from their neighbours, in the starburst's six directions.
+The floors of sunlit water get caustics as far as the water is measured.
+`WaterColumns` keeps, in a ring texture 512 columns across around the camera,
+refreshed a row a frame and a row within 32 blocks of it, each column's water
+surface, floor (searched 32 blocks down) and the top that shades it. The 32
+summed waves, whose lengths never line up and which run every way alike, are
+rounded to whole waves over 40 blocks, so the surface repeats every 40 blocks
+and one traced period serves all the water there is. A grid over that period,
+sixteen cells a block, is tilted by the waves' slope, bends the sunlight down
+to ten depths, no deeper than the deepest water measured and every other depth
+each frame, and is drawn where the light lands, each triangle
+adding the surface it covered over the floor it covers, then folded back onto
+the period into a mipmapped array of one layer a depth at 32 texels a block;
+where folds of light cross they add up, and a low sun draws the web out along
+its direction. The composite reads the layers either side of a floor's depth
+with anisotropic filtering over the floor a pixel covers, so distant floors
+settle to their mean instead of showing the web as a pattern and a floor seen
+edge on keeps its web. The web greys out with depth and is gone by the deepest
+floor measured, so no depth draws a line where it stops. The waves are not the
+runtime's normal map. Seen from above, the interop depth through water is the
+runtime's unbent path, which lies below the floor, so the lens follows the view
+bent where it crosses the surface, column by column, to the ground it meets: a
+floor rising toward a shore, or the side of a column that stands higher. Seen
+from under water the depth is the real point. A march over the column tops
+toward the sun and the clouds' shadow put the web out.
 
 **Particles.** Slot preparation and CPU mesh snapshots run on a dedicated worker
 and are double buffered: the render thread publishes the previous frame's
@@ -350,6 +474,11 @@ anchor tick; clients reconstruct motion from those and synchronized world time.
 
 **Lights.** Block lights are created, updated, and destroyed on the render
 thread under their own budget, from resource-pack rules keyed by block state.
+A glowing cube's and a lantern's sphere stands a little out of the faces around
+it, at the brightness at which the part that stands out gives off a torch's
+power per light level (`BlockLightDefaults.torchParityIntensity`): vanilla rates a light
+by its level alone, and at the plain light-level radiance a glowing cube gave
+off about fifteen times a torch while a lantern's flame lit only its glass.
 Changing the block-light multipliers updates existing lights in place over a few
 frames (`ChunkManager.refreshBlockLightIntensities`); terrain is not rebuilt. A
 hand-held item whose placed block shows a lit particle gets the same element in
@@ -377,7 +506,10 @@ and any explicit value, against Minecraft's render distance and pushes the
 radius into `TerrainState` only on change, so `TerrainState` is always finite.
 The flood rebuilds into a second set in per-frame slices and swaps it in when
 complete; a section added mid-build marks the set dirty rather than expanding a
-set about to be replaced. `LightManager` lights are never culled. Some small
+set about to be replaced. Every section holding a block is captured, a solid one
+included, so the flood crosses a missing section as open air between the lowest
+and highest captured heights, and a section that replaces air it crossed with
+anything sealed marks the set dirty. `LightManager` lights are never culled. Some small
 emitters use `BuiltinEmission` instead of built-in analytic-light rules to avoid
 diluting the sampler's candidate pool.
 

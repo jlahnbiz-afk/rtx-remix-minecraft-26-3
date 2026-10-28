@@ -27,7 +27,7 @@ layout(std140, binding = 1) uniform CloudParameters {
     vec4 CameraAndFrame;
     vec4 LightDirectionValue;
     vec4 LightIrradianceValue;
-    vec4 AmbientTopAndCoverage;
+    vec4 AmbientTopAndSmallCoverage;
     vec4 AmbientBottomAndDensity;
     vec4 LayerParameters;
     vec4 OutputParameters;
@@ -39,8 +39,8 @@ layout(std140, binding = 1) uniform CloudParameters {
 #define FrameIndex CameraAndFrame.w
 #define LightDirection LightDirectionValue.xyz
 #define LightIrradiance LightIrradianceValue.rgb
-#define AmbientTop AmbientTopAndCoverage.rgb
-#define Coverage AmbientTopAndCoverage.w
+#define AmbientTop AmbientTopAndSmallCoverage.rgb
+#define LayerCoverage vec3(AmbientTopAndSmallCoverage.w, OutputParameters.x, LookParameters.w)
 #define AmbientBottom AmbientBottomAndDensity.rgb
 #define Density AmbientBottomAndDensity.w
 #define CloudBase LayerParameters.x
@@ -202,6 +202,12 @@ void main() {
             float extinction = 0.0;
             for (int layer = 0; layer < 3; layer++) {
                 extinction += layerDensity(layer, camera, true) * EXTINCTION;
+            }
+            for (int shape = 0; shape < CLOUD_MAX_SHAPES; shape++) {
+                if (shape >= ShapeCount) {
+                    break;
+                }
+                extinction += shapeDensity(shape, camera, true) * EXTINCTION;
             }
             imageStore(OutputImage, pixel, vec4(extinction, 0.0, 0.0, 1.0));
         }

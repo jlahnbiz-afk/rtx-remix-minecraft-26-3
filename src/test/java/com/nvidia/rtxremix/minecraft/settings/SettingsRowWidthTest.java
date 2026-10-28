@@ -96,7 +96,7 @@ class SettingsRowWidthTest {
             entry("rtxremix.setting.sky.auroraIntensity", "4.00"),
             entry("rtxremix.setting.sky.auroraEverywhere", "OFF"),
             entry("rtxremix.setting.clouds.style", "Reimagined"),
-            entry("rtxremix.setting.clouds.coverage", "1.00"),
+            entry("rtxremix.setting.clouds.coverage", "3.33"),
             entry("rtxremix.setting.clouds.secondLayer", "OFF"),
             entry("rtxremix.setting.clouds.speed", "10.00"),
             entry("rtxremix.setting.clouds.unboundThickness", "1000.00"),
@@ -119,8 +119,9 @@ class SettingsRowWidthTest {
             entry("rtxremix.setting.post.highlights", "10.00"),
             entry("rtxremix.setting.post.lowLightAdaptation", "-5.00"),
             entry("rtxremix.setting.post.highLightAdaptation", "10.00"),
-            entry("rtxremix.setting.lens.depthOfField", "2.00"),
-            entry("rtxremix.setting.lens.flare", "2.00"));
+            entry("rtxremix.setting.lens.depthOfField", "5.00"),
+            entry("rtxremix.setting.lens.flare", "4.00"),
+            entry("rtxremix.setting.lens.caustics", "2.00"));
 
     private final DefaultFont font = DefaultFont.load();
     private final Map<String, String> lang = loadLang();

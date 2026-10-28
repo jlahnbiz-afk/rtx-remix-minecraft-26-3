@@ -13,7 +13,9 @@ import java.nio.ByteOrder;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LodMeshBuilderTest {
 
@@ -51,7 +53,7 @@ class LodMeshBuilderTest {
         // World x 0..64 on chunk row z = 0: chunks 0 to 3.
         top(dh, 0, 64, 70, 0, 16, STONE, 1, 1, 1);
 
-        convert(dh, new LodMeshBuilder.Clip(0, 0, 1), 0, 0);
+        convert(dh, LodMeshBuilder.Clip.disk(0, 0, 1), 0, 0);
 
         assertEquals(1, ground.quads, "chunks 2 and 3 stay one quad");
         assertEquals(32f, minLocal(ground, 0));
@@ -65,7 +67,7 @@ class LodMeshBuilderTest {
         side(dh, SOUTH, 0, 16, 60, 70, 16);
         side(dh, NORTH, 0, 16, 60, 70, 16);
 
-        convert(dh, new LodMeshBuilder.Clip(0, 0, 0), 0, 0);
+        convert(dh, LodMeshBuilder.Clip.disk(0, 0, 0), 0, 0);
 
         assertEquals(1, ground.quads);
         assertEquals(-1f, ground.vertices.getFloat(20), "the north face survives");
@@ -87,13 +89,30 @@ class LodMeshBuilderTest {
 
     @Test
     void theSignatureChangesOnlyWithTheChunksItRemoves() {
-        LodMeshBuilder.Clip near = new LodMeshBuilder.Clip(0, 0, 4);
+        LodMeshBuilder.Clip near = LodMeshBuilder.Clip.disk(0, 0, 4);
         assertEquals(0, near.signature(1024, 1024, 64), "a far section loses nothing");
         assertEquals(0, LodMeshBuilder.Clip.NONE.signature(0, 0, 64));
         assertEquals(near.signature(0, 0, 64), near.signature(0, 0, 64));
-        assertNotEquals(near.signature(0, 0, 64), new LodMeshBuilder.Clip(1, 0, 4).signature(0, 0, 64));
-        assertEquals(new LodMeshBuilder.Clip(10, 10, 1).signature(-64, -64, 64),
-                new LodMeshBuilder.Clip(20, 20, 1).signature(-64, -64, 64));
+        assertNotEquals(near.signature(0, 0, 64), LodMeshBuilder.Clip.disk(1, 0, 4).signature(0, 0, 64));
+        assertEquals(LodMeshBuilder.Clip.disk(10, 10, 1).signature(-64, -64, 64),
+                LodMeshBuilder.Clip.disk(20, 20, 1).signature(-64, -64, 64));
+    }
+
+    @Test
+    void theClipTellsASectionItCoversFromOneItCrosses() {
+        LodMeshBuilder.Clip clip = LodMeshBuilder.Clip.disk(0, 0, 4);
+        assertTrue(clip.covers(-32, -32, 64), "four chunks around the centre lie inside");
+        assertTrue(clip.intersects(-32, -32, 64));
+        assertFalse(clip.covers(0, 0, 128), "a section reaching past the radius is only crossed");
+        assertTrue(clip.intersects(0, 0, 128));
+        assertFalse(clip.intersects(64, 64, 16), "chunk 4, 4 lies outside a radius of 4");
+        assertFalse(clip.intersects(1024, 1024, 64));
+        assertFalse(LodMeshBuilder.Clip.NONE.covers(0, 0, 64));
+        assertFalse(LodMeshBuilder.Clip.NONE.intersects(0, 0, 64));
+        LodMeshBuilder.Clip holed = LodMeshBuilder.Clip.of(0, 0, 4, (x, z) -> x != 1 || z != 1);
+        assertFalse(holed.covers(0, 0, 32), "a chunk Minecraft has not drawn keeps its LOD");
+        assertTrue(holed.covers(-32, -32, 32));
+        assertFalse(holed.clips(5, 0), "nothing past the window is clipped");
     }
 
     private void convert(ByteBuffer dh, LodMeshBuilder.Clip clip, int originX, int originZ) {

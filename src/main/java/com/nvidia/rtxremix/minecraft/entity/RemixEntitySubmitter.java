@@ -2299,7 +2299,7 @@ public class RemixEntitySubmitter {
             textures.destroy();
             return null;
         }
-        if (cachedPixels != null && cachedPixels.version() > 0L) {
+        if (cachedPixels != null) {
             dynamicTextureVersions.put(textureId, cachedPixels.version());
             dynamicTextureSizes.put(textureId, new TextureSize(width, height));
         }
@@ -2517,14 +2517,18 @@ public class RemixEntitySubmitter {
         DynamicTextureCache.Pixels pixels = DynamicTextureCache.get(sourceTexture(textureId));
         if (pixels == null || pixels.version() <= 0L) return;
 
+        // Only a set built from uploaded pixels has a version. One built from a pack's file
+        // ignores the cache: JourneyMap registers its mob icons as dynamic textures under
+        // the mobs' own texture ids, and their uploads rebuilt a villager's set every frame.
         Long appliedVersion = dynamicTextureVersions.get(textureId);
-        if (appliedVersion != null && appliedVersion >= pixels.version()) return;
+        if (appliedVersion == null || appliedVersion >= pixels.version()) return;
 
         EntityTextureSet textures = textureSets.get(textureId);
         if (textures == null || textures.albedo == null || textures.albedo.isDeleted()) return;
 
-        if (textures.hasPBR) {
-            // AO and emissive are derived from albedo; rebuild the complete set.
+        if (textures.hasPBR || OverlayComposite.spec(textureId) != null) {
+            // AO and emissive are derived from albedo, and a composite paints its overlays
+            // over it; rebuild the complete set.
             invalidateMaterialTexture(textureId);
             return;
         }

@@ -19,6 +19,8 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,15 +34,45 @@ import org.slf4j.LoggerFactory;
  * after every update. Rain reaches the runtime the same way, as texture content, because a
  * material's surface state cannot change after it is made.
  *
+ * <p>A flipbook frame covers a quarter of the texture each way, and laid on its own it showed
+ * the same waves every ten blocks, a lattice of swells that stood out across open water. So
+ * the texture lays the flipbook three times over: at its own size, at twice that turned a
+ * quarter, and at four times turned a half, each on its own frame and each without its longest
+ * waves, which drew the lattice at whatever size a layer was laid. The larger layers bring
+ * back waves of those lengths without one, and the sum repeats only once a texture.
+ *
  * <p>The frames come from the flipbook's second mip level, decoded on a worker; until then
- * the water is calm. Render thread only, apart from that decode.
+ * the water is calm. A frame is composed on a thread of its own and uploaded on the render
+ * thread once it is done.
  */
 public final class WaterNormals {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(WaterNormals.class);
 
-    /** Texels across one water tile: a flipbook frame at its second mip level. */
-    public static final int SIZE = 512;
+    /** Texels across the texture, which covers {@link #FRAMES_ACROSS} flipbook frames each way. */
+    public static final int SIZE = 1024;
+    /** Texels across a flipbook frame at its second mip level. */
+    private static final int FRAME_SIZE = 512;
+    private static final int FRAMES_ACROSS = 4;
+    /**
+     * Each layer's share of the slope, at the flipbook's own size, twice and four times it: half
+     * as much again as they would need for their slopes to add up to the flipbook's, since the
+     * high pass takes about a third of it.
+     */
+    private static final float NEAR_SHARE = 1.1f;
+    private static final float MIDDLE_SHARE = 0.65f;
+    private static final float FAR_SHARE = 0.5f;
+    /**
+     * Texels of a frame its slopes are blurred over, twice each way, before the blur is taken
+     * away: the flipbook's waves longer than about a quarter of a frame, which drew the same
+     * lattice of swells in every frame's span and in every layer's, go, and the larger layers
+     * bring back waves of those lengths without the lattice.
+     */
+    private static final int HIGH_PASS_RADIUS = 32;
+    /** A high-passed frame's slope per step of its signed bytes. */
+    private static final float SLOPE_STEP = 1f / 254f;
+    /** Frames between the layers, so no two show the same waves. */
+    private static final int LAYER_FRAME_STEP = 40;
     // The flipbook's layout, as tools/src/rtx_tools/water_normals.py writes it.
     private static final int SHEET_COLS = 12;
     private static final int SHEET_ROWS = 10;
@@ -52,17 +84,27 @@ public final class WaterNormals {
     private static final long RIPPLE_SEED = 0x52414E44L;
     /** Rain strength change that redraws a held frame. */
     private static final float STRENGTH_EPSILON = 0.02f;
-    private static final float[] DECODE = new float[256];
+    /** An octahedral red-green pair's slopes, x and y, by the pair as {@code red << 8 | green}. */
+    private static final float[] SLOPE_X = new float[65536];
+    private static final float[] SLOPE_Y = new float[65536];
 
     static {
-        for (int i = 0; i < 256; i++) {
-            DECODE[i] = i / 127.5f - 1f;
+        for (int red = 0; red < 256; red++) {
+            for (int green = 0; green < 256; green++) {
+                // An upper-hemisphere normal is proportional to (px, py, 1 - |px| - |py|), so
+                // its slopes are px / pz and py / pz.
+                float x = red / 127.5f - 1f;
+                float y = green / 127.5f - 1f;
+                float z = Math.max(1.0e-3f, 1f - Math.abs(x) - Math.abs(y));
+                SLOPE_X[red << 8 | green] = x / z;
+                SLOPE_Y[red << 8 | green] = y / z;
+            }
         }
     }
 
     private final RemixAPI api;
     private final RemixTexture texture;
-    /** Per frame, octahedral normals as red-green byte pairs. */
+    /** Per frame, the high-passed slopes, x and y, as signed byte pairs; see {@link #highPass}. */
     private final CompletableFuture<byte[][]> ocean;
     private final CompletableFuture<RainRipples> ripples;
     private final byte[] texels = new byte[SIZE * SIZE * 4];
@@ -70,7 +112,17 @@ public final class WaterNormals {
     private final TexturePatch patch = new TexturePatch();
     private final TextureBatchEntry entry = new TextureBatchEntry();
     private final TexturePatchInfo patchInfo = new TexturePatchInfo();
+    private final ExecutorService composer = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "rtx-water-normals");
+        thread.setDaemon(true);
+        return thread;
+    });
 
+    /** The frame being composed into {@link #texels}, or null; one at a time. */
+    private CompletableFuture<Void> composing;
+    private int composingOceanFrame;
+    private int composingRingFrame;
+    private float composingStrength;
     private int appliedOceanFrame = -1;
     private int appliedRingFrame = -1;
     private float appliedStrength;
@@ -88,14 +140,15 @@ public final class WaterNormals {
         patchInfo.entries = new TextureBatchEntry[] {entry};
         ocean = CompletableFuture.supplyAsync(() -> {
             try {
-                return decodeFrames(flipbook);
+                return highPass(decodeFrames(flipbook));
             } catch (IOException | RuntimeException e) {
                 LOGGER.warn("Failed to read the water normal flipbook {}; the water stays calm", flipbook, e);
                 return null;
             }
         });
+        // The rings tile a flipbook frame's span, as the nearest layer does.
         ripples = rings
-                ? CompletableFuture.supplyAsync(() -> RainRipples.generate(SIZE, tileBlocks, RIPPLE_SEED))
+                ? CompletableFuture.supplyAsync(() -> RainRipples.generate(FRAME_SIZE, tileBlocks / FRAMES_ACROSS, RIPPLE_SEED))
                 : CompletableFuture.completedFuture(null);
     }
 
@@ -120,31 +173,48 @@ public final class WaterNormals {
     }
 
     /**
-     * Shows the waves at {@code seconds} into their animation and rain of {@code rain}, 0 to 1.
-     * Uploads only when a frame or the rain changed.
+     * Shows the waves at {@code seconds} into their animation and rain of {@code rain}, 0 to 1:
+     * uploads the frame last composed once it is done, and composes the next when a frame or the
+     * rain changed, so the water trails by the frame or two a composition takes.
      */
     public void update(float rain, double seconds) {
         if (released || texture.isDeleted()) return;
         byte[][] frames = ocean.getNow(null);
         if (frames == null) return;
+        if (composing != null && composing.isDone()) {
+            try {
+                composing.join();
+                upload();
+            } catch (RuntimeException e) {
+                LOGGER.warn("Failed to compose the water normals: {}", e.getMessage());
+            }
+            composing = null;
+        }
         int oceanFrame = (int) Math.floorMod((long) Math.floor(seconds * FPS), (long) FRAMES);
         RainRipples rings = rain > 0f ? ripples.getNow(null) : null;
         int ringFrame = rings != null ? RainRipples.frameAt(seconds) : -1;
         float strength = rings != null ? Math.min(1f, rain) : 0f;
-        if (oceanFrame == appliedOceanFrame && ringFrame == appliedRingFrame
-                && Math.abs(strength - appliedStrength) < STRENGTH_EPSILON) {
+        if (composing != null || (oceanFrame == appliedOceanFrame && ringFrame == appliedRingFrame
+                && Math.abs(strength - appliedStrength) < STRENGTH_EPSILON)) {
             return;
         }
-        compose(frames[oceanFrame], rings != null ? rings.normals(ringFrame) : null, strength, texels);
+        composingOceanFrame = oceanFrame;
+        composingRingFrame = ringFrame;
+        composingStrength = strength;
+        byte[] ringRg = rings != null ? rings.normals(ringFrame) : null;
+        composing = CompletableFuture.runAsync(() -> compose(frames, oceanFrame, ringRg, strength, texels), composer);
+    }
+
+    private void upload() {
         staging.clear();
         staging.put(texels).flip();
         patch.pixelData = staging;
         entry.handle = texture.getHandle();
         try {
             api.updateTextureFromMemory(patchInfo);
-            appliedOceanFrame = oceanFrame;
-            appliedRingFrame = ringFrame;
-            appliedStrength = strength;
+            appliedOceanFrame = composingOceanFrame;
+            appliedRingFrame = composingRingFrame;
+            appliedStrength = composingStrength;
         } catch (RuntimeException e) {
             LOGGER.warn("Failed to update the water normals: {}", e.getMessage());
         } finally {
@@ -153,33 +223,145 @@ public final class WaterNormals {
     }
 
     /**
-     * Writes the ocean frame with the rings' slopes, scaled by {@code strength}, added to its
-     * own, as octahedral normals in the red and green of RGBA8 texels: the runtime's normal
-     * encoding, which an update must already be in.
+     * Writes the texture for flipbook frame {@code frame}: its three layers' slopes (see the
+     * class comment) with the rings', scaled by {@code strength}, added, as octahedral normals in
+     * the red and green of RGBA8 texels: the runtime's normal encoding, which an update must
+     * already be in. A layer turned by a quarter or a half turns its slopes with it.
      */
-    static void compose(byte[] oceanRg, byte[] ringRg, float strength, byte[] rgba) {
-        int texelCount = oceanRg.length / 2;
-        for (int i = 0; i < texelCount; i++) {
-            byte x = oceanRg[i * 2];
-            byte y = oceanRg[i * 2 + 1];
-            if (ringRg != null && strength > 0f) {
-                float ox = DECODE[x & 0xFF], oy = DECODE[y & 0xFF];
-                float rx = DECODE[ringRg[i * 2] & 0xFF], ry = DECODE[ringRg[i * 2 + 1] & 0xFF];
-                // An upper-hemisphere normal is proportional to (px, py, 1 - |px| - |py|), so its
-                // slopes are px / pz and py / pz; the sum is projected back onto the octahedron.
-                float oz = Math.max(1.0e-3f, 1f - Math.abs(ox) - Math.abs(oy));
-                float rz = Math.max(1.0e-3f, 1f - Math.abs(rx) - Math.abs(ry));
-                float sx = ox / oz + strength * rx / rz;
-                float sy = oy / oz + strength * ry / rz;
+    static void compose(byte[][] frames, int frame, byte[] ringRg, float strength, byte[] rgba) {
+        byte[] near = frames[frame];
+        byte[] middle = frames[(frame + LAYER_FRAME_STEP) % frames.length];
+        byte[] far = frames[(frame + 2 * LAYER_FRAME_STEP) % frames.length];
+        int mask = FRAME_SIZE - 1;
+        float[] slope = new float[2];
+        for (int j = 0; j < SIZE; j++) {
+            int nearY = (j << 1) & mask;
+            int middleX = j & mask;
+            int farY = (-(j >> 1)) & mask;
+            int farY2 = (j & 1) == 0 ? farY : (farY - 1) & mask;
+            for (int i = 0; i < SIZE; i++) {
+                // At the flipbook's own size, two texels of it to one of the texture: their mean.
+                int nearX = (i << 1) & mask;
+                float sx = 0f;
+                float sy = 0f;
+                for (int corner = 0; corner < 4; corner++) {
+                    int at = texel((nearX + (corner & 1)) & mask, (nearY + (corner >> 1)) & mask);
+                    sx += near[at];
+                    sy += near[at + 1];
+                }
+                sx *= NEAR_SHARE * 0.25f * SLOPE_STEP;
+                sy *= NEAR_SHARE * 0.25f * SLOPE_STEP;
+                // At twice the size, turned a quarter: a texel of it to one of the texture.
+                int at = texel(middleX, (-i) & mask);
+                sx -= MIDDLE_SHARE * SLOPE_STEP * middle[at + 1];
+                sy += MIDDLE_SHARE * SLOPE_STEP * middle[at];
+                // At four times the size, turned a half: between texels of it every other texel.
+                int farX = (-(i >> 1)) & mask;
+                int farX2 = (i & 1) == 0 ? farX : (farX - 1) & mask;
+                float fx = 0f;
+                float fy = 0f;
+                for (int corner = 0; corner < 4; corner++) {
+                    int c = texel((corner & 1) == 0 ? farX : farX2, corner < 2 ? farY : farY2);
+                    fx += far[c];
+                    fy += far[c + 1];
+                }
+                sx -= FAR_SHARE * 0.25f * SLOPE_STEP * fx;
+                sy -= FAR_SHARE * 0.25f * SLOPE_STEP * fy;
+                if (ringRg != null && strength > 0f) {
+                    slope[0] = 0f;
+                    slope[1] = 0f;
+                    addBox(ringRg, nearX, nearY, strength * 0.25f, slope);
+                    sx += slope[0];
+                    sy += slope[1];
+                }
+                // The sum projected back onto the octahedron.
                 float norm = Math.abs(sx) + Math.abs(sy) + 1f;
-                x = encode(sx / norm);
-                y = encode(sy / norm);
+                int out = (j * SIZE + i) * 4;
+                rgba[out] = encode(sx / norm);
+                rgba[out + 1] = encode(sy / norm);
+                rgba[out + 2] = 0;
+                rgba[out + 3] = (byte) 0xFF;
             }
-            rgba[i * 4] = x;
-            rgba[i * 4 + 1] = y;
-            rgba[i * 4 + 2] = 0;
-            rgba[i * 4 + 3] = (byte) 0xFF;
         }
+    }
+
+    /**
+     * Turns octahedral frames into their high-passed slopes, in place, as signed bytes of
+     * {@link #SLOPE_STEP}: each frame's slopes less their blur over {@link #HIGH_PASS_RADIUS}.
+     * The blur wraps as the frame does.
+     */
+    static byte[][] highPass(byte[][] frames) {
+        int texels = FRAME_SIZE * FRAME_SIZE;
+        float[] x = new float[texels];
+        float[] y = new float[texels];
+        float[] blur = new float[texels];
+        float[] temp = new float[texels];
+        for (byte[] frame : frames) {
+            for (int i = 0; i < texels; i++) {
+                int p = (frame[i * 2] & 0xFF) << 8 | (frame[i * 2 + 1] & 0xFF);
+                x[i] = SLOPE_X[p];
+                y[i] = SLOPE_Y[p];
+            }
+            subtractBlur(x, blur, temp);
+            subtractBlur(y, blur, temp);
+            for (int i = 0; i < texels; i++) {
+                frame[i * 2] = (byte) Math.clamp(Math.round(x[i] / SLOPE_STEP), -127, 127);
+                frame[i * 2 + 1] = (byte) Math.clamp(Math.round(y[i] / SLOPE_STEP), -127, 127);
+            }
+        }
+        return frames;
+    }
+
+    private static void subtractBlur(float[] values, float[] blur, float[] temp) {
+        boxBlur(values, temp, 1, FRAME_SIZE);
+        boxBlur(temp, blur, FRAME_SIZE, 1);
+        boxBlur(blur, temp, 1, FRAME_SIZE);
+        boxBlur(temp, blur, FRAME_SIZE, 1);
+        for (int i = 0; i < values.length; i++) {
+            values[i] -= blur[i];
+        }
+    }
+
+    /**
+     * A wrapping box blur of {@link #HIGH_PASS_RADIUS} along one axis of a frame: texels
+     * {@code step} apart along a line, lines {@code lineStep} apart.
+     */
+    private static void boxBlur(float[] from, float[] to, int step, int lineStep) {
+        int radius = HIGH_PASS_RADIUS;
+        float scale = 1f / (2 * radius + 1);
+        for (int line = 0; line < FRAME_SIZE; line++) {
+            int start = line * lineStep;
+            float sum = 0f;
+            for (int k = -radius; k <= radius; k++) {
+                sum += from[start + Math.floorMod(k, FRAME_SIZE) * step];
+            }
+            for (int k = 0; k < FRAME_SIZE; k++) {
+                to[start + k * step] = sum * scale;
+                sum += from[start + ((k + radius + 1) & (FRAME_SIZE - 1)) * step]
+                        - from[start + ((k - radius) & (FRAME_SIZE - 1)) * step];
+            }
+        }
+    }
+
+    /** Where texel x, y of a frame starts in its byte pairs. */
+    private static int texel(int x, int y) {
+        return (y * FRAME_SIZE + x) * 2;
+    }
+
+    /** Adds the slopes of the two-by-two texels from x, y of an octahedral frame, times {@code weight}. */
+    private static void addBox(byte[] rg, int x, int y, float weight, float[] slope) {
+        int mask = FRAME_SIZE - 1;
+        for (int corner = 0; corner < 4; corner++) {
+            int p = pair(rg, (x + (corner & 1)) & mask, (y + (corner >> 1)) & mask);
+            slope[0] += weight * SLOPE_X[p];
+            slope[1] += weight * SLOPE_Y[p];
+        }
+    }
+
+    /** The red-green pair of a frame's texel x, y, as {@code red << 8 | green}. */
+    private static int pair(byte[] rg, int x, int y) {
+        int at = (y * FRAME_SIZE + x) * 2;
+        return (rg[at] & 0xFF) << 8 | (rg[at + 1] & 0xFF);
     }
 
     /** Returns the staging buffer; the owner destroys the texture. */
@@ -188,6 +370,7 @@ public final class WaterNormals {
         released = true;
         ocean.cancel(false);
         ripples.cancel(false);
+        composer.shutdownNow();
         DirectBufferPool.release(staging);
     }
 
@@ -201,8 +384,8 @@ public final class WaterNormals {
             boolean dx10 = header.get(84) == 'D' && header.get(85) == 'X' && header.get(86) == '1'
                     && header.get(87) == '0';
             if (header.getInt(0) != 0x20534444 || !dx10 || header.getInt(128) != DXGI_FORMAT_BC5_UNORM
-                    || width != SHEET_COLS * SIZE * 2 || height != SHEET_ROWS * SIZE * 2) {
-                throw new IOException("Expected a " + SHEET_COLS * SIZE * 2 + "x" + SHEET_ROWS * SIZE * 2
+                    || width != SHEET_COLS * FRAME_SIZE * 2 || height != SHEET_ROWS * FRAME_SIZE * 2) {
+                throw new IOException("Expected a " + SHEET_COLS * FRAME_SIZE * 2 + "x" + SHEET_ROWS * FRAME_SIZE * 2
                         + " BC5 sheet, found " + width + "x" + height);
             }
             long level0Bytes = (long) (width / 4) * (height / 4) * 16;

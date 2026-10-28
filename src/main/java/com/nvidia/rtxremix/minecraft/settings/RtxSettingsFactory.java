@@ -181,8 +181,8 @@ public final class RtxSettingsFactory {
                 () -> clouds.getCloudStyle().ordinal(),
                 v -> clouds.setCloudStyle(CloudStyle.of(v))));
         // Coverage regenerates the mask and every cloud chunk, so it applies once a drag settles.
-        list.add(floatSetting("clouds.coverage", SettingGroup.CLOUDS,
-                "rtxremix.setting.clouds.coverage", 0.0, 1.0,
+        list.add(relativeFloat("clouds.coverageScale", SettingGroup.CLOUDS,
+                "rtxremix.setting.clouds.coverage", CloudRenderer.DEFAULT_COVERAGE, 1.0f,
                 clouds::getCoverage, clouds::setCoverage)
                 .deferSliderApply());
         list.add(RtxSetting.ofBool("clouds.secondLayer", SettingGroup.CLOUDS,
@@ -240,9 +240,15 @@ public final class RtxSettingsFactory {
         list.add(skyFloat(renderer, "sky.sunIntensity", "rtxremix.setting.sky.sunIntensity",
                 0.0, 100.0,
                 LightManager::getSunIntensity, LightManager::setSunIntensity));
-        list.add(skyFloat(renderer, "sky.moonIntensity", "rtxremix.setting.sky.moonIntensity",
-                0.0, 10.0,
-                LightManager::getMoonIntensity, LightManager::setMoonIntensity));
+        list.add(relativeFloat("sky.moonScale", SettingGroup.SKY,
+                "rtxremix.setting.sky.moonIntensity",
+                LightManager.DEFAULT_MOON_INTENSITY, LightManager.MAX_MOON_INTENSITY,
+                LightManager::getMoonIntensity, v -> {
+                    LightManager.setMoonIntensity(v);
+                    if (renderer.getSkyRenderer() != null) {
+                        renderer.getSkyRenderer().forceRefresh();
+                    }
+                }));
         list.add(skyFloat(renderer, "sky.dayAmbient", "rtxremix.setting.sky.dayAmbient",
                 0.0, 5.0,
                 SkyRenderer::getDayAmbientBoost, SkyRenderer::setDayAmbientBoost));
@@ -303,12 +309,15 @@ public final class RtxSettingsFactory {
                 postProcessing::getHighLightAdaptation, postProcessing::setHighLightAdaptation));
 
         // --- Lens ---
-        list.add(floatSetting("lens.depthOfField", SettingGroup.LENS,
-                "rtxremix.setting.lens.depthOfField", 0.0, LensLook.MAX_DEPTH_OF_FIELD,
-                LensLook::getDepthOfField, LensLook::setDepthOfField));
-        list.add(floatSetting("lens.flare", SettingGroup.LENS,
-                "rtxremix.setting.lens.flare", 0.0, LensLook.MAX_FLARE,
-                LensLook::getFlare, LensLook::setFlare));
+        list.add(relativeFloat("lens.depthOfFieldScale", SettingGroup.LENS,
+                "rtxremix.setting.lens.depthOfField", LensLook.DEFAULT_DEPTH_OF_FIELD,
+                LensLook.MAX_DEPTH_OF_FIELD, LensLook::getDepthOfField, LensLook::setDepthOfField));
+        list.add(relativeFloat("lens.flareScale", SettingGroup.LENS,
+                "rtxremix.setting.lens.flare", LensLook.DEFAULT_FLARE,
+                LensLook.MAX_FLARE, LensLook::getFlare, LensLook::setFlare));
+        list.add(floatSetting("lens.caustics", SettingGroup.LENS,
+                "rtxremix.setting.lens.caustics", 0.0, LensLook.MAX_CAUSTICS,
+                LensLook::getCaustics, LensLook::setCaustics));
 
         return new RtxSettings(list);
     }
@@ -377,6 +386,17 @@ public final class RtxSettingsFactory {
                         renderer.getSkyRenderer().forceRefresh();
                     }
                 });
+    }
+
+    /**
+     * A strength shown as a multiple of its default, so the slider reads 1 at the default. Its id
+     * must not be one the strength itself was saved under: a saved file would feed that value in
+     * as a multiple.
+     */
+    private static RtxSetting<Double> relativeFloat(String id, SettingGroup group, String labelKey,
+            float defaultValue, float maxValue, Supplier<Float> getter, Consumer<Float> setter) {
+        return RtxSetting.ofFloat(id, group, labelKey, labelKey + ".tip", 0.0, maxValue / defaultValue, 1.0,
+                () -> (double) (getter.get() / defaultValue), v -> setter.accept(v.floatValue() * defaultValue));
     }
 
     private static RtxSetting<Double> floatSetting(String id, SettingGroup group, String labelKey,
