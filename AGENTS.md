@@ -132,6 +132,13 @@ vanilla's terrain-download screen up for a bounded wait for stable frames after
 a world join, hiding first-sight mesh, pipeline, and BLAS costs without holding
 the screen indefinitely.
 
+**Presentation.** `gl/RemixPresentationWindow` hosts Vulkan in a child of
+Minecraft's SDL/OpenGL window. `GlSurfaceMixin` records the completed texture's
+existing framebuffer for the GL-to-Vulkan copy. Window operations run on SDL's
+owner thread; `WindowMixin` completes parent destruction synchronously before
+the deferred native shutdown, including when an event-thread mod queues SDL
+operations. Only class/callback cleanup remains after confirmed destruction.
+
 **Sky.** `SkyRenderer` branches on the dimension's sky type: the End keeps a
 constant dark dome and a skyless dimension a black one with no sky ambient. In
 the Overworld, `AtmosphericSkyGenerator` computes the atmosphere with compute

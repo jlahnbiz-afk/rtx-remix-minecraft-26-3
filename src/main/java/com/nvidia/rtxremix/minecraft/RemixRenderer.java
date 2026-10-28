@@ -22,6 +22,7 @@ import com.nvidia.rtxremix.minecraft.asset.RemixTexture;
 import com.nvidia.rtxremix.minecraft.asset.RemixTextureStore;
 import com.nvidia.rtxremix.minecraft.benchmark.BenchmarkController;
 import com.nvidia.rtxremix.minecraft.gl.GlInterop;
+import com.nvidia.rtxremix.minecraft.gl.RemixPresentationWindow;
 import com.nvidia.rtxremix.minecraft.light.LightManager;
 import com.nvidia.rtxremix.minecraft.logic.ViewDistanceFade;
 import com.nvidia.rtxremix.minecraft.profiling.PerformanceTimer;
@@ -123,6 +124,11 @@ public class RemixRenderer {
     private RemixAPI remixApi;
     private boolean initialized = false;
     private long windowHandle;
+    private long sdlWindowHandle;
+    private RemixPresentationWindow presentationWindow;
+    private int presentationSourceFbo = -1;
+    private int presentationSourceWidth;
+    private int presentationSourceHeight;
     
     private GlInterop interopGlVk = null;
     
@@ -248,6 +254,7 @@ public class RemixRenderer {
 
             Minecraft client = Minecraft.getInstance();
             long sdlHandle = client.getWindow().handle();
+            sdlWindowHandle = sdlHandle;
             
             windowHandle = getHwndFromSdl(sdlHandle);
             
@@ -293,7 +300,7 @@ public class RemixRenderer {
             // RTXREMIX_WINDOW_POS="x,y" moves the window before startup() so the
             // swapchain is created on the monitor that will display it (benchmarks
             // use this to target a specific monitor, e.g. a 4K panel at a negative
-            // desktop coordinate). Must run on the render thread, which owns the window.
+            // desktop coordinate). SDL dispatches to its window thread when required.
             String windowPos = System.getenv("RTXREMIX_WINDOW_POS");
             if (windowPos != null && !windowPos.isBlank()) {
                 String[] parts = windowPos.split(",");
@@ -315,6 +322,9 @@ public class RemixRenderer {
                     throw new RuntimeException("GL interop: required GL extensions are not supported");
                 }
 
+                presentationWindow = new RemixPresentationWindow(windowHandle,
+                        client.getWindow().getWidth(), client.getWindow().getHeight());
+                windowHandle = presentationWindow.handle();
                 StartupInfo startupInfo = StartupInfo.builder()
                     .hwnd(windowHandle)
                     .interopImage(true)
@@ -1407,11 +1417,13 @@ public class RemixRenderer {
             try (ProfileScope ignored = ProfileScope.begin("Remix.Present")) {
                 remixApi.present(presentInfo);
             }
+            presentationWindow.show();
             submitFrameCalled = false;
         } catch (Exception e) {
             failed = true;
             logPresentFailureOnce("Error presenting frame", e);
         }
+        presentationSourceFbo = -1;
         if (!failed) {
             presentFailureLogged = false;
         }
@@ -1444,6 +1456,13 @@ public class RemixRenderer {
         }
     }
 
+    /** Called after the GL backend attaches the completed frame's texture. Render thread only. */
+    public void setPresentationSource(int framebuffer, int width, int height) {
+        presentationSourceFbo = framebuffer;
+        presentationSourceWidth = width;
+        presentationSourceHeight = height;
+    }
+
     private void blitGlToRemix() {
         if (!submitFrameCalled) {
             // if there was no submitFrame, then interop image might not be allocated yet
@@ -1455,8 +1474,10 @@ public class RemixRenderer {
         InteropInfo interopInfo = remixApi.dxvkGetInteropInfo();
         interopGlVk.recreateImagesIf(interopInfo);
 
-        int srcFbo = 0; // 0 is a default framebuffer
-        interopGlVk.copyFromFramebuffer(srcFbo);
+        if (presentationSourceFbo >= 0) {
+            interopGlVk.copyFromFramebuffer(presentationSourceFbo,
+                    presentationSourceWidth, presentationSourceHeight);
+        }
 
         // signal that GL is done copying, so VK can read the image and present
         interopGlVk.signalDone();
@@ -1566,6 +1587,10 @@ public class RemixRenderer {
         LOGGER.info("Shutting down RTX Remix renderer...");
 
         initialized = false;
+        presentationSourceFbo = -1;
+        if (presentationWindow != null) {
+            presentationWindow.stop();
+        }
         pendingTextureReload = false;
         pendingTerrainRecaptureAfterTextureReload = false;
 
@@ -1643,7 +1668,23 @@ public class RemixRenderer {
      * Completes native runtime shutdown after Minecraft has destroyed its SDL window.
      */
     public void shutdownNativeRuntime() {
-        shutdownRemixApi();
+        try {
+            shutdownRemixApi();
+        } finally {
+            if (presentationWindow != null) {
+                presentationWindow.close();
+                presentationWindow = null;
+            }
+        }
+    }
+
+    /** Destroys this renderer's SDL parent synchronously before deferred native shutdown. */
+    public void destroySdlWindow(long sdlHandle, Runnable destruction) {
+        if (presentationWindow != null && sdlHandle == sdlWindowHandle) {
+            presentationWindow.destroyParentWindow(destruction);
+        } else {
+            destruction.run();
+        }
     }
 
     private void shutdownRemixApi() {
