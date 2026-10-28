@@ -269,6 +269,10 @@ the packet's `WORLD_SURFACE` height (`SeededSurfaceScan`,
 keeps real copies until every build that latched capture off has finished.
 Each policy has a `rtxremix.*` kill switch listed in `docs/TUNING.md`;
 `rtxremix.light.vanillaSnapshot` covers both light snapshot policies.
+Replacement light engines may omit vanilla's sky-source palette. The surface
+hook then calls the original initialization operation instead of seeding a
+palette that does not exist; ScalableLux keeps its own initialization hooks,
+storage, propagation and scheduling.
 
 **LOD terrain.** With Distant Horizons 3.3.4 installed, `lod/LodTerrain` builds
 its far terrain as retained Remix instances beyond Minecraft's own terrain: the
