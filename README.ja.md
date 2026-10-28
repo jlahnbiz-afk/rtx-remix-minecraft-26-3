@@ -19,6 +19,12 @@ GeForce RTX の GPU で、Minecraft Java Edition 26.3 をリアルタイムの�
 | 夜の村を照らす松明 | 雪原の上のオーロラと月 |
 | ![霧の夜、水辺の向こうに灯る街の明かり](docs/images/misty-city-night.webp) | ![夜の雨に濡れる架線と灯り](docs/images/night-rain-wires.webp) |
 | 霧の夜の水辺の街 | 夜の雨と架線 |
+| ![浅い池の底に揺れる日の光](docs/images/pond-caustics.webp) | ![水中から見た海の底の光の揺らぎ](docs/images/underwater-caustics.webp) |
+| 池の底の光の揺らぎ | 水中から見た海の底の光 |
+| ![街と海の上に広がる夕焼けのアンバウンドの雲](docs/images/sunset-clouds-city.webp) | ![雨の街を見下ろす塔の灯りと、レンズフレア](docs/images/rain-tower-flare.webp) |
+| 夕焼け雲と街 | 雨の中のレンズフレア |
+| ![雨の公園の小道に並ぶ街灯と、濡れた地面の照り返し](docs/images/rainy-park-lamps.webp) | |
+| 雨の公園の小道と街灯 | |
 
 海と樹上の家のスクリーンショットは[ショーケースワールド](#ショーケースワールドとアートパック)と RTX アートパックで、ほかは別のワールドとリソースパックで撮りました。
 

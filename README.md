@@ -25,6 +25,12 @@ not upstream.
 | Torchlight in a village at night | Aurora and moonlight over snow |
 | ![City lights across the water on a misty night](docs/images/misty-city-night.webp) | ![Overhead wires and a lamp in the night rain](docs/images/night-rain-wires.webp) |
 | A city across the water on a misty night | Overhead wires in the night rain |
+| ![Sunlight playing on the floor of a shallow pond](docs/images/pond-caustics.webp) | ![Light playing on the sea floor, seen from under water](docs/images/underwater-caustics.webp) |
+| Light on the floor of a pond | Light on the sea floor, from under water |
+| ![Unbound clouds at sunset over the city and the sea](docs/images/sunset-clouds-city.webp) | ![A lens flare from a tower's lights over the city in the rain](docs/images/rain-tower-flare.webp) |
+| Sunset clouds over the city | A lens flare in the rain |
+| ![Lamps along a park path in the rain, reflected on the wet ground](docs/images/rainy-park-lamps.webp) | |
+| Lamps along a park path in the rain | |
 
 The sea and treehouse screenshots were taken in the
 [showcase world](#showcase-world-and-art-pack) with the RTX art pack; the others
