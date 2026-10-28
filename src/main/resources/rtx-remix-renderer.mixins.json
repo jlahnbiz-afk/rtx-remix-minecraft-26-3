@@ -64,6 +64,7 @@
         "SectionCopyMixin",
         "SpriteAtlasAccessor",
         "SpriteAtlasTextureMixin",
+        "SpriteAnimationStateAccessor",
         "SpriteBillboardParticleAccessor",
         "SpriteContentsAccessor",
         "StitcherMixin",
