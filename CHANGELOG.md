@@ -11,6 +11,12 @@ also part of every mod file name.
 
 ## Unreleased
 
+## 0.3.0-pre.1 - 2026-10-28
+
+A pre-release: water caustics, skies that change from day to day, a much
+lighter lens, and fixes for Distant Horizons' LOD terrain flickering and
+leaving holes.
+
 ### Added
 
 - Water Caustics, a Lens setting: on the floor of sunlit water, up to about
