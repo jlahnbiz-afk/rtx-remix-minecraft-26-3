@@ -80,6 +80,8 @@ that loads only when Distant Horizons is installed (`lod/dh/`).
 Sodium 0.9.2 for 26.3 is compile-only and never bundled. Its conditional
 `rtx-remix-renderer.sodium.mixins.json` adapts section jobs under
 `terrain/sodium/`; without Sodium the vanilla capture path remains active.
+Loader metadata restricts the tested API version. The animation eligibility
+override and accessor are installed only by the optional Sodium configuration.
 
 Do not run Gradle while a client from the same checkout is up: staging can fail
 on locked DLLs or replace its live configuration. Stop the client or use another

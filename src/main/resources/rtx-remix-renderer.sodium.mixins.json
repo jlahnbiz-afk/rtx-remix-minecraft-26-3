@@ -5,6 +5,8 @@
     "plugin": "com.nvidia.rtxremix.minecraft.terrain.sodium.SodiumMixinPlugin",
     "compatibilityLevel": "JAVA_25",
     "client": [
+        "SpriteAnimationStateAccessor",
+        "SodiumAtlasAnimationForwarderMixin",
         "SodiumRendererAccessor",
         "SodiumLevelRendererMixin",
         "SodiumMeshingTaskMixin",
