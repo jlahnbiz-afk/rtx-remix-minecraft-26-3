@@ -140,7 +140,7 @@ NVIDIA は上流のリリースと CI の道具の一部をこのリポジトリ
 
 ## 開発に参加する
 
-外部からの貢献を歓迎します。とくに助かるのは、上に挙げた手の回っていないところです。ほかの Mod との互換性、通しのプレイで出会うブロックやモブや場所への対応、こちらにない機材での性能などです。このリポジトリをフォークし、開発用のブランチを作ってプルリクエストを送ってください。各コミットには `git commit -s` で署名を付け、[Developer Certificate of Origin](https://developercertificate.org/) に同意したことを示してください。CLA への署名はいりません。詳しい決まりは [CONTRIBUTING.md](CONTRIBUTING.md)（英語）にあります。
+外部からの貢献を歓迎します。とくに助かるのは、上に挙げた手の回っていないところです。ほかの Mod との互換性、通しのプレイで出会うブロックやモブや場所への対応、こちらにない機材での性能などです。このリポジトリをフォークし、開発用のブランチを作ってプルリクエストを送ってください。各コミットには `git commit -s` で署名を付け、[Developer Certificate of Origin](https://developercertificate.org/) に同意したことを示してください。CLA への署名はいりません。コミットと署名の名前は GitHub のハンドル名で、メールアドレスは GitHub の no-reply アドレスでかまいません。詳しい決まりは [CONTRIBUTING.md](CONTRIBUTING.md)（英語）にあります。
 
 ## ライセンス
 
