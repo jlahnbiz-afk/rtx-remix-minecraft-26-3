@@ -211,8 +211,9 @@ real playthrough reaches, and performance on hardware we do not have. Fork this
 repository, create a development branch, and submit a pull request. Sign off
 each commit with `git commit -s` to certify it under the
 [Developer Certificate of Origin](https://developercertificate.org/); there is
-no Contributor License Agreement to sign. See [CONTRIBUTING.md](CONTRIBUTING.md)
-for the full guidelines.
+no Contributor License Agreement to sign. Your GitHub handle and GitHub's
+no-reply email address are fine for the commit and the sign-off. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full guidelines.
 
 ## License
 
