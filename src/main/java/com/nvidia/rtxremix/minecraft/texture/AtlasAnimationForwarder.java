@@ -214,10 +214,7 @@ public final class AtlasAnimationForwarder {
      * the shown frame changed.
      */
     public static void addAnimatedSprite(TextureAtlasSprite sprite, SpriteContents.AnimationState state) {
-        // Raster visibility is not Remix visibility: an animated surface can
-        // still light or reflect into the frame while its GL draw is culled.
-        if (!active || !(state.animationInfo.interpolateFrames
-                || ((com.nvidia.rtxremix.minecraft.mixin.SpriteAnimationStateAccessor) state).rtxremix$frameChanged())) {
+        if (!active || !state.needsToDraw()) {
             return;
         }
         SpriteContents contents = sprite.contents();

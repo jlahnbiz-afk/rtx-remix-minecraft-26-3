@@ -80,6 +80,9 @@ that loads only when Distant Horizons is installed (`lod/dh/`).
 Sodium 0.9.2 for 26.3 is compile-only and never bundled. Its conditional
 `rtx-remix-renderer.sodium.mixins.json` adapts section jobs under
 `terrain/sodium/`; without Sodium the vanilla capture path remains active.
+Loader metadata rejects other Sodium and ImmediatelyFast API versions before
+Mixin application. The Sodium animation-eligibility override and accessor live
+only in its optional Mixin configuration; shared forwarding uses needsToDraw.
 
 ImmediatelyFast 1.17.1+26.3 is compile-only and never bundled. Its conditional
 mixins and helpers are under `compat/immediatelyfast/`; see
@@ -141,11 +144,15 @@ a world join, hiding first-sight mesh, pipeline, and BLAS costs without holding
 the screen indefinitely.
 
 **Presentation.** `gl/RemixPresentationWindow` hosts Vulkan in a child of
-Minecraft's SDL/OpenGL window. `GlSurfaceMixin` records the completed texture's
+Minecraft's SDL/OpenGL window by default. `-Drtxremix.presentation=parent`
+selects the original host at startup; `child` selects the separate host.
+Mirrored input's fallback cannot propagate to SDL twice or open a second system
+menu; cursor messages stay with SDL. `GlSurfaceMixin` records the completed texture's
 existing framebuffer for the GL-to-Vulkan copy. Window operations run on SDL's
 owner thread; `WindowMixin` completes parent destruction synchronously before
 the deferred native shutdown, including when an event-thread mod queues SDL
-operations. Only class/callback cleanup remains after confirmed destruction.
+operations. Independent cleanup steps report accumulated failures after releases;
+callbacks remain allocated while a live window/class can invoke them.
 
 **Sky.** `SkyRenderer` branches on the dimension's sky type: the End keeps a
 constant dark dome and a skyless dimension a black one with no sky ambient. In
@@ -360,7 +367,10 @@ keeps them on the CPU. Mirrors use the actual GPU page dimensions, and texture
 closure unregisters only that page incarnation. ImmediatelyFast map capture
 uses the original image-backed map and restores the raster atlas state after
 submission. Its experimental sign buffering uses a bounded source-glyph cache
-for Remix, preserving text depth while the raster atlas stays active. Font
+for Remix, preserving text depth while the raster atlas stays active. Text and
+layout jointly identify entries, and cache-hit probes allocate nothing.
+`TextGlyphCapture` owns preparation and emission for both cached and live text.
+Font
 generation and resource/world teardown invalidate prepared glyphs.
 `BlockTextureManager` keeps only mostly translucent
 sprites translucent; doors, flowers and the like become cutout.

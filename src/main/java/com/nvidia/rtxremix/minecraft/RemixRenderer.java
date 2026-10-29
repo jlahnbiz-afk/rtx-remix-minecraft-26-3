@@ -23,6 +23,8 @@ import com.nvidia.rtxremix.minecraft.asset.RemixTextureStore;
 import com.nvidia.rtxremix.minecraft.benchmark.BenchmarkController;
 import com.nvidia.rtxremix.minecraft.gl.GlInterop;
 import com.nvidia.rtxremix.minecraft.gl.RemixPresentationWindow;
+import com.nvidia.rtxremix.minecraft.gl.PresentationMode;
+import com.nvidia.rtxremix.minecraft.util.CleanupSteps;
 import com.nvidia.rtxremix.minecraft.light.LightManager;
 import com.nvidia.rtxremix.minecraft.logic.ViewDistanceFade;
 import com.nvidia.rtxremix.minecraft.profiling.PerformanceTimer;
@@ -323,9 +325,13 @@ public class RemixRenderer {
                     throw new RuntimeException("GL interop: required GL extensions are not supported");
                 }
 
-                presentationWindow = new RemixPresentationWindow(windowHandle,
-                        client.getWindow().getWidth(), client.getWindow().getHeight());
-                windowHandle = presentationWindow.handle();
+                PresentationMode presentationMode = PresentationMode.configured();
+                if (presentationMode == PresentationMode.CHILD) {
+                    presentationWindow = new RemixPresentationWindow(windowHandle,
+                            client.getWindow().getWidth(), client.getWindow().getHeight());
+                    windowHandle = presentationWindow.handle();
+                }
+                LOGGER.info("Remix presentation mode: {}", presentationMode);
                 StartupInfo startupInfo = StartupInfo.builder()
                     .hwnd(windowHandle)
                     .interopImage(true)
@@ -1419,7 +1425,7 @@ public class RemixRenderer {
             try (ProfileScope ignored = ProfileScope.begin("Remix.Present")) {
                 remixApi.present(presentInfo);
             }
-            presentationWindow.show();
+            if (presentationWindow != null) presentationWindow.show();
             submitFrameCalled = false;
         } catch (Exception e) {
             failed = true;
@@ -1591,8 +1597,9 @@ public class RemixRenderer {
 
         initialized = false;
         presentationSourceFbo = -1;
+        CleanupSteps cleanup = new CleanupSteps();
         if (presentationWindow != null) {
-            presentationWindow.stop();
+            cleanup.run(presentationWindow::stop);
         }
         pendingTextureReload = false;
         pendingTerrainRecaptureAfterTextureReload = false;
@@ -1601,70 +1608,61 @@ public class RemixRenderer {
         // records into a list that will never be drained.
         AtlasAnimationForwarder.clear();
 
-        joinInFlightParticleRenderTask();
-        discardPendingParticleFrame();
-        shutdownParticleExecutor();
-        doClearWorld();
+        cleanup.run(this::joinInFlightParticleRenderTask);
+        cleanup.run(this::discardPendingParticleFrame);
+        cleanup.run(this::shutdownParticleExecutor);
+        cleanup.run(this::doClearWorld);
         if (skyRenderer != null) {
-            skyRenderer.shutdown();
-            skyRenderer = null;
+            cleanup.run(() -> { skyRenderer.shutdown(); skyRenderer = null; });
         }
 
         // Release the conf option-layers while the runtime is still alive
         // (remixApi shutdown itself is deferred until window close).
         if (confLayerDriver != null) {
-            confLayerDriver.releaseAll();
-            confLayerDriver = null;
+            cleanup.run(() -> { confLayerDriver.releaseAll(); confLayerDriver = null; });
         }
 
         if (chunkManager != null) {
-            chunkManager.destroy();
+            cleanup.run(chunkManager::destroy);
         }
         if (lodTerrain != null) {
-            lodTerrain.destroy();
+            cleanup.run(lodTerrain::destroy);
         }
 
         // Retained entity meshes reference the block atlas and particle atlas
         // materials their managers own, so the submitter goes before both.
         if (entitySubmitter != null) {
-            entitySubmitter.close();
-            entitySubmitter = null;
+            cleanup.run(() -> { entitySubmitter.close(); entitySubmitter = null; });
         }
         if (particleRenderer != null) {
-            particleRenderer.cleanup();
-            particleRenderer = null;
+            cleanup.run(() -> { particleRenderer.cleanup(); particleRenderer = null; });
         }
         if (weatherRenderer != null) {
-            weatherRenderer.cleanup();
-            weatherRenderer = null;
+            cleanup.run(() -> { weatherRenderer.cleanup(); weatherRenderer = null; });
         }
-        lensEffects.cleanup();
+        cleanup.run(lensEffects::cleanup);
         if (particleAtlasManager != null) {
-            particleAtlasManager.cleanup();
-            particleAtlasManager = null;
+            cleanup.run(() -> { particleAtlasManager.cleanup(); particleAtlasManager = null; });
         }
         if (textureManager != null) {
-            textureManager.cleanup();
-            textureManager = null;
+            cleanup.run(() -> { textureManager.cleanup(); textureManager = null; });
         }
         if (firstPersonPass != null) {
-            firstPersonPass.close();
-            firstPersonPass = null;
+            cleanup.run(() -> { firstPersonPass.close(); firstPersonPass = null; });
         }
         if (blockOutlinePass != null) {
-            blockOutlinePass.close();
-            blockOutlinePass = null;
+            cleanup.run(() -> { blockOutlinePass.close(); blockOutlinePass = null; });
         }
 
-        shutdownAssetStores();
+        cleanup.run(this::shutdownAssetStores);
 
         if (interopGlVk != null) {
-            interopGlVk.destroy();
-            interopGlVk = null;
+            cleanup.run(() -> { interopGlVk.destroy(); interopGlVk = null; });
         }
 
         LOGGER.info("RTX Remix native runtime shutdown deferred until Minecraft window close");
         LOGGER.info("RTX Remix renderer shut down");
+        cleanup.finish();
     }
 
     /**
@@ -1703,11 +1701,13 @@ public class RemixRenderer {
     }
 
     private void shutdownAssetStores() {
-        RemixInstanceStore.shutdown();
-        RemixMeshStore.shutdown();
-        RemixLightStore.shutdown();
-        RemixMaterialStore.shutdown();
-        RemixTextureStore.shutdown();
+        CleanupSteps cleanup = new CleanupSteps();
+        cleanup.run(RemixInstanceStore::shutdown);
+        cleanup.run(RemixMeshStore::shutdown);
+        cleanup.run(RemixLightStore::shutdown);
+        cleanup.run(RemixMaterialStore::shutdown);
+        cleanup.run(RemixTextureStore::shutdown);
+        cleanup.finish();
     }
 
     private void shutdownParticleExecutor() {

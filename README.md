@@ -111,6 +111,22 @@ The step-by-step version, with launcher advice and troubleshooting, is in
 - An internet connection while the installer runs.
 - 16 GB of system memory is recommended.
 
+## Optional mod compatibility
+
+This integration supports Sodium 0.9.2, ImmediatelyFast 1.17.1 for 26.3, and
+ScalableLux 0.3.0-alpha.0.6 together. None is bundled or required. Other Sodium
+and ImmediatelyFast API versions are rejected before their capture hooks load.
+Sodium keeps its section scheduling and budgets; Remix replaces the raster
+terrain work it renders itself. ImmediatelyFast keeps raster batching and atlas
+optimizations while Remix captures source map pixels and glyph geometry.
+See [ImmediatelyFast compatibility](docs/IMMEDIATELYFAST.md).
+
+Vulkan uses a separate child window by default to avoid OpenGL/native-window
+ownership conflicts. On systems that work with the original presentation path,
+`-Drtxremix.presentation=parent` selects it at startup; use `child` for the
+separate window. Both modes retain the final-frame copy and require a restart
+when switching. This option does not change ray tracing or image quality.
+
 Java 25, Fabric, and the RTX Remix runtime are installed for you.
 
 Building and running from source has its own

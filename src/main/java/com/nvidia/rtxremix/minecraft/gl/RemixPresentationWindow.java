@@ -4,6 +4,7 @@
  */
 package com.nvidia.rtxremix.minecraft.gl;
 
+import com.nvidia.rtxremix.minecraft.util.CleanupSteps;
 import java.util.concurrent.atomic.AtomicReference;
 import org.lwjgl.sdl.SDLInit;
 import org.lwjgl.sdl.SDL_MainThreadCallback;
@@ -32,6 +33,9 @@ public final class RemixPresentationWindow implements AutoCloseable {
     private volatile long window;
     private boolean registered;
     private boolean parentHooked;
+    private boolean forwardingInput;
+    private boolean childCallbackFreed;
+    private boolean parentCallbackFreed;
     private volatile boolean shown;
     private volatile boolean stopped;
     private volatile boolean closed;
@@ -48,8 +52,10 @@ public final class RemixPresentationWindow implements AutoCloseable {
             onWindowThread(this::create);
         } catch (RuntimeException | Error failure) {
             if (!closed && !registered && window == 0 && !parentHooked) {
-                childProcedure.free();
-                parentProcedure.free();
+                if (!childCallbackFreed) childProcedure.free();
+                if (!parentCallbackFreed) parentProcedure.free();
+                childCallbackFreed = true;
+                parentCallbackFreed = true;
                 closed = true;
             }
             throw failure;
@@ -83,8 +89,12 @@ public final class RemixPresentationWindow implements AutoCloseable {
                 throw failure("SetWindowLongPtr");
             }
             parentHooked = true;
-        } catch (RuntimeException e) {
-            close();
+        } catch (RuntimeException | Error e) {
+            try {
+                close();
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (cleanupFailure != e) e.addSuppressed(cleanupFailure);
+            }
             throw e;
         }
     }
@@ -121,7 +131,7 @@ public final class RemixPresentationWindow implements AutoCloseable {
 
     /** Stops output and input forwarding, retaining the SDK window until teardown. */
     public void stop() {
-        if (!stopped) {
+        if (!closed) {
             if (parent == 0 && window == 0) {
                 stopOnWindowThread();
             } else {
@@ -148,6 +158,9 @@ public final class RemixPresentationWindow implements AutoCloseable {
     }
 
     private long processChildMessage(long hwnd, int message, long wParam, long lParam) {
+        // The native runtime has already had the mirrored input. Its fallback
+        // must neither bubble to SDL again nor enter a second system-menu loop.
+        if (forwardingInput && (isInputMessage(message) || message == WM_SYSCOMMAND)) return 0;
         if (message == WM_NCHITTEST) {
             // SDL retains input and focus. Its native messages are mirrored below
             // so Remix's menu receives the same input as when it owned this HWND.
@@ -160,11 +173,23 @@ public final class RemixPresentationWindow implements AutoCloseable {
     }
 
     private long processParentMessage(long hwnd, int message, long wParam, long lParam) {
+        // Also covers a runtime subclass calling DefWindowProc directly rather
+        // than chaining through our child procedure.
+        if (forwardingInput && (isInputMessage(message) || message == WM_SYSCOMMAND)) return 0;
         if (!stopped && window != 0) {
             if (message == WM_SIZE && wParam != SIZE_MINIMIZED) {
                 resize((int) (lParam & 0xffff), (int) ((lParam >>> 16) & 0xffff));
             } else if (isInputMessage(message)) {
-                SendMessage(null, window, message, wParam, lParam);
+                forwardingInput = true;
+                try {
+                    SendMessage(null, window, message, wParam, lParam);
+                } finally {
+                    forwardingInput = false;
+                }
+                // Alt+letter belongs to the runtime, not a window-menu mnemonic.
+                // SDL still receives the key transitions. Alt+Space and Alt+F4
+                // retain the parent's native system-command handling.
+                if (message == WM_SYSCHAR && wParam != VK_SPACE || message == WM_SYSDEADCHAR) return 0;
             }
         }
         long result = nCallWindowProc(previousParentProcedure, hwnd, message, wParam, lParam);
@@ -195,8 +220,7 @@ public final class RemixPresentationWindow implements AutoCloseable {
                 || message == WM_MOUSELEAVE
                 || message == WM_SETFOCUS
                 || message == WM_KILLFOCUS
-                || message == WM_ACTIVATEAPP
-                || message == WM_SETCURSOR;
+                || message == WM_ACTIVATEAPP;
     }
 
     private static IllegalStateException failure(String operation) {
@@ -219,25 +243,35 @@ public final class RemixPresentationWindow implements AutoCloseable {
 
     private void closeOnWindowThread() {
         if (closed) return;
-        stopOnWindowThread();
-        if (parentHooked && parent != 0 && GetWindowLongPtr(parent, GWL_WNDPROC) != 0) {
-            throw new IllegalStateException("Presentation callback is still in a live window subclass chain");
-        }
-        if (window != 0) {
-            if (!DestroyWindow(null, window)) {
-                throw failure("DestroyWindow");
+        CleanupSteps cleanup = new CleanupSteps();
+        cleanup.run(this::stopOnWindowThread);
+        cleanup.run(() -> {
+            if (window != 0) {
+                if (!DestroyWindow(null, window)) throw failure("DestroyWindow");
+                window = 0;
             }
-            window = 0;
-        }
-        if (registered) {
-            if (!UnregisterClass(null, className, module)) {
-                throw failure("UnregisterClass");
+        });
+        cleanup.run(() -> {
+            if (window == 0 && registered) {
+                if (!UnregisterClass(null, className, module)) throw failure("UnregisterClass");
+                registered = false;
             }
-            registered = false;
-        }
-        childProcedure.free();
-        parentProcedure.free();
-        closed = true;
+            if (!registered && window == 0 && !childCallbackFreed) {
+                childProcedure.free();
+                childCallbackFreed = true;
+            }
+        });
+        cleanup.run(() -> {
+            if (parentHooked && parent != 0 && GetWindowLongPtr(parent, GWL_WNDPROC) != 0) {
+                throw new IllegalStateException("Presentation callback is still in a live window subclass chain");
+            }
+            if (!parentCallbackFreed) {
+                parentProcedure.free();
+                parentCallbackFreed = true;
+            }
+        });
+        closed = childCallbackFreed && parentCallbackFreed;
+        cleanup.finish();
     }
 
     /** Window callbacks and lifecycle share SDL's thread, including with event-thread mods. */

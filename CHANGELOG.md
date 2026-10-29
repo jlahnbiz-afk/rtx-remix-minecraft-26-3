@@ -11,6 +11,29 @@ also part of every mod file name.
 
 ## Unreleased
 
+### Added
+
+- Optional Sodium 0.9.2 terrain capture using its existing section jobs,
+  cancellation and rebuild budgets, without duplicate raster tessellation while
+  Remix owns terrain. Changed animations remain available to reflected rays.
+- ImmediatelyFast 1.17.1 source capture for resized font pages, atlased maps and
+  experimentally buffered signs. Raster batching and atlas optimizations remain
+  active. Equal sign text with different layouts retains separate preparations.
+- Windows child-window Vulkan presentation to avoid native-window ownership
+  conflicts. `-Drtxremix.presentation=parent` selects the original window instead;
+  changing presentation mode requires a restart. Child mode is this build's default.
+
+### Fixed
+
+- Mirrored window input no longer recurses through parent/default procedures or
+  enters duplicate system-key handling. Cursor ownership stays with SDL.
+- Presentation cleanup attempts independent releases after a failure and retains
+  callbacks while Windows can still invoke them.
+- Cached signs share text preparation and emission with ordinary Remix text,
+  refresh width/font layout correctly, and retain per-submit light and pose.
+- Unsupported Sodium and ImmediatelyFast versions are rejected before optional
+  hooks can partially replace rendering. Neither mod is required or bundled.
+
 ## 0.3.0 - 2026-10-28
 
 Water caustics, skies that change from day to day, a much lighter lens, and
