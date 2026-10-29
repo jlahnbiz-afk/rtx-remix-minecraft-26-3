@@ -87,9 +87,69 @@ class SignTextGeometryCacheTest {
         assertNotSame(first, outlined);
         assertEquals(Font.DisplayMode.NORMAL, outlined.glyphs()[0].mode());
         state.isTextFilteringEnabled = true;
-        assertNotSame(outlined, cache.get(font, state, text));
+        var filtered = cache.get(font, state, text);
+        assertNotSame(outlined, filtered);
         state.maxTextLineWidth++;
-        assertNotSame(outlined, cache.get(font, state, text));
+        assertNotSame(filtered, cache.get(font, state, text));
+    }
+
+    @Test
+    void alternatingEqualTextLayoutsRemainCached() {
+        FakeFont font = new FakeFont();
+        SignText text = text(Component.literal("shared"), DyeColor.RED, true);
+        SignRenderState a = state(), b = state();
+        b.drawOutline = true;
+        b.maxTextLineWidth = 60;
+        b.textLineHeight = 9;
+        b.isTextFilteringEnabled = true;
+        SignTextGeometryCache cache = new SignTextGeometryCache();
+        var first = cache.get(font, a, text);
+        var second = cache.get(font, b, text(Component.literal("shared"), DyeColor.RED, true));
+        int preparations = font.preparations;
+        for (int frame = 0; frame < 100; frame++) {
+            assertSame(first, cache.get(font, a, text));
+            assertSame(second, cache.get(font, b, text));
+        }
+        assertEquals(preparations, font.preparations);
+    }
+
+    @Test
+    void changedWidthAndFontDoNotReuseSignTextsFormattedLineCache() {
+        FakeFont font = new FakeFont();
+        font.measureText = true;
+        SignText text = text(Component.literal("abcdefghijkl"), DyeColor.BLACK, false);
+        text.getRenderMessages(false, component -> FormattedCharSequence.EMPTY);
+        SignRenderState state = state();
+        state.maxTextLineWidth = 5;
+        SignTextGeometryCache cache = new SignTextGeometryCache();
+        var narrow = cache.get(font, state, text);
+        assertEquals(-2.0f, narrow.glyphs()[0].renderable().left());
+        state.maxTextLineWidth = 9;
+        var wide = cache.get(font, state, text);
+        assertEquals(-4.0f, wide.glyphs()[0].renderable().left());
+        FakeFont replacement = new FakeFont();
+        replacement.measureText = true;
+        replacement.scale = 2;
+        assertEquals(-9.0f, cache.get(replacement, state, text).glyphs()[0].renderable().left());
+        state.maxTextLineWidth = 5;
+        assertSame(narrow, cache.get(font, state, text));
+    }
+
+    @Test
+    void fontPreparationCanReenterWithoutChangingTheOuterCacheKey() {
+        SignTextGeometryCache cache = new SignTextGeometryCache();
+        FakeFont outer = new FakeFont(), inner = new FakeFont();
+        SignText a = text(Component.literal("outer"), DyeColor.BLACK, false);
+        SignText b = text(Component.literal("inner"), DyeColor.RED, true);
+        SignRenderState state = state();
+        outer.onPrepare = () -> cache.get(inner, state, b);
+        var first = cache.get(outer, state, a);
+        int preparations = outer.preparations;
+        assertSame(first, cache.get(outer, state, a));
+        assertEquals(preparations, outer.preparations);
+        int innerPreparations = inner.preparations;
+        cache.get(inner, state, b);
+        assertEquals(innerPreparations, inner.preparations);
     }
 
     @Test
@@ -175,18 +235,35 @@ class SignTextGeometryCacheTest {
 
     private static final class FakeFont extends Font {
         int preparations;
+        boolean measureText;
+        int scale = 1;
+        Runnable onPrepare;
         FakeFont() {
             super(new Provider() {
                 @Override public GlyphSource glyphs(FontDescription description) { return null; }
                 @Override public EffectGlyph effect() { return null; }
             });
         }
-        @Override public int width(FormattedCharSequence message) { return 5; }
+        @Override public int width(FormattedCharSequence message) {
+            if (!measureText) return 5;
+            int[] count = {0};
+            message.accept((index, style, codePoint) -> { count[0]++; return true; });
+            return count[0] * scale;
+        }
         @Override public List<FormattedCharSequence> split(FormattedText text, int width) {
+            if (measureText) {
+                String content = ((Component) text).getString();
+                return List.of(Component.literal(content.substring(0, Math.min(width, content.length()))).getVisualOrderText());
+            }
             return List.of(((Component) text).getVisualOrderText());
         }
         @Override public PreparedText prepareText(FormattedCharSequence text, float x, float y, int color,
                 boolean shadow, boolean includeEmpty, int background) {
+            if (onPrepare != null) {
+                Runnable callback = onPrepare;
+                onPrepare = null;
+                callback.run();
+            }
             return prepared(new FakeGlyph(x, y, color, false));
         }
         @Override public PreparedText prepare8xTextOutline(FormattedCharSequence text, float x, float y, int color) {

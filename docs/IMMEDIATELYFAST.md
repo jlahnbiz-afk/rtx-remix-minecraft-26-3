@@ -3,6 +3,7 @@
 The optional adapter targets ImmediatelyFast 1.17.1+26.3. It uses that artifact
 as a compile-only API dependency; the renderer does not bundle its JAR or classes.
 The compatibility Mixin configuration applies only when ImmediatelyFast is loaded.
+Loader metadata rejects other API versions before applying the adapter.
 
 ## Font pages
 
@@ -32,8 +33,12 @@ instead of capturing a GPU-only sign atlas. Preparation follows vanilla integer
 centering, line positions, colors, filtering and outline state, while replay
 uses the current pose and light. Existing Remix consumers preserve text depth.
 
-Equal contents share entries. Font, layout or glyph-generation changes invalidate
-them. Obfuscated text remains dynamic. Entries expire after five seconds without
+Equal contents with the same layout share entries; different font, filtering,
+width, line height and outline layouts coexist. Preparation and emission use the
+same glyph path as ordinary Remix text. Layout starts from the original messages
+because Minecraft's formatted-line cache does not include width or font.
+Glyph-generation changes invalidate all entries. Obfuscated text remains dynamic.
+Cache-hit lookup reuses a render-thread probe. Entries expire after five seconds without
 access and retained glyph weight is bounded at 65,536. Resource/world teardown
 releases the cache.
 

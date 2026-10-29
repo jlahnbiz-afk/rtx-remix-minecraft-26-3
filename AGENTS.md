@@ -339,7 +339,10 @@ closure unregisters only that page incarnation. ImmediatelyFast map capture
 uses the original image-backed map and restores the raster atlas state after
 submission. Its experimental sign buffering uses a bounded source-glyph cache
 for Remix, preserving text depth while the raster atlas stays active. Font
-generation and resource/world teardown invalidate prepared glyphs.
+generation and resource/world teardown invalidate prepared glyphs. Text and
+layout jointly identify cache entries; cache-hit lookup reuses a probe whose
+miss key is snapshotted before reentrant font preparation. `TextGlyphCapture`
+owns preparation and emission for both cached and ordinary text.
 `BlockTextureManager` keeps only mostly translucent
 sprites translucent; doors, flowers and the like become cutout.
 
