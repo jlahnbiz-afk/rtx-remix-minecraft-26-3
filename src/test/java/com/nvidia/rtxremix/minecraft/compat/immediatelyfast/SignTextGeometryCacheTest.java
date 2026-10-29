@@ -136,6 +136,23 @@ class SignTextGeometryCacheTest {
     }
 
     @Test
+    void fontPreparationCanReenterWithoutChangingTheOuterCacheKey() {
+        SignTextGeometryCache cache = new SignTextGeometryCache();
+        FakeFont outer = new FakeFont(), inner = new FakeFont();
+        SignText a = text(Component.literal("outer"), DyeColor.BLACK, false);
+        SignText b = text(Component.literal("inner"), DyeColor.RED, true);
+        SignRenderState state = state();
+        outer.onPrepare = () -> cache.get(inner, state, b);
+        var first = cache.get(outer, state, a);
+        int preparations = outer.preparations;
+        assertSame(first, cache.get(outer, state, a));
+        assertEquals(preparations, outer.preparations);
+        int innerPreparations = inner.preparations;
+        cache.get(inner, state, b);
+        assertEquals(innerPreparations, inner.preparations);
+    }
+
+    @Test
     void releasedFontPagesInvalidatePreparedGlyphs() {
         FakeFont font = new FakeFont();
         SignText text = text(Component.literal("font reload"), DyeColor.BLACK, false);
@@ -220,6 +237,7 @@ class SignTextGeometryCacheTest {
         int preparations;
         boolean measureText;
         int scale = 1;
+        Runnable onPrepare;
         FakeFont() {
             super(new Provider() {
                 @Override public GlyphSource glyphs(FontDescription description) { return null; }
@@ -241,6 +259,11 @@ class SignTextGeometryCacheTest {
         }
         @Override public PreparedText prepareText(FormattedCharSequence text, float x, float y, int color,
                 boolean shadow, boolean includeEmpty, int background) {
+            if (onPrepare != null) {
+                Runnable callback = onPrepare;
+                onPrepare = null;
+                callback.run();
+            }
             return prepared(new FakeGlyph(x, y, color, false));
         }
         @Override public PreparedText prepare8xTextOutline(FormattedCharSequence text, float x, float y, int color) {

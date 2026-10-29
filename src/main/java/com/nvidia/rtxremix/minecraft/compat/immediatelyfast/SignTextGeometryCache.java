@@ -105,6 +105,8 @@ public final class SignTextGeometryCache {
         try {
             Entry cached = entries.getIfPresent(lookup);
             if (cached != null) return cached;
+            // Font providers may reenter capture while preparing missing glyphs.
+            Key key = lookup.snapshot();
             Layout layout = new Layout(font, state.isTextFilteringEnabled, state.maxTextLineWidth,
                     state.textLineHeight, outline);
             Entry prepared = prepare(layout, text);
@@ -112,7 +114,7 @@ public final class SignTextGeometryCache {
                 entries.invalidateAll();
                 generation = DynamicTextureCache.glyphGeneration();
             }
-            if (prepared.cacheable) entries.put(lookup.snapshot(), prepared);
+            if (prepared.cacheable) entries.put(key, prepared);
             return prepared;
         } finally {
             lookup.text = null;
