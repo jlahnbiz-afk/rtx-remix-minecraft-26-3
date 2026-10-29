@@ -81,6 +81,10 @@ Sodium 0.9.2 for 26.3 is compile-only and never bundled. Its conditional
 `rtx-remix-renderer.sodium.mixins.json` adapts section jobs under
 `terrain/sodium/`; without Sodium the vanilla capture path remains active.
 
+ImmediatelyFast 1.17.1+26.3 is compile-only and never bundled. Its conditional
+mixins and helpers are under `compat/immediatelyfast/`; see
+[ImmediatelyFast Compatibility](docs/IMMEDIATELYFAST.md).
+
 Do not run Gradle while a client from the same checkout is up: staging can fail
 on locked DLLs or replace its live configuration. Stop the client or use another
 worktree. Build guards should prevent a silently wrong artifact, as the
@@ -352,7 +356,13 @@ each animation's state after `TextureAtlas.cycleAnimationFrames` and
 phase, and sends them in one batched `UpdateTextureFromMemory` call. Glyph pages
 are mirrored on upload (`CommandEncoderGlyphMirrorMixin`,
 `BitmapGlyphStagingMixin`), because vanilla assembles them on the GPU and never
-keeps them on the CPU. `BlockTextureManager` keeps only mostly translucent
+keeps them on the CPU. Mirrors use the actual GPU page dimensions, and texture
+closure unregisters only that page incarnation. ImmediatelyFast map capture
+uses the original image-backed map and restores the raster atlas state after
+submission. Its experimental sign buffering uses a bounded source-glyph cache
+for Remix, preserving text depth while the raster atlas stays active. Font
+generation and resource/world teardown invalidate prepared glyphs.
+`BlockTextureManager` keeps only mostly translucent
 sprites translucent; doors, flowers and the like become cutout.
 
 **Water and weather.** `WaterNormals` holds the water normal map, and raindrop
