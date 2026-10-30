@@ -305,6 +305,8 @@ public abstract class WorldRendererMixin
             Operation<Void> original) {
         if (!RtxRemixMod.isRemixWorldRendering()) {
             original.call(particles, collector, camera);
+        } else {
+            RtxRemixMod.renderer.captureParticleGeometry(particles, camera.pos);
         }
     }
 
