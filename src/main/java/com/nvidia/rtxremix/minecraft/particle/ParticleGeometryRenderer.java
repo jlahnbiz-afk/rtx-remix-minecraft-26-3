@@ -31,7 +31,7 @@ public final class ParticleGeometryRenderer implements AutoCloseable {
     private final IdentityHashMap<SingleQuadParticle.Layer, Layer> layers = new IdentityHashMap<>();
     private final float[] transform = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
     private final InstanceInfoBlendEXT cutout = InstanceInfoBlendEXT.textureTimesVertexColorAlphaTest(25);
-    private final InstanceInfoBlendEXT blended = InstanceInfoBlendEXT.textureTimesVertexColorAlphaBlend(0);
+    private final InstanceInfoBlendEXT blended = InstanceInfoBlendEXT.textureTimesVertexColorAlphaBlend(25);
     private long cutoutPointer, blendedPointer;
     private boolean ready;
     private int capturedQuads, lastQuads, lastDraws;

@@ -21,7 +21,8 @@ custom particles outside the main camera frustum are extracted while Remix is
 rendering, since reflected rays can see them. Raster mode retains the original
 frustum check and submission.
 
-Layers retain their atlas, blend mode and face culling. Batches are split by
+Layers retain their atlas, blend mode, the particle shader's 10% alpha cutoff,
+and face culling. Batches are split by
 layer and intrinsic emission, then paged at 8192 quads. Reusable buffers grow
 geometrically; uploads contain only active vertices. Materials borrow existing
 atlas textures. Meshes and buffers are released on world teardown and resource
