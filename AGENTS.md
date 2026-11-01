@@ -353,7 +353,12 @@ phase, and sends them in one batched `UpdateTextureFromMemory` call. Glyph pages
 are mirrored on upload (`CommandEncoderGlyphMirrorMixin`,
 `BitmapGlyphStagingMixin`), because vanilla assembles them on the GPU and never
 keeps them on the CPU. `BlockTextureManager` keeps only mostly translucent
-sprites translucent; doors, flowers and the like become cutout.
+sprites translucent; doors, flowers and the like become cutout. Only terrain
+whose sprite has texels in the emissive atlas takes an atlas material that
+samples it (`_emissive` buckets, `getAtlasMaterialWithoutEmission` for the
+rest): a face seen edge on samples the atlas's coarsest mip, where the glow of
+every lamp, torch and lava texel is averaged, and drew yellow lines along the
+planes through the camera at night.
 
 **Water and weather.** `WaterNormals` holds the water normal map, and raindrop
 rings from `RainRipples` are written into it as texture content each frame by

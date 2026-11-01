@@ -26,6 +26,10 @@ also part of every mod file name.
 
 ### Fixed
 
+- At night, thin yellow lines no longer glow on block sides and plants that
+  line up with the camera, which showed most from high up as lines running
+  straight down along the world's X and Z axes; a surface seen edge on took
+  the averaged glow of every lamp, torch and lava texture.
 - In rain the sky shows as grey overcast brighter than the ground instead of
   as dark as a thunderstorm's; the rain fog is thinner. A thunderstorm keeps
   its darkness. An existing install keeps its own `weather/rain.conf`; delete it

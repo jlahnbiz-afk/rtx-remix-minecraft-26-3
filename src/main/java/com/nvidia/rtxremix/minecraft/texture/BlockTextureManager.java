@@ -104,6 +104,13 @@ public class BlockTextureManager {
     private final Map<Identifier, int[]> spriteSamples = new HashMap<>();
     private final Map<Long, RemixMaterial> materials = new HashMap<>();
     private final RemixMaterial[] atlasMaterials = new RemixMaterial[LAYER_COUNT];
+    /**
+     * The atlas materials less the emissive atlas, for terrain whose sprite emits nothing. A
+     * face seen edge on samples the atlas at its coarsest mip, where every lamp, torch and
+     * lava texel is averaged in, and glowed yellow along lines through the camera at night.
+     */
+    private final RemixMaterial[] atlasMaterialsWithoutEmission = new RemixMaterial[LAYER_COUNT];
+    /** Without emission too: an emitting sprite takes {@link #atlasMaterials} and loses its SSS. */
     private final RemixMaterial[] atlasMaterialsSSS = new RemixMaterial[LAYER_COUNT];
     private final List<RemixTexture> managedTextures = new ArrayList<>();
     private final List<RemixMaterial> managedMaterials = new ArrayList<>();
@@ -179,6 +186,8 @@ public class BlockTextureManager {
         private final BitSet transparentPixels;
         RemixTexture albedo, normal, roughness, metallic, height, emissive, sss, sssAlbedo;
         public boolean hasPBR, hasSSS;
+        /** Whether the sprite has texels in the emissive atlas. */
+        public boolean hasEmission;
         float[] lightColor;
 
         SpriteEntry(int i, Identifier id, TextureAtlasSprite s) {
@@ -535,10 +544,12 @@ public class BlockTextureManager {
                 if (needsEmissive) {
                     LabPBRConverter.blitEmissive(emissiveAtlas, atlasW, albedoRGBA, sI,
                             se.pixX, se.pixY, se.pixW, se.pixH, 0f, BuiltinEmission.gain(se.id));
+                    se.hasEmission = true;
                     hasAnyEmissive = true;
                 } else if (BuiltinEmission.mask(se.id) != null) {
                     LabPBRConverter.blitEmissiveMask(emissiveAtlas, atlasW, albedoRGBA,
                             se.pixX, se.pixY, se.pixW, se.pixH, BuiltinEmission.mask(se.id));
+                    se.hasEmission = true;
                     hasAnyEmissive = true;
                 }
             } finally {
@@ -585,13 +596,17 @@ public class BlockTextureManager {
         for (int lt = 0; lt < LAYER_COUNT; lt++) {
             if (lt == L_TRANS) {
                 atlasMaterials[lt] = createAtlasTransMaterial(emissiveTex, normalTex);
+                atlasMaterialsWithoutEmission[lt] = createAtlasTransMaterial(null, normalTex);
             } else if (lt == L_GLASS) {
                 atlasMaterials[lt] = createAtlasGlassMaterial(emissiveTex, normalTex);
+                atlasMaterialsWithoutEmission[lt] = createAtlasGlassMaterial(null, normalTex);
             } else {
                 atlasMaterials[lt] = createAtlasOpaqueMaterial(lt, normalTex, heightTex,
                         roughnessTex, metallicTex, emissiveTex, null, null);
+                atlasMaterialsWithoutEmission[lt] = createAtlasOpaqueMaterial(lt, normalTex, heightTex,
+                        roughnessTex, metallicTex, null, null, null);
                 atlasMaterialsSSS[lt] = hasAnySSS ? createAtlasOpaqueMaterial(lt, normalTex, heightTex,
-                        roughnessTex, metallicTex, emissiveTex,
+                        roughnessTex, metallicTex, null,
                         sssTex, sssAlbedoTex) : null;
             }
         }
@@ -1053,7 +1068,7 @@ public class BlockTextureManager {
     private void rebuildAtlasSssMaterial(int layerType) {
         destroyManagedMaterial(atlasMaterialsSSS[layerType]);
         atlasMaterialsSSS[layerType] = createAtlasOpaqueMaterial(layerType, atlasNormalTex,
-                atlasHeightTex, atlasRoughnessTex, atlasMetallicTex, atlasEmissive, atlasSssTex,
+                atlasHeightTex, atlasRoughnessTex, atlasMetallicTex, null, atlasSssTex,
                 atlasSssAlbedoTex);
     }
 
@@ -1082,6 +1097,11 @@ public class BlockTextureManager {
     /** Returns the atlas-based material (no SSS) for the given layer type. */
     public RemixMaterial getAtlasMaterial(int layerType) {
         return atlasMaterials[layerType];
+    }
+
+    /** Returns the atlas-based material without the emissive atlas for the given layer type. */
+    public RemixMaterial getAtlasMaterialWithoutEmission(int layerType) {
+        return atlasMaterialsWithoutEmission[layerType];
     }
 
     /** Returns the atlas-based SSS material for the given layer type, or null if none. */
@@ -1442,6 +1462,7 @@ public class BlockTextureManager {
         managedTextures.clear();
         materials.clear(); sprites.clear(); spriteById.clear(); spriteLightColors.clear(); spriteSamples.clear();
         Arrays.fill(atlasMaterials, null);
+        Arrays.fill(atlasMaterialsWithoutEmission, null);
         Arrays.fill(atlasMaterialsSSS, null);
         atlasNormalTex = null;
         atlasHeightTex = null;
