@@ -30,9 +30,6 @@ import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.opengl.GL;
-import org.lwjgl.opengl.GL11C;
-import org.lwjgl.opengl.NVXGPUMemoryInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -85,12 +82,17 @@ public final class LodTerrain {
     /** Frames between clips while columns keep changing, so sections near loading chunks finish. */
     private static final int CLIP_INTERVAL_FRAMES = 4;
     /**
-     * Mesh data the LOD terrain may hold, a sixteenth of the video memory and at most 2 GiB.
-     * Remix's buffers and acceleration structures take about twice the mesh data: the 2 GiB a
-     * 32 GB card affords held 4.3 GB of it there, more than an 8 GB card has to spare.
+     * The LOD Memory setting, the mesh data the LOD terrain may hold, in MiB. Remix's buffers
+     * and acceleration structures take about twice the mesh data. A budget worked out from
+     * the card's memory, a sixteenth of it, held an 8 GB card to 512 MiB and drew Distant
+     * Horizons' higher qualities only around the player, where 2 GiB had run on it.
      */
-    private static final long MAX_INSTALLED_BYTES = 2L << 30;
-    private static final long MIN_INSTALLED_BYTES = 256L << 20;
+    public static final int DEFAULT_MEMORY_MIB = 2048;
+    public static final int MIN_MEMORY_MIB = 256;
+    public static final int MAX_MEMORY_MIB = 4096;
+    public static final int MEMORY_STEP_MIB = 256;
+    /** The slider's last step, past {@link #MAX_MEMORY_MIB}: no budget at all. */
+    public static final int UNLIMITED_MEMORY_MIB = MAX_MEMORY_MIB + MEMORY_STEP_MIB;
     private static final InstanceInfoBlendEXT BLEND = InstanceInfoBlendEXT.textureTimesVertexColor();
     /** Frames a hidden section may linger while the sections replacing it are built. */
     private static final int MAX_LINGER_FRAMES = 600;
@@ -131,7 +133,8 @@ public final class LodTerrain {
     private int epoch;
     private int buildsInFlight;
     private long installedBytes;
-    private long maxInstalledBytes = MAX_INSTALLED_BYTES;
+    private int memoryMib = DEFAULT_MEMORY_MIB;
+    private long maxInstalledBytes = (long) DEFAULT_MEMORY_MIB << 20;
     private boolean budgetWarned;
     /**
      * Blocks from the camera past which no section is drawn, shrunk from infinity when the mesh
@@ -163,6 +166,30 @@ public final class LodTerrain {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    /** The LOD Memory setting, in MiB. */
+    public int getMemoryMib() {
+        return memoryMib;
+    }
+
+    /**
+     * Render thread. A smaller budget gives up the farthest sections at once; a larger one
+     * builds again the sections it had given up.
+     */
+    public void setMemoryMib(int mib) {
+        memoryMib = mib;
+        long budget = mib >= UNLIMITED_MEMORY_MIB ? Long.MAX_VALUE : (long) mib << 20;
+        boolean grew = budget > maxInstalledBytes;
+        maxInstalledBytes = budget;
+        budgetWarned = false;
+        if (!capturing) return;
+        if (installedBytes > budget) {
+            makeRoom(0.0, 0);
+        } else if (grew) {
+            budgetRadius = Double.POSITIVE_INFINITY;
+            revisitStarved();
+        }
     }
 
     /** Radius of the LOD terrain being drawn, in blocks, or 0 when there is none. */
@@ -229,7 +256,6 @@ public final class LodTerrain {
     private void setCapturing(boolean on) {
         capturing = on;
         LodSection.capturing = on;
-        if (on) maxInstalledBytes = installBudget();
         if (!on) {
             epoch++;
             dropSwaps();
@@ -250,13 +276,6 @@ public final class LodTerrain {
         // Starting asks the mod to rebuild every section so the copies arrive;
         // stopping hands it back its own shading and drawing.
         DistantHorizonsCompat.setCapturing(on);
-    }
-
-    /** Render thread. The mesh budget for this card's video memory, or the most without NVIDIA's query. */
-    private static long installBudget() {
-        if (!GL.getCapabilities().GL_NVX_gpu_memory_info) return MAX_INSTALLED_BYTES;
-        long videoMemory = (long) GL11C.glGetInteger(NVXGPUMemoryInfo.GL_GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX) << 10;
-        return Math.clamp(videoMemory / 16, MIN_INSTALLED_BYTES, MAX_INSTALLED_BYTES);
     }
 
     /** Whether events are left for the next frame. */

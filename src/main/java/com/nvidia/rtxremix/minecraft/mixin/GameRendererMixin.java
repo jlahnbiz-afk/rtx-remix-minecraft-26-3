@@ -56,6 +56,15 @@ public abstract class GameRendererMixin {
         renderer.captureFirstPersonModel(handsRenderer, partialTicks, poseStack, playerState, handsState, cameraState);
     }
 
+    /**
+     * Right after the level render, including draws other mods inject at its return, and
+     * before the first-person model.
+     */
+    @Inject(method = "render3dHud", at = @At("HEAD"))
+    private void rtxremix$captureModOverlay(CallbackInfo ci) {
+        RtxRemixMod.captureModOverlay();
+    }
+
     @Inject(
             method = "render3dHud",
             at = @At(
