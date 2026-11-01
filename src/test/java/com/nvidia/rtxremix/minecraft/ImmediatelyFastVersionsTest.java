@@ -7,25 +7,29 @@ package com.nvidia.rtxremix.minecraft;
 import com.google.gson.JsonParser;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import net.fabricmc.loader.api.Version;
-import net.fabricmc.loader.api.metadata.version.VersionPredicate;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ImmediatelyFastVersionsTest {
     @Test
-    void metadataRejectsUntestedInternalApisWithoutRequiringOptionalMods() throws Exception {
+    void metadataAllowsOptionalVersionsWhileThePluginOwnsAdapterSelection() throws Exception {
         var metadata = JsonParser.parseString(Files.readString(Path.of("src/main/resources/fabric.mod.json"))).getAsJsonObject();
-        for (String mod : new String[] {"immediatelyfast"}) {
-            assertFalse(metadata.getAsJsonObject("depends").has(mod));
-            String supported = "1.17.1";
-            for (String version : new String[] {supported, supported + "+26.3", supported + "-alpha", "99.0.0", "0.0.1"}) {
-                boolean blocked = false;
-                for (var predicate : metadata.getAsJsonObject("breaks").getAsJsonArray(mod)) {
-                    blocked |= VersionPredicate.parse(predicate.getAsString()).test(Version.parse(version));
-                }
-                assertEquals(!version.equals(supported) && !version.equals(supported + "+26.3"), blocked, mod + " " + version);
-            }
-        }
+        assertFalse(metadata.getAsJsonObject("depends").has("immediatelyfast"));
+        assertFalse(metadata.has("breaks") && metadata.getAsJsonObject("breaks").has("immediatelyfast"));
+        var optional = JsonParser.parseString(Files.readString(Path.of(
+                "src/main/resources/rtx-remix-renderer.immediatelyfast.mixins.json"))).getAsJsonObject();
+        assertEquals("com.nvidia.rtxremix.minecraft.compat.immediatelyfast.ImmediatelyFastMixinPlugin",
+                optional.get("plugin").getAsString());
+        assertTrue(optional.get("required").getAsBoolean());
+    }
+
+    @Test
+    void genericGlyphCaptureRemainsOutsideTheImmediatelyFastVersionGate() throws Exception {
+        var shared = JsonParser.parseString(Files.readString(Path.of(
+                "src/main/resources/rtx-remix-renderer.mixins.json"))).getAsJsonObject();
+        assertTrue(shared.getAsJsonArray("client").asList().stream()
+                .anyMatch(mixin -> mixin.getAsString().equals("GlyphAtlasTextureMixin")));
+        assertTrue(shared.getAsJsonArray("client").asList().stream()
+                .anyMatch(mixin -> mixin.getAsString().equals("CommandEncoderGlyphMirrorMixin")));
     }
 }

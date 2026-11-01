@@ -13,7 +13,9 @@ also part of every mod file name.
 
 ### Added
 
-- Adapt ImmediatelyFast 1.17.1 font/map/sign source capture, share text preparation, retain layout-aware bounded sign caches and reject unsupported API versions early.
+- With ImmediatelyFast 1.17.1 installed, maps and cached sign text appear in the
+  path-traced image while its optimizations stay enabled. Other versions warn
+  and skip the map/sign adapter; their rendering remains untested.
 
 ### Fixed
 

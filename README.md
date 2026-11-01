@@ -119,11 +119,10 @@ Launcher, signed in to a Microsoft account that owns Minecraft: Java Edition.
 
 ## ImmediatelyFast compatibility
 
-ImmediatelyFast 1.17.1 for Minecraft 26.3 is optional and compile-only, never
-bundled. Other API versions are rejected before adapter application. Source font,
-map and sign capture preserves its raster batching, atlas and framebuffer
-optimizations. Cached signs share glyph preparation/emission with ordinary
-Remix text, retain distinct layouts and keep pose/light dynamic. See
+With ImmediatelyFast 1.17.1 installed, maps and cached sign text remain visible
+in the path-traced image while its optimizations stay enabled. Other versions
+log a warning and skip the map/sign adapter; their rendering is untested.
+ImmediatelyFast is optional and not included. See
 [ImmediatelyFast compatibility](docs/IMMEDIATELYFAST.md).
 
 ## Crash Reports And Privacy
