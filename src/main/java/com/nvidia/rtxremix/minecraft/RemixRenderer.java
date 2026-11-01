@@ -177,6 +177,7 @@ public class RemixRenderer {
     private RemixParticleRenderer particleRenderer;
     private RemixWeatherRenderer weatherRenderer;
     private final LensEffects lensEffects = new LensEffects();
+    private float farPlane = 1000.0f;
     private final RainSurfaces rainSurfaces = new RainSurfaces();
     private final Puddles puddles = new Puddles();
     private final ExecutorService particleExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -1334,6 +1335,7 @@ public class RemixRenderer {
                         aspect);
             }
             float farPlane = Math.max(1000.0f, lodRadius * 1.25f);
+            this.farPlane = farPlane;
             LightManager.SkyLightState sky = lightManager != null
                     ? lightManager.getSkyLightState() : LightManager.SkyLightState.empty();
             // Only a sky with a lit sun draws its starburst; the empty state's sun points up.
@@ -1544,7 +1546,12 @@ public class RemixRenderer {
     public int getInteropDepthTexture() {
         return interopGlVk.getDepthTexture();
     }
-    
+
+    /** The far plane of the last world camera given to Remix, which its depth is written against. */
+    public float getFarPlane() {
+        return farPlane;
+    }
+
     /** Runs on the client executor so the clear lands during teardown, before the next world initializes. */
     public void clearWorld() {
         LOGGER.info("World clear requested (will execute on render thread)");

@@ -270,6 +270,16 @@ public abstract class WorldRendererMixin
         }
     }
 
+    /**
+     * The main pass's body, as the frame graph runs it: before Fabric's START_MAIN and any
+     * draw of the pass, so the other mods' world draws land on transparency over the last
+     * Remix frame's depth.
+     */
+    @Inject(method = "lambda$addMainPass$0", at = @At("HEAD"))
+    private void rtxremix$prepareModOverlay(CallbackInfo ci) {
+        RtxRemixMod.prepareModOverlay(levelRenderState.cameraRenderState);
+    }
+
     @Inject(method = "render", at = @At("RETURN"))
     private void rtxremix$renderReturn(CallbackInfo ci) {
         RtxRemixMod.onLevelRenderEnd();
