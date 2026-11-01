@@ -13,7 +13,9 @@ also part of every mod file name.
 
 ### Added
 
-- Add optional Sodium 0.9.2 terrain capture with existing build budgets, cancellation, bounded ownership and ray-visible animation forwarding. Reject unsupported API versions early.
+- With Sodium 0.9.2 installed, terrain is captured for path tracing through its
+  optimized chunk builder. Sodium remains optional; other versions prevent
+  Minecraft from starting because their capture APIs are untested.
 
 ### Fixed
 

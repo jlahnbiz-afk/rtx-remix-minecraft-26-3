@@ -119,14 +119,10 @@ Launcher, signed in to a Microsoft account that owns Minecraft: Java Edition.
 
 ## Sodium compatibility
 
-Sodium 0.9.2 for Minecraft 26.3 is optional and compile-only; it is not bundled.
-Other Sodium API versions are rejected by Fabric before the adapter loads.
-The adapter captures terrain through Sodium's existing section jobs and keeps
-its discovery, cancellation, worker/upload budgets and accepted-result lifecycle.
-While Remix owns terrain, duplicate raster tessellation, sorting and draws are
-skipped. Changed/interpolated textures still reach ray-visible surfaces through
-an optional Sodium-only forwarding hook; shared animation handling is unchanged
-when Sodium is absent. ScalableLux's merged initialization guard is preserved.
+With Sodium 0.9.2 installed, terrain is captured for path tracing through
+Sodium's optimized chunk builder. Sodium is optional and is not included;
+other Sodium versions prevent Minecraft from starting because their terrain
+capture APIs have not been validated.
 
 ## Crash Reports And Privacy
 
