@@ -11,6 +11,12 @@ also part of every mod file name.
 
 ## Unreleased
 
+## 0.4.0-pre.1 - 2026-11-01
+
+A pre-release: lightning that lights the clouds and the ground, rain puddles
+reworked, a brighter rain sky, a setting for how much memory Distant Horizons'
+LOD terrain may use, and fixes for yellow lines at night and torch glow.
+
 ### Added
 
 - Lightning lights the ground around the strike for a moment, and with Unbound
