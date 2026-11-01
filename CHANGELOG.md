@@ -26,6 +26,10 @@ also part of every mod file name.
 
 ### Fixed
 
+- In rain the sky shows as grey overcast brighter than the ground instead of
+  as dark as a thunderstorm's; the rain fog is thinner. A thunderstorm keeps
+  its darkness. An existing install keeps its own `weather/rain.conf`; delete it
+  to take the new default.
 - Lightning bolts are drawn in thunderstorms again, glowing and lighting the
   ground around the strike; they had been dropped from capture.
 - With Distant Horizons, the LOD terrain holds 2048 MiB of meshes by default
