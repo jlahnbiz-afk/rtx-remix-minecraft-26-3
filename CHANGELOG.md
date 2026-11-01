@@ -13,7 +13,9 @@ also part of every mod file name.
 
 ### Added
 
-- Add selectable child/parent Vulkan presentation, origin-aware Win32 input forwarding and exception-safe resource cleanup.
+- On Windows, avoid Vulkan startup failures on systems that cannot share the
+  game window. The original presentation mode remains available through a
+  launch argument; a mistyped value warns and uses the default.
 
 ### Fixed
 

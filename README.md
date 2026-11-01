@@ -119,14 +119,10 @@ Launcher, signed in to a Microsoft account that owns Minecraft: Java Edition.
 
 ## Windows Vulkan presentation
 
-Windows child-window presentation avoids OpenGL/Vulkan native-window ownership
-conflicts. `-Drtxremix.presentation=parent` selects the original host at startup;
-`child` is this implementation's default. Changing modes requires a restart.
-Both paths keep the completed-frame copy, ray tracing and image quality.
-Mirrored wheel/key messages cannot recurse through default window procedures;
-SDL owns the cursor, key transitions and native window shortcuts. Teardown
-attempts independent releases after errors and retains callbacks while Windows
-can still invoke them.
+On Windows, a separate presentation window avoids a Vulkan startup failure on
+some systems without changing image quality. To use the original presentation
+on a system that supports it, add `-Drtxremix.presentation=parent` to your
+launcher's JVM arguments and restart; see [Tuning](docs/TUNING.md#presentation).
 
 ## Crash Reports And Privacy
 

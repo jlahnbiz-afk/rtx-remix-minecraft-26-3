@@ -124,10 +124,6 @@ public final class GlInterop {
         glFlush();
     }
 
-    public void copyFromFramebuffer(int sourceFbo) {
-        copyFromFramebuffer(sourceFbo, colorImage.width, colorImage.height);
-    }
-
     /** Copies the final texture with the same clipping and vertical placement as GL presentation. */
     public void copyFromFramebuffer(int sourceFbo, int sourceWidth, int sourceHeight) {
         drainStaleGlErrors();
