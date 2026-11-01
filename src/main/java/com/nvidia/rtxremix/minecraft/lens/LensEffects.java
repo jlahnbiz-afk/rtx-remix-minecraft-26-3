@@ -371,6 +371,38 @@ public final class LensEffects {
             }
             """;
 
+    // Where a lamp's glow lies on screen, from the flare sources' positions. The runtime's bloom
+    // spreads a lamp's colour over the sky around it, which the sky's statistics took for the sky:
+    // the clouds behind a torch turned red, and so did the sky read through their thin edges.
+    // Within it the clear sky is not measured, and all the image shows over the sky expected there
+    // counts as glow. A lamp's glow shrinks with its distance, so the reach does too.
+    // The includer declares Sources, SourceCount and Aspect.
+    private static final String LAMP_GLOW_READING = """
+            // In screen heights from a lamp at LAMP_GLOW_DISTANCE or nearer: glow throughout
+            // inside the first, none past the second.
+            const float LAMP_GLOW_INNER = 0.15;
+            const float LAMP_GLOW_OUTER = 0.35;
+            const float LAMP_GLOW_DISTANCE = 8.0;
+
+            float lampGlow(vec2 uv) {
+                float near = 0.0;
+                for (int i = 0; i < SourceCount; i++) {
+                    if (abs(Sources[i].z - 1.0) < 0.5) {
+                        continue;
+                    }
+                    float reach = LAMP_GLOW_DISTANCE / max(Sources[i].w, LAMP_GLOW_DISTANCE);
+                    float d = length((uv - Sources[i].xy) * vec2(Aspect, 1.0)) / reach;
+                    near = max(near, 1.0 - smoothstep(LAMP_GLOW_INNER, LAMP_GLOW_OUTER, d));
+                }
+                return near;
+            }
+            """;
+    private static final String LAMP_GLOW = "const int MAX_SOURCES = " + MAX_SOURCES + ";\n" + """
+            uniform vec4 Sources[MAX_SOURCES];
+            uniform int SourceCount;
+            uniform float Aspect;
+            """ + LAMP_GLOW_READING;
+
     // Per screen column, the sky just above the lowest point it shows, against the sky the whole
     // screen shows at that height (decoded, per channel): how the sky in that direction differs,
     // as toward the setting sun, which distant land fades toward with the band at its own
@@ -378,7 +410,7 @@ public final class LensEffects {
     private static final String HORIZON_FRAGMENT_SHADER = """
             #version 330 core
             out vec4 fragColor;
-            """ + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE + BAND_READING + """
+            """ + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE + BAND_READING + LAMP_GLOW + """
             uniform sampler2D SkyBands;
 
             const int ROWS = 128;
@@ -393,7 +425,10 @@ public final class LensEffects {
                     // The sky must run on up to where its colour is read: a lone texel with
                     // nothing drawn, a gap in leaves that the unantialiased depth shows on some
                     // frames and not others, would read the land and flicker the haze.
-                    if (isSky(distanceAt(vec2(u, v))) && isSky(distanceAt(above)) && isSky(distanceAt(higher))) {
+                    // Nor is a lamp's glow the sky: faded toward it, distant land around a torch
+                    // turned into pale holes in the glow.
+                    if (isSky(distanceAt(vec2(u, v))) && isSky(distanceAt(above)) && isSky(distanceAt(higher))
+                            && lampGlow(above) < 0.25) {
                         vec3 colour = srgbToLinear((scene(above) + scene(higher)) * 0.5);
                         vec4 band = skyBandAt(SkyBands, normalize(viewRay(above)).y);
                         if (band.a <= 0.0) {
@@ -852,38 +887,6 @@ public final class LensEffects {
                 }
             }
             """;
-
-    // Where a lamp's glow lies on screen, from the flare sources' positions. The runtime's bloom
-    // spreads a lamp's colour over the sky around it, which the sky's statistics took for the sky:
-    // the clouds behind a torch turned red, and so did the sky read through their thin edges.
-    // Within it the clear sky is not measured, and all the image shows over the sky expected there
-    // counts as glow. A lamp's glow shrinks with its distance, so the reach does too.
-    // The includer declares Sources, SourceCount and Aspect.
-    private static final String LAMP_GLOW_READING = """
-            // In screen heights from a lamp at LAMP_GLOW_DISTANCE or nearer: glow throughout
-            // inside the first, none past the second.
-            const float LAMP_GLOW_INNER = 0.15;
-            const float LAMP_GLOW_OUTER = 0.35;
-            const float LAMP_GLOW_DISTANCE = 8.0;
-
-            float lampGlow(vec2 uv) {
-                float near = 0.0;
-                for (int i = 0; i < SourceCount; i++) {
-                    if (abs(Sources[i].z - 1.0) < 0.5) {
-                        continue;
-                    }
-                    float reach = LAMP_GLOW_DISTANCE / max(Sources[i].w, LAMP_GLOW_DISTANCE);
-                    float d = length((uv - Sources[i].xy) * vec2(Aspect, 1.0)) / reach;
-                    near = max(near, 1.0 - smoothstep(LAMP_GLOW_INNER, LAMP_GLOW_OUTER, d));
-                }
-                return near;
-            }
-            """;
-    private static final String LAMP_GLOW = "const int MAX_SOURCES = " + MAX_SOURCES + ";\n" + """
-            uniform vec4 Sources[MAX_SOURCES];
-            uniform int SourceCount;
-            uniform float Aspect;
-            """ + LAMP_GLOW_READING;
 
     // The screen sampled once on a coarse grid, one texel per sample, for the passes below that
     // gather statistics from it: the decoded image with, for a sample showing sky, the sine of
@@ -1626,6 +1629,8 @@ public final class LensEffects {
             uniform float Submerged;
             // How far the clear sky overhead is deepened back toward its blue, 0 for none.
             uniform float SkyDepth;
+            // The sine of the sun's elevation.
+            uniform float SunHeight;
             // How dark the clouds' shadows on the land are, 0 to 1.
             uniform float CloudShadow;
             uniform float FocusDistance;
@@ -1959,6 +1964,10 @@ public final class LensEffects {
                 // distance, and the sky darkened by the sunlight's share, which is warm, drew a
                 // flickering blue line along distant ridges.
                 darkening *= 1.0 - skyShareHere();
+                // Nor a lamp's glow after sunset, which lies in front of the land: darkened with
+                // it, the outlines of distant buildings showed through a torch's glow. By day the
+                // glow is faint and the shadow is kept.
+                darkening *= 1.0 - lampGlow(uv) * (1.0 - smoothstep(-0.05, 0.1, SunHeight));
                 return linearToSrgb(srgbToLinear(colour) * (1.0 - darkening));
             }
 
@@ -1985,7 +1994,11 @@ public final class LensEffects {
             vec3 clouds(vec2 uv, vec3 colour, float axial) {
                 vec3 nearLand = isSky(axial) ? colour : cloudsOverLand(uv, colour, axial);
                 float open = openSky();
-                return open > 0.0 ? mix(nearLand, cloudsOverSky(uv, colour), open) : nearLand;
+                vec3 drawn = open > 0.0 ? mix(nearLand, cloudsOverSky(uv, colour), open) : nearLand;
+                // A lamp's flame and glow lie in front of every cloud but carry the depth of what
+                // lies behind, so around a lamp the clouds only brighten: drawn over, the flame of
+                // a torch went out against the sky and distant land showed through its glow.
+                return mix(drawn, max(drawn, colour), lampGlow(uv));
             }
 
             vec3 aerialHaze(vec2 uv, vec3 colour) {
@@ -2003,7 +2016,11 @@ public final class LensEffects {
                 // as sky at the bottom of a column; fading toward each column's lowest sky, whole
                 // towers rising out of it took its colour and glowed against the darker sky.
                 vec3 fade = linearToSrgb(band.rgb * direction.rgb);
-                return mix(colour, fade, amount);
+                vec3 hazed = mix(colour, fade, amount);
+                // Around a lamp the haze only brightens. Its flame and bloom lie in front of the
+                // land but carry the depth of whatever lies behind, and faded with distant land
+                // they left its outline as a pale hole in the glow.
+                return mix(hazed, max(hazed, colour), lampGlow(uv));
             }
 
             // Caustics: the web of light the waves of a shallow water gather the sun into on its
@@ -2641,6 +2658,8 @@ public final class LensEffects {
                 horizonProgram.use();
                 horizonProgram.set("ViewportSize", HORIZON_BINS, 1);
                 setView(horizonProgram);
+                horizonProgram.set("Aspect", aspect);
+                horizonProgram.setSources(sources, lampCount);
                 GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
 
                 next = 1 - horizonCurrent;
@@ -2762,6 +2781,7 @@ public final class LensEffects {
             setView(compositeProgram);
             compositeProgram.set("Clouds", clouds ? 1.0f : 0.0f);
             compositeProgram.set("Submerged", submerged ? 1.0f : 0.0f);
+            compositeProgram.set("SunHeight", sunDirection[1]);
             if (clouds) {
                 setCloudField(compositeProgram);
                 compositeProgram.set("AtmosphereRadiance", CloudField.skyRadiance());

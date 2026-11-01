@@ -475,6 +475,11 @@ the flare sources place on screen, the clear sky is not measured and all the
 image shows over the sky expected there counts as glow, kept as the image shows
 it where the dome holds no thick cloud: measured as sky, a torch's bloom turned
 the clouds behind it red, and laid back coarse it spread into a wide pink ring.
+A lamp's flame and bloom lie in front of everything but carry the depth of
+what lies behind, so around a lamp the haze and the clouds only brighten the
+image and, after sunset, the clouds' shadows leave it: faded, clouded or
+shaded with the distant land behind, the flame went out and the land showed
+through the glow as pale outlines.
 Keeping the image wherever the two marches
 agreed drew the panorama's speckle and outlines, which the denoiser smooths out
 of the image, onto the bases of clouds overhead. The panorama copy is mipmapped

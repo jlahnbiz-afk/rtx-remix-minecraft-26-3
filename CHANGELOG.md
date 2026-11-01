@@ -11,6 +11,12 @@ also part of every mod file name.
 
 ## Unreleased
 
+### Fixed
+
+- Distant land, such as Distant Horizons' LOD buildings, no longer shows through
+  a nearby torch's glow as pale outlines at night, and the torch's flame no
+  longer vanishes against it.
+
 ## 0.4.0-pre.1 - 2026-11-01
 
 A pre-release: lightning that lights the clouds and the ground, rain puddles
