@@ -662,7 +662,9 @@ public final class LensEffects {
             // light the clouds' shadow lets through. Distant land is seen at a grazing angle, where
             // the jitter moves the point a pixel shows by tens of blocks, so along a shadow's edge
             // the shadow came and went from frame to frame; it settles, and is taken at a distance
-            // settled over frames, alpha, while the land under the pixel stays about as far.
+            // from the camera settled over frames, alpha, while the land under the pixel stays
+            // about as far. Along the view axis the distance changed as the camera turned, and
+            // the shade was taken short of the land or past it while the history caught up.
             // Each frame's own values when no history.
             void main() {
                 vec2 uv = gl_FragCoord.xy / ViewportSize;
@@ -670,7 +672,9 @@ public final class LensEffects {
                 float current = hazeAt(uv, axial);
                 float sky = skyAt(uv);
                 float shade = shadeAt(uv, axial);
-                fragColor = vec4(current, sky, shade, axial);
+                vec3 ray = viewRay(uv);
+                float along = isSky(axial) ? 6.0e4 : axial * length(ray);
+                fragColor = vec4(current, sky, shade, along);
                 if (HistoryValid <= 0.0) {
                     return;
                 }
@@ -698,10 +702,9 @@ public final class LensEffects {
                         }
                     }
                 }
-                vec3 ray = viewRay(uv);
                 // A sky pixel moves as something very far away does, with the turning view alone.
-                float along = isSky(axial) ? 1.0e5 : axial * length(ray);
-                vec4 clip = PreviousViewProjection * vec4(normalize(ray) * along + CameraMotion, 1.0);
+                vec3 previous = normalize(ray) * (isSky(axial) ? 1.0e5 : along) + CameraMotion;
+                vec4 clip = PreviousViewProjection * vec4(previous, 1.0);
                 if (clip.w <= 0.0) {
                     return;
                 }
@@ -711,14 +714,16 @@ public final class LensEffects {
                 }
                 vec4 history = texture(HazePrevious, previousUv);
                 // The jitter moves distant land's distance by a fifth or so, a silhouette's far
-                // more. Where it is the same land, the shade is taken at the settled distance.
-                bool sameLand = !isSky(axial) && abs(history.a - axial) < 0.25 * axial + 2.0;
-                float settled = sameLand ? mix(history.a, axial, CURRENT_WEIGHT) : axial;
+                // more. Where it is the same land, the shade is taken at the settled distance,
+                // moved by as much as the camera's own motion brought the land nearer.
+                float historyAlong = history.a + along - length(previous);
+                bool sameLand = !isSky(axial) && abs(historyAlong - along) < 0.25 * along + 2.0;
+                float settled = sameLand ? mix(historyAlong, along, CURRENT_WEIGHT) : along;
                 // Along a silhouette the depth flips between the near and the far side, so the
                 // shade settles to a blend of the two, as the image does, whatever the distance.
                 bool edge = !isSky(axial) && far > 1.3 * near + 2.0;
                 if (sameLand || edge) {
-                    shade = mix(history.b, sameLand ? shadeAt(uv, settled) : shade, CURRENT_WEIGHT);
+                    shade = mix(history.b, sameLand ? shadeAt(uv, settled / length(ray)) : shade, CURRENT_WEIGHT);
                 }
                 fragColor = vec4(mix(clamp(history.r, low, high), current, CURRENT_WEIGHT),
                     mix(clamp(history.g, skyLow, skyHigh), sky, CURRENT_WEIGHT), shade, settled);
@@ -1877,6 +1882,10 @@ public final class LensEffects {
             // keeps the sky's blue share and a little bounce, as dark as Remix's own shadow of a
             // block. Your hand lies in the shadow you stand in.
             const float SHADOW_DEPTH_AT_DEFAULT = 0.8;
+            // How far the shadow's tint is taken toward grey. The share of direct light is warm,
+            // so taking it alone left the sky's blue and every shadow read cold; under a real
+            // cloud the light it scatters, white, makes up much of what the sun's beam lost.
+            const float SHADOW_NEUTRAL = 0.6;
 
             vec3 cloudShadows(vec2 uv, vec3 colour, float axial) {
                 if (isSky(axial) || CloudShadow <= 0.0) {
@@ -1892,6 +1901,7 @@ public final class LensEffects {
                     : texelFetch(HazeAmount, ivec2(gl_FragCoord.xy), 0).b;
                 vec3 darkening = min(vec3(0.95), 2.0 * CloudShadow * SHADOW_DEPTH_AT_DEFAULT * share
                     * (1.0 - transmittance));
+                darkening = mix(darkening, vec3(dot(darkening, vec3(0.2126, 0.7152, 0.0722))), SHADOW_NEUTRAL);
                 // Only the land's share of a pixel: a sky pixel beside the land takes the land's
                 // distance, and the sky darkened by the sunlight's share, which is warm, drew a
                 // flickering blue line along distant ridges.

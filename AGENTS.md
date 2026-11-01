@@ -404,8 +404,10 @@ history settles the share of each pixel that shows sky, by which the clouds
 replace the dome's, the sky is deepened and the clouds' shadow darkens only the
 land's share (a sky pixel beside the land takes the land's distance, and
 darkening it drew a flickering blue line along ridges), and the shadow itself,
-taken at a distance settled over frames: the jitter moves distant land seen at
-a grazing angle by tens of blocks, and its shadow came and went. Haze fades
+taken at a distance from the camera settled over frames: the jitter moves
+distant land seen at a grazing angle by tens of blocks, and its shadow came and
+went; settled along the view axis, the distance changed as the camera turned
+and the shadow was taken short of the land or past it. Haze fades
 land toward the sky the image
 shows at the land's own height, kept per band of elevation, times how each
 screen column's sky differs from its band where the column was read. A band's
@@ -419,7 +421,10 @@ nothing drawn. Fading toward a column's own lowest sky made whole towers glow
 in the rain, where light from below brightens fog that has no depth. The sky
 bands and the clouds' calibration loop over one coarse sample of the screen
 taken once a frame. A shadow darkens the land per
-channel by the share of its light that comes straight from the sun or moon.
+channel by the share of its light that comes straight from the sun or moon,
+taken most of the way to grey, since the direct light's share is warm and left
+every shadow cold blue. Drawn over the finished image, it cannot tell the sun's
+light from a lamp's, so a torch under a cloud's shadow dims with the land.
 The clouds are marched at half resolution for every pixel, between the camera
 and the land or through the whole sky, and folded into a history reprojected
 by the camera's motion. Their light is brought to the image's exposure by

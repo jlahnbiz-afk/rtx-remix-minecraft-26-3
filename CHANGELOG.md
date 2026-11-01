@@ -43,6 +43,8 @@ also part of every mod file name.
   sea keep their waves.
 - With Unbound clouds, the sky no longer turns into completely different clouds
   every so often as the wind carries them, or when the rain ends.
+- With Unbound clouds, their shadows no longer turn the view blue, and no
+  longer slide across the land while you turn the camera.
 - Caustics stay on the floor of shallow water right below you instead of
   disappearing within a block and a half of the camera.
 - With Unbound clouds, the sky no longer jumps slightly brighter or darker every
