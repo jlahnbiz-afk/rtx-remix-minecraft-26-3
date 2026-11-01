@@ -42,6 +42,7 @@ import java.util.Set;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import com.nvidia.rtxremix.minecraft.sky.LightningFlash;
 import com.nvidia.rtxremix.minecraft.sky.SkyFrame;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.world.level.dimension.DimensionType;
@@ -52,6 +53,7 @@ import net.minecraft.world.entity.Display;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.LightningBolt;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.BlockItem;
@@ -79,6 +81,16 @@ public class LightManager {
 
     private static final float RULELESS_ITEM_RADIANCE_PER_LIGHT_LEVEL = BlockLightRuleManager.RADIANCE_PER_LIGHT_LEVEL;
     private static final float ENTITY_LIGHT_RADIUS = 0.1f;
+    /**
+     * A lightning bolt's flash over the ground around the strike: a bluish sphere a few blocks
+     * up the bolt, which the path tracer shadows as it does any light, lit while the bolt shows.
+     * The bolt's own emissive quads light little beyond their glow. It lights no fog: lit in
+     * the volumetrics, the whole sky turned white with each strike.
+     */
+    private static final EntityLightSpec LIGHTNING_SPEC =
+            new EntityLightSpec(3000.0f, 1.0f, new float[] {0.75f, 0.82f, 1.0f}, 0.0f);
+    /** Blocks above the strike point the bolt's light stands. */
+    private static final double LIGHTNING_LIGHT_HEIGHT = 4.0;
     private static final float HELD_LIGHT_FORWARD_OFFSET = 0.35f;
     private static final float HELD_LIGHT_SIDE_OFFSET = 0.38f;
     private static final float HELD_LIGHT_HEIGHT_OFFSET = 0.88f;
@@ -266,6 +278,8 @@ public class LightManager {
         lightOwnerIds.clear();
         float frameDtSeconds = entityLightFrameDtSeconds();
         boolean localFirstPersonRigUpdated = false;
+        LightningFlash.begin();
+        Vec3 cameraPosition = camera.position();
 
         for (Entity entity : world.entitiesForRendering()) {
             if (entity instanceof ItemEntity itemEntity) {
@@ -287,8 +301,14 @@ public class LightManager {
                 }
             } else if (entity instanceof Display.BlockDisplay display) {
                 ensureDisplayBeaconLight(display, tickDelta);
+            } else if (entity instanceof LightningBolt bolt) {
+                ensureSphereEntityLight(EntityLightKey.lightning(entity.getId()), LIGHTNING_SPEC,
+                        bolt.position().add(0.0, LIGHTNING_LIGHT_HEIGHT, 0.0), LIGHTNING_SPEC.radius, 1.0f);
+                LightningFlash.offer(bolt.getX(), bolt.getZ(),
+                        bolt.position().distanceToSqr(cameraPosition));
             }
         }
+        LightningFlash.end();
 
         double beaconAnimationTick = CopperBeaconAnimationClock.sample(world, tickDelta);
         for (CopperBeaconBlockEntity beacon : CopperBeaconBlockEntity.loaded()) {
@@ -1078,13 +1098,18 @@ public class LightManager {
             return new EntityLightKey(entityId, Kind.BLOCK_DISPLAY);
         }
 
+        private static EntityLightKey lightning(int entityId) {
+            return new EntityLightKey(entityId, Kind.LIGHTNING);
+        }
+
     }
 
     private enum Kind {
         ITEM,
         MAIN_HAND,
         OFF_HAND,
-        BLOCK_DISPLAY
+        BLOCK_DISPLAY,
+        LIGHTNING
     }
 
     // ================================================================

@@ -35,6 +35,7 @@ import com.nvidia.rtxremix.minecraft.light.BlockLightRuleManager;
 import com.nvidia.rtxremix.minecraft.input.RemixMouseAccess;
 import com.nvidia.rtxremix.minecraft.input.RemixKeyboardAccess;
 import com.nvidia.rtxremix.minecraft.input.RemixInputGate;
+import com.nvidia.rtxremix.minecraft.gl.ModOverlayLayer;
 import com.nvidia.rtxremix.minecraft.gl.TextureOverlay;
 import com.nvidia.rtxremix.minecraft.entity.CopperBeaconBlockEntityRenderer;
 import com.nvidia.rtxremix.minecraft.camera.CameraController;
@@ -81,6 +82,7 @@ import net.minecraft.client.gui.screens.MenuScreens;
 import net.minecraft.client.gui.screens.options.OptionsScreen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderers;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -175,6 +177,7 @@ public class RtxRemixMod implements ClientModInitializer {
     private static boolean firstPersonSmokeEnabled = true;
 
     private TextureOverlay textureOverlay;
+    private final ModOverlayLayer modOverlay = new ModOverlayLayer();
     private ProfileScope worldRenderPhaseScope;
     private boolean remixFrameReadyToSubmit;
     /** Latches the frame-failure log so a persistent failure reports once, not every frame. */
@@ -572,6 +575,9 @@ public class RtxRemixMod implements ClientModInitializer {
                     && renderer.isInitialized()
                     && isRtxEnabled()) {
                 renderer.captureBlockOutline(context.levelState(), outlineState);
+                // Remix draws the outline; vanilla's would show over it with the other
+                // mods' draws (ModOverlayLayer).
+                return false;
             }
             return true;
         });
@@ -659,8 +665,30 @@ public class RtxRemixMod implements ClientModInitializer {
                                 .vertexCount(weather.getLastQuadCount() * 4);
                     }
                 }
+                mod.modOverlay.composite();
             }
         }
+    }
+
+    /**
+     * Readies the main target for the other mods' world draws: transparent colour and the
+     * last Remix frame's depth. Called at the start of the level render's main pass.
+     */
+    public static void prepareModOverlay(CameraRenderState camera) {
+        RtxRemixMod mod = instance;
+        if (mod == null || renderer == null || !renderer.isInitialized() || !isRtxEnabled()) return;
+        try {
+            mod.modOverlay.prepare(renderer.getInteropDepthTexture(), renderer.getFarPlane(),
+                    camera == null ? null : camera.projectionMatrix);
+        } catch (RuntimeException e) {
+            LOGGER.error("Failed to prepare the mod overlay layer", e);
+        }
+    }
+
+    /** Keeps the other mods' world draws. Called when the level render has returned. */
+    public static void captureModOverlay() {
+        RtxRemixMod mod = instance;
+        if (mod != null) mod.modOverlay.capture();
     }
 
     /**
@@ -2199,6 +2227,7 @@ public class RtxRemixMod implements ClientModInitializer {
             textureOverlay.shutdown();
             textureOverlay = null;
         }
+        modOverlay.shutdown();
         shutdownRemix();
     }
 
