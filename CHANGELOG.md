@@ -23,6 +23,8 @@ also part of every mod file name.
 
 ### Fixed
 
+- Lightning bolts are drawn in thunderstorms again, glowing and lighting the
+  ground around the strike; they had been dropped from capture.
 - With Distant Horizons, the LOD terrain holds 2048 MiB of meshes by default
   again, as before 0.3.0, so on graphics cards with 8 GB of memory a higher
   Distant Horizons quality no longer shrinks it to the ground around you.
