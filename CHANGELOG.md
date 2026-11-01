@@ -15,6 +15,79 @@ also part of every mod file name.
 
 - Adapt ImmediatelyFast 1.17.1 font/map/sign source capture, share text preparation, retain layout-aware bounded sign caches and reject unsupported API versions early.
 
+### Fixed
+
+- Distant land, such as Distant Horizons' LOD buildings, no longer shows through
+  a nearby torch's glow as pale outlines at night, and the torch's flame no
+  longer vanishes against it.
+
+## 0.4.0-pre.1 - 2026-11-01
+
+A pre-release: lightning that lights the clouds and the ground, rain puddles
+reworked, a brighter rain sky, a setting for how much memory Distant Horizons'
+LOD terrain may use, and fixes for yellow lines at night and torch glow.
+
+### Added
+
+- Lightning lights the ground around the strike for a moment, and with Unbound
+  clouds lights the cloud around the bolt from within, brightest where it
+  reaches into the cloud and fading over the deck around it.
+- LOD Memory, a Distance & Culling setting: how much mesh data Distant Horizons'
+  terrain may hold for path tracing, from 256 to 4096 MiB, or Unlimited.
+- Puddle Amount and Puddle Reflection, Materials settings: how much of the
+  ground rain puddles cover, and how strongly their water reflects, from clear
+  water's faint reflection up to a mirror.
+- A Debug page in the settings, for views that help find rendering problems.
+  Show Puddle Mask paints rain puddles red by how much water stands there.
+
+### Fixed
+
+- A torch's glow over the sky is no longer a deep red ring that stops at the
+  skyline, and with Unbound clouds the clouds around a torch no longer turn
+  pink or red.
+- At night, thin yellow lines no longer glow on block sides and plants that
+  line up with the camera, which showed most from high up as lines running
+  straight down along the world's X and Z axes; a surface seen edge on took
+  the averaged glow of every lamp, torch and lava texture.
+- In rain the sky shows as grey overcast brighter than the ground instead of
+  as dark as a thunderstorm's; the rain fog is thinner. A thunderstorm keeps
+  its darkness. An existing install keeps its own `weather/rain.conf`; delete it
+  to take the new default.
+- Lightning bolts are drawn in thunderstorms again, glowing and lighting the
+  ground around the strike; they had been dropped from capture.
+- With Distant Horizons, the LOD terrain holds 2048 MiB of meshes by default
+  again, as before 0.3.0, so on graphics cards with 8 GB of memory a higher
+  Distant Horizons quality no longer shrinks it to the ground around you.
+- With ScalableLux installed, receiving a chunk no longer fails: its light
+  engine has no vanilla sky-light source table, and the mod now leaves such
+  chunks to it.
+- With Unbound clouds, the glow of a torch or lamp near the camera now spreads
+  over the clouds as it does over the sky, instead of stopping at them with a
+  dark outline.
+- Rain puddles' reflections grow gradually from their edges to a mirror in the
+  middle, instead of a water surface appearing suddenly on dry ground; the
+  ground around them grows wet and a little darker; puddles cover less of the
+  ground; and
+  puddles grow and dry smoothly instead of in visible steps, without the short
+  stutter each step used to cost.
+- Puddles no longer have waves: the rain ripples them with smaller, more
+  numerous rings, and once it stops they lie still like mirrors. Rivers and the
+  sea keep their waves.
+- With Unbound clouds, the sky no longer turns into completely different clouds
+  every so often as the wind carries them, or when the rain ends.
+- With Unbound clouds, their shadows no longer turn the view blue, and no
+  longer slide across the land while you turn the camera.
+- Caustics stay on the floor of shallow water right below you instead of
+  disappearing within a block and a half of the camera.
+- With Unbound clouds, the sky no longer jumps slightly brighter or darker every
+  few seconds while you walk.
+- What other mods draw in the world, such as Litematica's selection boxes,
+  MiniHUD's overlays and Axiom's tool previews, shows over the path-traced
+  image, hidden behind blocks as without RTX.
+- Mobs from GeckoLib mods that draw a layer over the body, such as a pet's
+  armour slot, are no longer black.
+
+
 ## 0.3.0 - 2026-10-28
 
 Water caustics, skies that change from day to day, a much lighter lens, and
