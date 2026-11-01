@@ -26,6 +26,9 @@ also part of every mod file name.
 
 ### Fixed
 
+- A torch's glow over the sky is no longer a deep red ring that stops at the
+  skyline, and with Unbound clouds the clouds around a torch no longer turn
+  pink or red.
 - At night, thin yellow lines no longer glow on block sides and plants that
   line up with the camera, which showed most from high up as lines running
   straight down along the world's X and Z axes; a surface seen edge on took

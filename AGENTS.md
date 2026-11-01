@@ -470,14 +470,21 @@ composite takes out of the image before it replaces the clouds and lays back
 over all of it, since a lamp's glow otherwise stopped at the skyline. A torch
 beside the camera at night brightens the sky many times over; taken as an error
 of the atmosphere and put back only over the clouds, its glow was cut off at
-them, with a dark rim wherever thin dome cloud stood beside. Keeping the image wherever the two marches
+them, with a dark rim wherever thin dome cloud stood beside. Around the lamps
+the flare sources place on screen, the clear sky is not measured and all the
+image shows over the sky expected there counts as glow, kept as the image shows
+it where the dome holds no thick cloud: measured as sky, a torch's bloom turned
+the clouds behind it red, and laid back coarse it spread into a wide pink ring.
+Keeping the image wherever the two marches
 agreed drew the panorama's speckle and outlines, which the denoiser smooths out
 of the image, onto the bases of clouds overhead. The panorama copy is mipmapped
 and read over the pixel's footprint, its colour averaged over neighbours of
 matching opacity and its opacity only deep inside a cloud, because the runtime
 mips the dome's texture and its denoiser smooths the march's speckle out of the
 image but keeps the outlines. Before the clouds, the clear sky toward the zenith
-is deepened back toward its blue, which the tone mapper's shoulder bleaches.
+is deepened back toward its blue, which the tone mapper's shoulder bleaches;
+only colour leaning the way the sky's band of elevation does, since a lamp's
+orange glow over the sky was pushed to red and stopped at the skyline.
 After the composite, the sun mirrored on level water glows and its glints
 streak: quarter-resolution passes keep the near-saturated pixels whose view ray,
 turned back up off the horizontal, nears the sun, and streak only those that

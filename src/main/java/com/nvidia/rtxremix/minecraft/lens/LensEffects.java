@@ -853,6 +853,38 @@ public final class LensEffects {
             }
             """;
 
+    // Where a lamp's glow lies on screen, from the flare sources' positions. The runtime's bloom
+    // spreads a lamp's colour over the sky around it, which the sky's statistics took for the sky:
+    // the clouds behind a torch turned red, and so did the sky read through their thin edges.
+    // Within it the clear sky is not measured, and all the image shows over the sky expected there
+    // counts as glow. A lamp's glow shrinks with its distance, so the reach does too.
+    // The includer declares Sources, SourceCount and Aspect.
+    private static final String LAMP_GLOW_READING = """
+            // In screen heights from a lamp at LAMP_GLOW_DISTANCE or nearer: glow throughout
+            // inside the first, none past the second.
+            const float LAMP_GLOW_INNER = 0.15;
+            const float LAMP_GLOW_OUTER = 0.35;
+            const float LAMP_GLOW_DISTANCE = 8.0;
+
+            float lampGlow(vec2 uv) {
+                float near = 0.0;
+                for (int i = 0; i < SourceCount; i++) {
+                    if (abs(Sources[i].z - 1.0) < 0.5) {
+                        continue;
+                    }
+                    float reach = LAMP_GLOW_DISTANCE / max(Sources[i].w, LAMP_GLOW_DISTANCE);
+                    float d = length((uv - Sources[i].xy) * vec2(Aspect, 1.0)) / reach;
+                    near = max(near, 1.0 - smoothstep(LAMP_GLOW_INNER, LAMP_GLOW_OUTER, d));
+                }
+                return near;
+            }
+            """;
+    private static final String LAMP_GLOW = "const int MAX_SOURCES = " + MAX_SOURCES + ";\n" + """
+            uniform vec4 Sources[MAX_SOURCES];
+            uniform int SourceCount;
+            uniform float Aspect;
+            """ + LAMP_GLOW_READING;
+
     // The screen sampled once on a coarse grid, one texel per sample, for the passes below that
     // gather statistics from it: the decoded image with, for a sample showing sky, the sine of
     // its elevation plus two in alpha (zero for land), and the dome's clouds and the atmosphere
@@ -865,7 +897,7 @@ public final class LensEffects {
             layout(location = 2) out vec4 sampledSky;
             """ + "const vec2 SAMPLE_GRID = vec2(" + SAMPLE_COLUMNS + ".0, " + SAMPLE_ROWS + ".0);\n"
             + CloudField.defines() + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE + PANORAMA_SAMPLING
-            + ATMOSPHERE_SAMPLING + """
+            + ATMOSPHERE_SAMPLING + LAMP_GLOW + """
             uniform float Clouds;
 
             void main() {
@@ -875,7 +907,8 @@ public final class LensEffects {
                 vec2 texel = 1.0 / ScreenSize;
                 bool sky = isSky(distanceAt(uv)) && isSky(distanceAt(uv + vec2(texel.x, 0.0)))
                     && isSky(distanceAt(uv - vec2(texel.x, 0.0))) && isSky(distanceAt(uv + vec2(0.0, texel.y)))
-                    && isSky(distanceAt(uv - vec2(0.0, texel.y)));
+                    && isSky(distanceAt(uv - vec2(0.0, texel.y)))
+                    && lampGlow(uv) < 0.25;
                 sampledScene = vec4(srgbToLinear(scene(uv)), sky ? 2.0 + normalize(viewRay(uv)).y : 0.0);
                 sampledClouds = sky && Clouds > 0.0 ? shownClouds(uv) : vec4(0.0);
                 sampledSky = vec4(sky && Clouds > 0.0 ? atmosphereAt(normalize(viewRay(uv))) : vec3(0.0), 1.0);
@@ -1169,7 +1202,7 @@ public final class LensEffects {
             layout(location = 2) out vec4 clearSky;
             layout(location = 3) out vec4 clearExcess;
             """ + CloudField.defines() + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE
-            + PANORAMA_SAMPLING + ATMOSPHERE_SAMPLING + CLOUD_EXPOSURE + """
+            + PANORAMA_SAMPLING + ATMOSPHERE_SAMPLING + CLOUD_EXPOSURE + LAMP_GLOW + """
 
             // How far the image's clear sky is taken to differ from the atmosphere, in stops: a
             // star or the moon takes in a texel no more than the lower bound, and what lies above
@@ -1198,8 +1231,9 @@ public final class LensEffects {
                     MIN_CLEAR_STOPS, MAX_CLEAR_STOPS);
                 overClouds = vec4((image - cloudLight(shown)) * thick, thick);
                 skyBehind = vec4((1.0 - shown.a) * modelled * thick, thick);
-                clearSky = vec4(stops * clear, clear);
-                clearExcess = vec4(max(image - modelled * exp2(stops), 0.0) * clear, clear);
+                float measured = clear * (1.0 - lampGlow(uv));
+                clearSky = vec4(stops * measured, measured);
+                clearExcess = vec4(max(image - modelled * exp2(stops * (1.0 - lampGlow(uv))), 0.0) * clear, clear);
             }
             """;
 
@@ -1775,15 +1809,25 @@ public final class LensEffects {
             // the blue overhead read nearly as pale as the horizon. Toward the zenith the sky's
             // colour is pushed out from its grey and dimmed a little, as the eye sees a clear
             // sky; the horizon, white from its long path through the air, is left as it is, and
-            // so is rain's overcast. Clouds are drawn over it afterwards.
+            // so is rain's overcast. Clouds are drawn over it afterwards. Only colour that leans the
+            // way the sky's band of elevation does is deepened: a lamp's orange glow over the night's
+            // blue was pushed to red there and stopped at the skyline, where the land is not deepened.
             vec3 deepenSky(vec2 uv, vec3 colour) {
-                float depth = SkyDepth * smoothstep(0.05, 0.7, normalize(viewRay(uv)).y) * (1.0 - Rain);
+                float rise = normalize(viewRay(uv)).y;
+                float depth = SkyDepth * smoothstep(0.05, 0.7, rise) * (1.0 - Rain);
                 if (depth <= 0.0) {
                     return colour;
                 }
                 vec3 linear = srgbToLinear(colour);
                 float luminance = dot(linear, LUMA);
-                linear = luminance * (1.0 - 0.3 * depth) + (linear - luminance) * (1.0 + 1.2 * depth);
+                vec3 chroma = linear - luminance;
+                vec4 band = skyBandAt(SkyBands, rise);
+                vec3 skyChroma = band.rgb - dot(band.rgb, LUMA);
+                float lengths = length(chroma) * length(skyChroma);
+                if (band.a > 0.0 && lengths > 1.0e-8 && length(chroma) > 0.05 * luminance) {
+                    depth *= smoothstep(0.3, 0.8, dot(chroma, skyChroma) / lengths);
+                }
+                linear = luminance * (1.0 - 0.3 * depth) + chroma * (1.0 + 1.2 * depth);
                 return linearToSrgb(max(linear, vec3(0.0)));
             }
 
@@ -1807,6 +1851,8 @@ public final class LensEffects {
                     + textureLod(Glow, vec3(uv + vec2(-texel.x, texel.y), layer), GLOW_LEVEL)
                     + textureLod(Glow, vec3(uv + texel, layer), GLOW_LEVEL));
             }
+
+            """ + LAMP_GLOW_READING + """
 
             // The marched clouds over the sky in place of the dome's, drawn over the sky behind
             // the dome's: read straight out of the image where the dome's clouds are thin, and
@@ -1856,12 +1902,17 @@ public final class LensEffects {
                 vec3 bloom = trust > 1.0e-3
                     ? (overClouds * glow.a + excess.rgb) / trust * min(trust * 4.0, 1.0)
                     : vec3(0.0);
+                float thick = smoothstep(0.02, 0.1, shown.a);
+                // Around a lamp, where the dome shows no thick cloud whose speckle would come
+                // with it, the image's own glow is kept rather than the coarse one: laid back
+                // coarse, a torch's glow spread into a wide pink ring over the sky.
+                bloom = mix(bloom, max(image - cloudLight(shown) - (1.0 - shown.a) * modelled, 0.0),
+                    lampGlow(uv) * (1.0 - thick));
                 vec3 behind = max(image - bloom - cloudLight(shown), 0.0) / max(1.0 - shown.a, 1.0e-3);
                 // Thin dome clouds' light that their calibration, measured on opaque cloud, does
                 // not take out of the image stays in the sky read through them, and showed as
                 // pale wisps and rims where the marched clouds have none. Clear sky keeps its stars.
                 behind = mix(behind, min(behind, modelled * THIN_SKY_MARGIN), smoothstep(0.005, 0.02, shown.a));
-                float thick = smoothstep(0.02, 0.1, shown.a);
                 behind = mix(behind, modelled, thick);
                 vec3 replaced = cloudLight(marched) + (1.0 - marched.a) * behind + bloom;
                 // Where neither has a cloud the image stays as it is, even where the coarse bloom
@@ -2524,6 +2575,7 @@ public final class LensEffects {
             GlStateManager._disableBlend(0);
             GL45C.glBindVertexArray(vertexArray);
             bindTexture(UNIT_SCENE, sceneColorTexture, sceneSampler);
+            int lampCount = projectSources();
 
             if (flare > 0.0f) {
                 GL45C.glNamedFramebufferTexture(framebuffer, GL45C.GL_COLOR_ATTACHMENT0, brightTexture, 0);
@@ -2566,6 +2618,8 @@ public final class LensEffects {
                 setView(samplesProgram);
                 samplesProgram.set("Clouds", overClouds ? 1.0f : 0.0f);
                 samplesProgram.set("AtmosphereRadiance", CloudField.skyRadiance());
+                samplesProgram.set("Aspect", aspect);
+                samplesProgram.setSources(sources, lampCount);
                 GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
                 GlStateManager._glBindFramebuffer(GL45C.GL_DRAW_FRAMEBUFFER, framebuffer);
             }
@@ -2656,6 +2710,8 @@ public final class LensEffects {
                 glowProgram.set("ViewportSize", glowWidth, glowHeight);
                 setView(glowProgram);
                 glowProgram.set("AtmosphereRadiance", CloudField.skyRadiance());
+                glowProgram.set("Aspect", aspect);
+                glowProgram.setSources(sources, lampCount);
                 GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
                 GL45C.glGenerateTextureMipmap(glowTexture);
                 GlStateManager._glBindFramebuffer(GL45C.GL_DRAW_FRAMEBUFFER, framebuffer);
@@ -2672,7 +2728,7 @@ public final class LensEffects {
                 settleHaze(depthTexture);
             }
             hazeValid = !submerged;
-            int sourceCount = flare > 0.0f ? projectSources() : 0;
+            int sourceCount = flare > 0.0f ? lampCount : 0;
             boolean sun = sourceCount > 0 && sources[2] == 1.0f;
             if (sun) {
                 easeSunLight(depthTexture);
@@ -2728,7 +2784,7 @@ public final class LensEffects {
                 compositeProgram.set("CameraFraction", (float) (cameraX - Math.floor(cameraX)),
                         (float) (cameraY - Math.floor(cameraY)), (float) (cameraZ - Math.floor(cameraZ)));
             }
-            compositeProgram.setSources(sources, sourceCount);
+            compositeProgram.setSources(sources, lampCount);
             GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
             historyValid = overClouds;
 
