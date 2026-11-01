@@ -87,6 +87,10 @@ only in its optional Mixin configuration; shared forwarding uses needsToDraw.
 ImmediatelyFast 1.17.1+26.3 is compile-only and never bundled. Its conditional
 mixins and helpers are under `compat/immediatelyfast/`; see
 [ImmediatelyFast Compatibility](docs/IMMEDIATELYFAST.md).
+The plugin applies map/sign hooks only to 1.17.1 (including build metadata).
+Other versions warn and skip those hooks; their rendering is unsupported.
+Shared glyph-page mirroring stays active, and no ImmediatelyFast option is
+changed. Version selection happens at startup, never per frame.
 
 Do not run Gradle while a client from the same checkout is up: staging can fail
 on locked DLLs or replace its live configuration. Stop the client or use another

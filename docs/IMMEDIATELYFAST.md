@@ -2,8 +2,16 @@
 
 The optional adapter targets ImmediatelyFast 1.17.1+26.3. It uses that artifact
 as a compile-only API dependency; the renderer does not bundle its JAR or classes.
-The compatibility Mixin configuration applies only when ImmediatelyFast is loaded.
-Loader metadata rejects other API versions before applying the adapter.
+The compatibility Mixin configuration applies only to that supported version,
+including its `+26.3` build metadata. Other versions warn once at startup and
+skip the map/sign adapter rather than preventing the game from starting. Their
+map/sign capture is untested and may be incorrect; this is launch tolerance,
+not a claim of rendering compatibility. Qualify another version against its
+actual implementation before extending the supported set.
+
+The general glyph-page sizing, upload mirroring and release fixes target
+Minecraft classes and remain active independently of this version gate.
+ImmediatelyFast's own optimizations and settings are never disabled by it.
 
 ## Font pages
 

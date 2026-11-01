@@ -13,30 +13,19 @@ also part of every mod file name.
 
 ### Added
 
-- Optional Sodium 0.9.2 terrain capture using its existing section jobs,
-  cancellation and rebuild budgets, without duplicate raster tessellation while
-  Remix owns terrain. Changed animations remain available to reflected rays.
-- ImmediatelyFast 1.17.1 source capture for resized font pages, atlased maps and
-  experimentally buffered signs. Raster batching and atlas optimizations remain
-  active. Equal sign text with different layouts retains separate preparations.
-- Windows child-window Vulkan presentation to avoid native-window ownership
-  conflicts. `-Drtxremix.presentation=parent` selects the original window instead;
-  changing presentation mode requires a restart. Child mode is this build's default.
-
 - With Sodium 0.9.2 installed, terrain is captured for path tracing through its
   optimized chunk builder. Sodium remains optional; other versions prevent
   Minecraft from starting because their capture APIs are untested.
+- With ImmediatelyFast 1.17.1 installed, maps and cached sign text appear in the
+  path-traced image while its optimizations stay enabled. Other versions warn
+  and skip the map/sign adapter; their rendering remains untested.
+- On Windows, avoid Vulkan startup failures on systems that cannot share the
+  game window. The original presentation mode remains available through a
+  launch argument; a mistyped value warns and uses the default.
+- Capture custom quad-particle geometry through the shared Remix adapter,
+  including Particle Interactions, while preserving the vanilla particle path.
 
 ### Fixed
-
-- Mirrored window input no longer recurses through parent/default procedures or
-  enters duplicate system-key handling. Cursor ownership stays with SDL.
-- Presentation cleanup attempts independent releases after a failure and retains
-  callbacks while Windows can still invoke them.
-- Cached signs share text preparation and emission with ordinary Remix text,
-  refresh width/font layout correctly, and retain per-submit light and pose.
-- Unsupported Sodium and ImmediatelyFast versions are rejected before optional
-  hooks can partially replace rendering. Neither mod is required or bundled.
 
 - Distant land, such as Distant Horizons' LOD buildings, no longer shows through
   a nearby torch's glow as pale outlines at night, and the torch's flame no
