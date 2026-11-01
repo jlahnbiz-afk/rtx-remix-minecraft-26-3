@@ -23,6 +23,10 @@ also part of every mod file name.
   conflicts. `-Drtxremix.presentation=parent` selects the original window instead;
   changing presentation mode requires a restart. Child mode is this build's default.
 
+- With Sodium 0.9.2 installed, terrain is captured for path tracing through its
+  optimized chunk builder. Sodium remains optional; other versions prevent
+  Minecraft from starting because their capture APIs are untested.
+
 ### Fixed
 
 - Mirrored window input no longer recurses through parent/default procedures or
