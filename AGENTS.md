@@ -80,8 +80,8 @@ that loads only when Distant Horizons is installed (`lod/dh/`).
 Sodium 0.9.2 for 26.3 is compile-only and never bundled. Its conditional
 `rtx-remix-renderer.sodium.mixins.json` adapts section jobs under
 `terrain/sodium/`; without Sodium the vanilla capture path remains active.
-Loader metadata rejects other Sodium and ImmediatelyFast API versions before
-Mixin application. The Sodium animation-eligibility override and accessor live
+Loader metadata rejects other Sodium API versions before Mixin application.
+The Sodium animation-eligibility override and accessor live
 only in its optional Mixin configuration; shared forwarding uses needsToDraw.
 
 ImmediatelyFast 1.17.1+26.3 is compile-only and never bundled. Its conditional

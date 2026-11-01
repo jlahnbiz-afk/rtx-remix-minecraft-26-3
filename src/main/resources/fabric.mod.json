@@ -35,7 +35,6 @@
     "accessWidener": "rtx-remix-renderer.accesswidener",
     "breaks": {
         "sodium": ["<0.9.2", ">0.9.2"],
-        "immediatelyfast": ["<1.17.1", ">1.17.1"],
         "eg_particle_interactions": ["<0.10.5", ">0.10.5"]
     },
     "depends": {
