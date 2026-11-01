@@ -151,10 +151,10 @@ a world join, hiding first-sight mesh, pipeline, and BLAS costs without holding
 the screen indefinitely.
 
 **Presentation.** `gl/RemixPresentationWindow` hosts Vulkan in a child of
-Minecraft's SDL/OpenGL window by default. `-Drtxremix.presentation=parent`
-selects the original host at startup; `child` selects the separate host.
-Mirrored input's fallback cannot propagate to SDL twice or open a second system
-menu; cursor messages stay with SDL. `GlSurfaceMixin` records the completed texture's
+Minecraft's SDL/OpenGL window by default; `-Drtxremix.presentation=parent`
+selects the original host. Invalid values warn and use the default child host.
+Mirrored input never bubbles into SDL twice, and
+cursor messages stay with SDL. `GlSurfaceMixin` records the completed texture's
 existing framebuffer for the GL-to-Vulkan copy. Window operations run on SDL's
 owner thread; `WindowMixin` completes parent destruction synchronously before
 the deferred native shutdown, including when an event-thread mod queues SDL
