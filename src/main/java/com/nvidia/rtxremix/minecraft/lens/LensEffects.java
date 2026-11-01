@@ -20,6 +20,7 @@ import org.joml.Matrix4f;
 import org.joml.Vector3fc;
 import org.joml.Vector4f;
 import com.nvidia.rtxremix.minecraft.sky.CloudField;
+import com.nvidia.rtxremix.minecraft.sky.LightningFlash;
 import com.nvidia.rtxremix.minecraft.sky.SkyLook;
 import org.lwjgl.opengl.EXTTextureFilterAnisotropic;
 import org.lwjgl.opengl.GL;
@@ -613,6 +614,7 @@ public final class LensEffects {
             uniform float CameraHeight;
             uniform float Brightness;
             uniform float HazeDistance;
+            uniform vec4 Flash;
             """ + CloudField.source();
 
     // The haze's share per pixel, folded into its history where the camera saw the same land.
@@ -2785,7 +2787,8 @@ public final class LensEffects {
         cloudTemporalProgram.set("ViewportSize", cloudWidth, cloudHeight);
         setView(cloudTemporalProgram);
         cloudTemporalProgram.set("CameraMotion", (float) motionX, (float) motionY, (float) motionZ);
-        cloudTemporalProgram.set("HistoryValid", valid ? 1.0f : 0.0f);
+        // A lightning flash lasts a few frames: through the history it lagged and lingered.
+        cloudTemporalProgram.set("HistoryValid", valid && !LightningFlash.changing() ? 1.0f : 0.0f);
         cloudTemporalProgram.setMatrix("PreviousViewProjection", previousViewProjection);
         GL45C.glDrawArrays(GL45C.GL_TRIANGLES, 0, 3);
         historyCurrent = next;
@@ -2990,6 +2993,8 @@ public final class LensEffects {
         program.set("FeatureScale", layers[6]);
         program.set("Detail", layers[7]);
         program.set("LightDirection", light[0], light[1], light[2]);
+        float[] flash = CloudField.flash();
+        program.set("Flash", flash[0], flash[1], flash[2], flash[3]);
         program.set("LightIrradiance", light[3], light[4], light[5]);
         program.set("AmbientTop", light[6], light[7], light[8]);
         program.set("AmbientBottom", light[9], light[10], light[11]);
@@ -3438,6 +3443,10 @@ public final class LensEffects {
 
         void set(String name, float x, float y, float z) {
             GL45C.glUniform3f(GL45C.glGetUniformLocation(id, name), x, y, z);
+        }
+
+        void set(String name, float x, float y, float z, float w) {
+            GL45C.glUniform4f(GL45C.glGetUniformLocation(id, name), x, y, z, w);
         }
 
         void set(String name, int x, int y, int z) {

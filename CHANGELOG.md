@@ -13,6 +13,9 @@ also part of every mod file name.
 
 ### Added
 
+- Lightning lights the ground around the strike for a moment, and with Unbound
+  clouds lights the cloud around the bolt from within, brightest where it
+  reaches into the cloud and fading over the deck around it.
 - LOD Memory, a Distance & Culling setting: how much mesh data Distant Horizons'
   terrain may hold for path tracing, from 256 to 4096 MiB, or Unlimited.
 - Puddle Amount and Puddle Reflection, Materials settings: how much of the

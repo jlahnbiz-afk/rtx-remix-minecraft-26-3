@@ -71,6 +71,14 @@ final class VolumetricClouds {
     private static final long MOVING_DISPATCH_INTERVAL_NANOS = 30_000_000L;
     /** Blocks the camera moves between marches beyond which it is moving. */
     private static final double MOVING_BLOCKS = 0.001;
+    /** Blocks above the clouds' base where a lightning bolt's light sits in them. */
+    private static final float FLASH_HEIGHT_IN_CLOUD = 40.0f;
+    /**
+     * The irradiance a lightning flash gives a cloud right at the bolt, in the units of the
+     * sun's: about what sunlight gives a cloud by day, so the cloud around the bolt shows as
+     * brightly as a lit cloud.
+     */
+    private static final float FLASH_IRRADIANCE = 30.0f;
     /** Averages a texel over about seven marches, which at 7.5 a second follows the light within a second. */
     private static final float HISTORY_WEIGHT = 0.15f;
     /** A camera move this far between dispatches is a teleport, and restarts the running average. */
@@ -176,7 +184,9 @@ final class VolumetricClouds {
             // and its reflections stepped along with it; on the move it is marched thirty times.
             boolean moving = cameraPos.distanceToSqr(lastCameraX, lastCameraY, lastCameraZ)
                     > MOVING_BLOCKS * MOVING_BLOCKS;
-            long interval = moving ? MOVING_DISPATCH_INTERVAL_NANOS : DISPATCH_INTERVAL_NANOS;
+            // A lightning flash lasts a few frames, so it is marched every frame while it changes.
+            long interval = LightningFlash.changing() ? 0L
+                    : moving ? MOVING_DISPATCH_INTERVAL_NANOS : DISPATCH_INTERVAL_NANOS;
             if ((restart || now - lastDispatchNanos >= interval)
                     && dispatch(world, cameraPos, tickDelta, clouds, base, light, ambientTop, rain)) {
                 lastDispatchNanos = now;
@@ -267,7 +277,13 @@ final class VolumetricClouds {
         double dz = cameraPos.z - lastCameraZ;
         double moved = Math.sqrt(dx * dx + dy * dy + dz * dz);
         boolean jumped = restart || moved > RESET_DISTANCE;
-        frame.historyWeight = jumped ? 1.0f : (float) Math.min(1.0, HISTORY_WEIGHT + moved / MOTION_BLOCKS);
+        frame.historyWeight = jumped || LightningFlash.changing() ? 1.0f
+                : (float) Math.min(1.0, HISTORY_WEIGHT + moved / MOTION_BLOCKS);
+        // The bolt reaches into the clouds above where it struck, a little up into their base.
+        frame.flash[0] = (float) (frame.cameraX + LightningFlash.x() - cameraPos.x);
+        frame.flash[1] = base + FLASH_HEIGHT_IN_CLOUD;
+        frame.flash[2] = (float) (frame.cameraZ + LightningFlash.z() - cameraPos.z);
+        frame.flash[3] = LightningFlash.strength() * FLASH_IRRADIANCE;
         frame.brightness = clouds.getUnboundBrightness();
         frame.parity = dispatches & 1;
         frame.hazeDistance = HAZE_DISTANCE;

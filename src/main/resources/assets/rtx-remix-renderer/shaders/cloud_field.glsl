@@ -9,8 +9,8 @@
 // (the small cumulus, the large cumulus and the altostratus, as CloudWeather has them),
 // Density, FeatureScale and Detail, the light LightDirection, LightIrradiance, AmbientTop and
 // AmbientBottom, the camera in the clouds' frame as CameraXZ and CameraHeight, the look as
-// Brightness and HazeDistance, and the cirrus layer as Cirrus, CirrusAngle, CirrusStrength and
-// CIRRUS_MIN_ELEVATION_DEGREES. It may define CLOUD_MIN_STEPS, CLOUD_MAX_STEPS,
+// Brightness and HazeDistance, the cirrus layer as Cirrus, CirrusAngle, CirrusStrength and
+// CIRRUS_MIN_ELEVATION_DEGREES, and a lightning flash as Flash (LightningFlash). It may define CLOUD_MIN_STEPS, CLOUD_MAX_STEPS,
 // CLOUD_ALTO_STEPS and CLOUD_SHAPE_STEPS first, and CLOUD_MAX_SHAPES as CloudShapes sizes it.
 // The shaped clouds' own uniforms are declared here.
 
@@ -469,10 +469,24 @@ vec3 scatteredLight(float depth, float density, float extinction, float h, float
     return sun + mix(below, above, h) * AMBIENT_GAIN;
 }
 
+// A lightning flash's colour, and the blocks over which its light, scattered many times inside
+// the cloud, falls to 1/e: the cloud around the bolt glows and the deck beyond stays dark.
+const vec3 FLASH_COLOUR = vec3(0.75, 0.82, 1.0);
+const float FLASH_REACH = 60.0;
+
+// The light a lightning flash gives a point of cloud: Flash holds where in the clouds' frame the
+// bolt reaches into them and, in w, the irradiance a cloud right at it takes, zero with none.
+vec3 flashLight(vec3 world) {
+    if (Flash.w <= 0.0) {
+        return vec3(0.0);
+    }
+    return FLASH_COLOUR * Flash.w * exp(-distance(world, Flash.xyz) / FLASH_REACH) / (4.0 * PI);
+}
+
 vec3 cloudSource(int layer, vec3 world, float density, float h, CloudPhase phase, float jitter) {
     float overhead = layer == LAYER_SMALL ? coverAbove(LAYER_LARGE, world, vec3(0.0, 1.0, 0.0)) : 0.0;
     return scatteredLight(lightOpticalDepth(layer, world, jitter), density,
-        density * EXTINCTION * layerThickness(layer), h, overhead, 1.0, phase);
+        density * EXTINCTION * layerThickness(layer), h, overhead, 1.0, phase) + flashLight(world);
 }
 
 // A small planet, so the layers curve down to the horizon within the march distance.
@@ -631,7 +645,7 @@ vec4 marchShape(int shape, vec3 direction, float jitter, float limit, out float 
             vec3 source = scatteredLight(shapeLightDepth(shape, world, jitter), density,
                 density * EXTINCTION * cover, rise / height,
                 SHAPE_FLANK_SHADE * (1.0 - smoothstep(0.75, 1.0, rise / height)),
-                1.0 - smoothstep(0.0, SHAPE_LIT_THICKNESS, rise), phase);
+                1.0 - smoothstep(0.0, SHAPE_LIT_THICKNESS, rise), phase) + flashLight(world);
             float stepTransmittance = exp(-density * EXTINCTION * stepLength);
             scattered += transmittance * source * (1.0 - stepTransmittance);
             transmittance *= stepTransmittance;

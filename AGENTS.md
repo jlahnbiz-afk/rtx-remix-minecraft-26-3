@@ -237,6 +237,11 @@ Every layer keeps its share of the Cloud Coverage setting, and two moods a day,
 which turn into the next day's overnight, move it a little either way: how
 unstable the air is grows the cumulus, and how moist it is spreads the large
 cumulus and the altostratus.
+A lightning bolt lights the cloud around where it reaches into their base
+(`LightningFlash`, `Flash` in `cloud_field.glsl`): its light falls off over
+tens of blocks, so the cloud around the bolt glows and the deck beyond stays
+dark; while it flashes the panorama is marched every frame and neither march
+keeps its history, which made the light lag and linger.
 The large cumulus and the altostratus close in ahead of the rain, and broken
 cumulus linger after it. A layer's cover climbs from its edge over at least a
 quarter of the field's span, since a span as small as a low coverage stood
@@ -532,6 +537,9 @@ by its level alone, and at the plain light-level radiance a glowing cube gave
 off about fifteen times a torch while a lantern's flame lit only its glass.
 Changing the block-light multipliers updates existing lights in place over a few
 frames (`ChunkManager.refreshBlockLightIntensities`); terrain is not rebuilt. A
+lightning bolt carries a bluish sphere light a few blocks up from the strike
+while it shows, which lights no fog: lit in the volumetrics, the whole sky
+turned white with each strike. A
 hand-held item whose placed block shows a lit particle gets the same element in
 hand, emitted once the item's pose is on the matrix stack
 (`ItemLayerRenderStateMixin`), so first person, the hidden shadow model, and
