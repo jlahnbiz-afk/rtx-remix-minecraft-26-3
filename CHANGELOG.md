@@ -11,6 +11,48 @@ also part of every mod file name.
 
 ## Unreleased
 
+### Added
+
+- LOD Memory, a Distance & Culling setting: how much mesh data Distant Horizons'
+  terrain may hold for path tracing, from 256 to 4096 MiB, or Unlimited.
+- Puddle Amount and Puddle Reflection, Materials settings: how much of the
+  ground rain puddles cover, and how strongly their water reflects, from clear
+  water's faint reflection up to a mirror.
+- A Debug page in the settings, for views that help find rendering problems.
+  Show Puddle Mask paints rain puddles red by how much water stands there.
+
+### Fixed
+
+- With Distant Horizons, the LOD terrain holds 2048 MiB of meshes by default
+  again, as before 0.3.0, so on graphics cards with 8 GB of memory a higher
+  Distant Horizons quality no longer shrinks it to the ground around you.
+- With ScalableLux installed, receiving a chunk no longer fails: its light
+  engine has no vanilla sky-light source table, and the mod now leaves such
+  chunks to it.
+- With Unbound clouds, the glow of a torch or lamp near the camera now spreads
+  over the clouds as it does over the sky, instead of stopping at them with a
+  dark outline.
+- Rain puddles' reflections grow gradually from their edges to a mirror in the
+  middle, instead of a water surface appearing suddenly on dry ground; the
+  ground around them grows wet and a little darker; puddles cover less of the
+  ground; and
+  puddles grow and dry smoothly instead of in visible steps, without the short
+  stutter each step used to cost.
+- Puddles no longer have waves: the rain ripples them with smaller, more
+  numerous rings, and once it stops they lie still like mirrors. Rivers and the
+  sea keep their waves.
+- With Unbound clouds, the sky no longer turns into completely different clouds
+  every so often as the wind carries them, or when the rain ends.
+- Caustics stay on the floor of shallow water right below you instead of
+  disappearing within a block and a half of the camera.
+- With Unbound clouds, the sky no longer jumps slightly brighter or darker every
+  few seconds while you walk.
+- What other mods draw in the world, such as Litematica's selection boxes,
+  MiniHUD's overlays and Axiom's tool previews, shows over the path-traced
+  image, hidden behind blocks as without RTX.
+- Mobs from GeckoLib mods that draw a layer over the body, such as a pet's
+  armour slot, are no longer black.
+
 ## 0.3.0 - 2026-10-28
 
 Water caustics, skies that change from day to day, a much lighter lens, and

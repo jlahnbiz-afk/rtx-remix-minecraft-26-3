@@ -85,8 +85,12 @@ final class VolumetricClouds {
     private static final double WIND_BLOCKS_PER_TICK = 0.15;
     private static final double WIND_X = 0.96;
     private static final double WIND_Z = 0.28;
-    /** Every noise period in the shader divides this at feature scale 1, so wrapping by it shows no seam. */
-    private static final double WRAP_PERIOD = 18000.0;
+    /**
+     * Every noise period in cloud_field.glsl divides this at feature scale 1, so wrapping by it
+     * shows no seam. At 18000, which most of them did not divide, the whole sky turned into
+     * other clouds whenever the wind or the camera carried the frame across the wrap.
+     */
+    static final double WRAP_PERIOD = 180000.0;
     private static final float HAZE_DISTANCE = 9000.0f;
     private static final float GROUND_ALBEDO = 0.3f;
     /**

@@ -212,7 +212,7 @@ public final class LensEffects {
      */
     private static final float MAX_LIGHT_DISTANCE = 64.0f;
     /** The maps the glow pass writes, one layer each. */
-    private static final int GLOW_LAYERS = 3;
+    private static final int GLOW_LAYERS = 4;
 
     private static final String VERTEX_SHADER = """
             #version 330 core
@@ -330,11 +330,12 @@ public final class LensEffects {
             """;
 
     // Reads a sky kept per band of elevation (SKY_BANDS of them, by the sine of the elevation).
-    // A band's alpha says how recently it saw sky, 1 while it does, and a band at least half
-    // fresh counts as seen.
+    // A band's alpha says how much it is trusted: it falls while the band sees no sky and climbs
+    // back while it does, and a band at least half trusted counts as seen.
     private static final String BAND_READING = "const int SKY_BANDS = " + SKY_BANDS + ";\n" + """
-            vec4 nearestBand(sampler2D bands, int band, float freshness) {
-                for (int d = 0; d < SKY_BANDS; d++) {
+            // The nearest band at least this fresh, from the given distance on; alpha zero when none is.
+            vec4 nearestBand(sampler2D bands, int band, float freshness, int from) {
+                for (int d = from; d < SKY_BANDS; d++) {
                     vec4 below = texelFetch(bands, ivec2(max(band - d, 0), 0), 0);
                     if (below.a > freshness) {
                         return below;
@@ -347,13 +348,19 @@ public final class LensEffects {
                 return vec4(0.0);
             }
 
-            // A band, or the nearest one that sees sky now, or failing that has ever seen it;
-            // alpha zero when none has. A band below the horizon keeps the sky it showed from
-            // high up, and land there faded toward that rather than toward the horizon in view:
-            // after a clear start, rain's distant land glowed white under a dark sky.
+            // A band, passing over by its trust to the nearest other one that sees sky now, or
+            // failing that has ever seen it; alpha zero when none has. A band below the horizon
+            // keeps the sky it showed from high up, and land there faded toward that rather than
+            // toward the horizon in view: after a clear start, rain's distant land glowed white
+            // under a dark sky. Turning from one band to another at once stepped what was read
+            // whenever walking bobbed a band at the edge of the view in and out of it.
             vec4 skyBand(sampler2D bands, int band) {
-                vec4 fresh = nearestBand(bands, band, 0.5);
-                return fresh.a > 0.0 ? fresh : nearestBand(bands, band, 0.0);
+                vec4 own = texelFetch(bands, ivec2(band, 0), 0);
+                vec4 other = nearestBand(bands, band, 0.5, 1);
+                if (other.a <= 0.0) {
+                    other = nearestBand(bands, band, 0.0, 0);
+                }
+                return other.a > 0.0 ? mix(other, own, smoothstep(0.25, 0.75, own.a)) : own;
             }
 
             vec4 skyBandAt(sampler2D bands, float rise) {
@@ -1006,8 +1013,11 @@ public final class LensEffects {
                 if (weights < MIN_SKY_SAMPLES) {
                     return vec4(previous.rgb, previous.a > 0.0 ? max(previous.a - 0.25 * RowFollow, 1.0e-3) : 0.0);
                 }
+                // Back in view after it went stale, the band takes the figure at once and its
+                // trust climbs back as fast as it fell, so the resolve passes over to it gradually.
                 vec3 current = exp2(trimmedMean(sum / weights, band, true));
-                return vec4(previous.a >= 0.5 ? mix(previous.rgb, current, RowFollow) : current, 1.0);
+                return vec4(previous.a >= 0.5 ? mix(previous.rgb, current, RowFollow) : current,
+                    min(max(previous.a, 0.0) + 0.25 * RowFollow, 1.0));
             }
 
             void main() {
@@ -1067,18 +1077,19 @@ public final class LensEffects {
             """;
 
     // The calibration's rows as the lens reads them: each band, or the nearest one measured;
-    // the clear sky's row, with none measured yet, the clouds'; and the residual row's band, or
-    // the nearest one that shows clear sky now, or failing that has ever shown it, or one. Once
-    // a frame, so every read of them is a single texel.
+    // the clear sky's row, with none measured yet, the clouds'; and the residual row's band,
+    // passing over by its trust to the nearest one that shows clear sky now, or failing that
+    // has ever shown it, or one. Once a frame, so every read of them is a single texel.
     private static final String CALIBRATION_RESOLVE_FRAGMENT_SHADER = """
             #version 330 core
             out vec4 fragColor;
             """ + "const int CALIBRATION_BINS = " + CALIBRATION_BINS + ";\n" + """
             uniform sampler2D CalibrationRows;
 
-            // A row's band, or the nearest one at least this fresh; alpha zero when none is.
-            vec4 nearest(int bin, int row, float freshness) {
-                for (int d = 0; d < CALIBRATION_BINS; d++) {
+            // A row's band, or the nearest one at least this fresh, from the given distance on;
+            // alpha zero when none is.
+            vec4 nearest(int bin, int row, float freshness, int from) {
+                for (int d = from; d < CALIBRATION_BINS; d++) {
                     vec4 below = texelFetch(CalibrationRows, ivec2(max(bin - d, 0), row), 0);
                     if (below.a >= freshness) {
                         return below;
@@ -1095,7 +1106,7 @@ public final class LensEffects {
             // yet, the band's guess from the clear sky. Guesses beside measured bands blotched the
             // clouds where the two disagreed.
             vec3 cloudBin(int bin) {
-                vec4 measured = nearest(bin, 0, 1.0);
+                vec4 measured = nearest(bin, 0, 1.0, 0);
                 if (measured.a >= 1.0) {
                     return measured.rgb;
                 }
@@ -1110,12 +1121,19 @@ public final class LensEffects {
                 if (row == 0) {
                     resolved = cloudBin(bin);
                 } else if (row == 1) {
-                    vec4 sky = nearest(bin, 1, 1.0);
+                    vec4 sky = nearest(bin, 1, 1.0, 0);
                     resolved = sky.a >= 1.0 ? sky.rgb : cloudBin(bin);
                 } else {
-                    vec4 fresh = nearest(bin, 2, 0.5);
-                    vec4 seen = fresh.a > 0.0 ? fresh : nearest(bin, 2, 1.0e-3);
-                    resolved = seen.a > 0.0 ? seen.rgb : vec3(1.0);
+                    // Passing over by the band's trust: turning at once to a neighbour as the band
+                    // went stale, and back as it returned, stepped the clouds' sky whenever walking
+                    // bobbed a band at the top of the view in and out of it.
+                    vec4 own = texelFetch(CalibrationRows, ivec2(bin, 2), 0);
+                    vec4 other = nearest(bin, 2, 0.5, 1);
+                    if (other.a <= 0.0) {
+                        other = nearest(bin, 2, 1.0e-3, 0);
+                    }
+                    vec3 fallback = other.a > 0.0 ? other.rgb : vec3(1.0);
+                    resolved = mix(fallback, own.rgb, own.a > 0.0 ? smoothstep(0.25, 0.75, own.a) : 0.0);
                 }
                 fragColor = vec4(resolved, 1.0);
             }
@@ -1125,26 +1143,32 @@ public final class LensEffects {
     // what the air in front of distant land fades toward at that height. Eased toward from last
     // frame's, and kept while no sky shows in a band, its alpha falling below half in about a
     // second so readers prefer bands in view.
-    // Three maps of the open sky per quarter-resolution texel, mipmapped and read coarse, so
+    // Four maps of the open sky per quarter-resolution texel, mipmapped and read coarse, so
     // the clouds' detail, which the image and the panorama draw differently, averages out.
     // Layer 2: how the image's clear sky differs from the atmosphere, in stops, over the dome's
     // clear sky; the residual row is one figure per band of elevation, and around it the
     // atmosphere ran from half to twice the image's sky, toward the moon and away, so the sky
-    // drawn behind the edges of clouds showed as pale or dark rims. Layers 0 and 1: what the
-    // image shows over the dome's thick clouds beyond their light, and the atmosphere behind
-    // them, from which the composite takes the runtime's bloom; over clear or thin cloud,
-    // stars, the moon and the sky's own detail differ from the atmosphere too. Alpha is the
-    // share of each texel to trust.
+    // drawn behind the edges of clouds showed as pale or dark rims. Layer 3: what the clear sky
+    // shows beyond twice the atmosphere, the runtime's bloom: a torch beside the camera at night
+    // brightened the sky around it many times over, and taken as an error of the atmosphere it
+    // was cut off at the clouds. A sunset's sky, several times its band's mean toward the sun,
+    // came out the same either way. Layers 0 and 1: what
+    // the image shows over the dome's thick clouds beyond their light, and the atmosphere behind
+    // them, the bloom where no clear sky is near. Alpha is the share of each texel to trust.
     private static final String GLOW_FRAGMENT_SHADER = """
             #version 330 core
             layout(location = 0) out vec4 overClouds;
             layout(location = 1) out vec4 skyBehind;
             layout(location = 2) out vec4 clearSky;
+            layout(location = 3) out vec4 clearExcess;
             """ + CloudField.defines() + SCENE_SAMPLING + DEPTH_SAMPLING + VIEW_RAY + COLOUR_SPACE
             + PANORAMA_SAMPLING + ATMOSPHERE_SAMPLING + CLOUD_EXPOSURE + """
 
-            // A star or the moon takes in a texel no more than this, in stops.
-            const float MAX_CLEAR_STOPS = 2.0;
+            // How far the image's clear sky is taken to differ from the atmosphere, in stops: a
+            // star or the moon takes in a texel no more than the lower bound, and what lies above
+            // the upper one is bloom.
+            const float MIN_CLEAR_STOPS = -2.0;
+            const float MAX_CLEAR_STOPS = 1.0;
 
             void main() {
                 vec2 uv = gl_FragCoord.xy / ViewportSize;
@@ -1164,10 +1188,11 @@ public final class LensEffects {
                 float thick = sky ? smoothstep(0.02, 0.1, shown.a) : 0.0;
                 float clear = sky && shown.a < 0.02 ? 1.0 : 0.0;
                 vec3 stops = clamp(log2(max(image, vec3(1.0e-6)) / max(modelled, vec3(1.0e-6))),
-                    -MAX_CLEAR_STOPS, MAX_CLEAR_STOPS);
+                    MIN_CLEAR_STOPS, MAX_CLEAR_STOPS);
                 overClouds = vec4((image - cloudLight(shown)) * thick, thick);
                 skyBehind = vec4((1.0 - shown.a) * modelled * thick, thick);
                 clearSky = vec4(stops * clear, clear);
+                clearExcess = vec4(max(image - modelled * exp2(stops), 0.0) * clear, clear);
             }
             """;
 
@@ -1199,8 +1224,11 @@ public final class LensEffects {
                     fragColor = vec4(previous.rgb, previous.a > 0.0 ? max(previous.a - 0.25 * Follow, 0.01) : 0.0);
                     return;
                 }
+                // A band back in view after it went stale takes the sky it shows at once, and
+                // its trust climbs back as fast as it fell, so readers pass over to it gradually.
                 vec3 current = sum / count;
-                fragColor = vec4(previous.a >= 0.5 ? mix(previous.rgb, current, Follow) : current, 1.0);
+                fragColor = vec4(previous.a >= 0.5 ? mix(previous.rgb, current, Follow) : current,
+                    min(max(previous.a, 0.0) + 0.25 * Follow, 1.0));
             }
             """;
 
@@ -1754,7 +1782,8 @@ public final class LensEffects {
 
             // The glow pass's maps of the open sky, read coarse through four reads: 0 the image
             // over the dome's thick clouds less their light, 1 the atmosphere behind them, 2 how
-            // the image's clear sky differs from the atmosphere, in stops.
+            // the image's clear sky differs from the atmosphere, in stops, 3 what it shows beyond
+            // that.
             uniform sampler2DArray Glow;
             const float GLOW_LEVEL = 3.0;
             // Up to this share of the light expected over the dome's clouds is taken for where
@@ -1804,26 +1833,34 @@ public final class LensEffects {
                 float clear = min(stops.a * 4.0, 1.0);
                 vec3 local = stops.a > 1.0e-3 ? exp2(stops.rgb / stops.a * clear) : vec3(1.0);
                 modelled *= local;
-                vec3 behind = max(image - cloudLight(shown), 0.0) / max(1.0 - shown.a, 1.0e-3);
+                // Bloom is the lens's, over everything, and the dome's clouds took it with them:
+                // the glow of a lamp stopped at the skyline. It is taken out of the image before
+                // the clouds are replaced and laid back over all of it afterwards, from what the
+                // image shows beyond the clear sky and the dome's thick clouds it is expected to.
+                // Put back only over the clouds, it cut a dark rim into the glow wherever thin
+                // dome cloud stood beside them.
+                vec4 glow = glowMap(uv, 0.0);
+                vec4 excess = glowMap(uv, 3.0);
+                vec3 overClouds = glow.a > 1.0e-3
+                    ? max((glow.rgb - local * glowMap(uv, 1.0).rgb) / glow.a
+                        - GLOW_FLOOR * (cloudLight(shown) + (1.0 - shown.a) * modelled), 0.0)
+                    : vec3(0.0);
+                float trust = glow.a + excess.a;
+                vec3 bloom = trust > 1.0e-3
+                    ? (overClouds * glow.a + excess.rgb) / trust * min(trust * 4.0, 1.0)
+                    : vec3(0.0);
+                vec3 behind = max(image - bloom - cloudLight(shown), 0.0) / max(1.0 - shown.a, 1.0e-3);
                 // Thin dome clouds' light that their calibration, measured on opaque cloud, does
                 // not take out of the image stays in the sky read through them, and showed as
                 // pale wisps and rims where the marched clouds have none. Clear sky keeps its stars.
                 behind = mix(behind, min(behind, modelled * THIN_SKY_MARGIN), smoothstep(0.005, 0.02, shown.a));
                 float thick = smoothstep(0.02, 0.1, shown.a);
                 behind = mix(behind, modelled, thick);
-                vec3 replaced = cloudLight(marched) + (1.0 - marched.a) * behind;
-                // Bloom is the lens's, over everything, and the dome's clouds took it with them:
-                // the glow of a lamp stopped at the skyline. What the image shows over them beyond
-                // their light and the sky behind is put back over the marched clouds, and over the
-                // sky behind them as far as no clear sky around brought it in.
-                vec4 glow = glowMap(uv, 0.0);
-                if (glow.a > 1.0e-3) {
-                    vec3 bloom = (glow.rgb - local * glowMap(uv, 1.0).rgb) / glow.a
-                        - GLOW_FLOOR * (cloudLight(shown) + (1.0 - shown.a) * modelled);
-                    replaced += max(bloom, 0.0) * min(glow.a * 4.0, 1.0)
-                        * (marched.a + (1.0 - marched.a) * thick * (1.0 - clear));
-                }
-                return mix(colour, linearToSrgb(replaced), 1.0 - Rain);
+                vec3 replaced = cloudLight(marched) + (1.0 - marched.a) * behind + bloom;
+                // Where neither has a cloud the image stays as it is, even where the coarse bloom
+                // reads brighter than the sky it lies on.
+                float change = smoothstep(0.0, 0.02, max(marched.a, shown.a));
+                return mix(colour, linearToSrgb(replaced), change * (1.0 - Rain));
             }
 
             // The haze's share at each pixel and the share of it that shows sky, settled over
@@ -1959,8 +1996,12 @@ public final class LensEffects {
                 return clamp(1.0 + contrast * (light - 1.0), vec3(0.0), vec3(1.0 + 4.0 * contrast));
             }
 
+            // Nearer than this is the hand, drawn a tenth of its size in front of the eye. The
+            // depth of field's distance, a block and a half, also took the floor at a wader's feet.
+            const float CAUSTIC_HAND_DISTANCE = 0.25;
+
             vec3 caustics(vec2 uv, vec3 colour, float axial) {
-                if (isSky(axial) || axial < HAND_DISTANCE) {
+                if (isSky(axial) || axial < CAUSTIC_HAND_DISTANCE) {
                     return colour;
                 }
                 vec3 ray = viewRay(uv);

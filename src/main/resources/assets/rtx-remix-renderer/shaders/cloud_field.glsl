@@ -47,11 +47,12 @@ const float ALTO_THICKNESS = 40.0;
 const float SMALL_DENSITY = 1.0;
 const float LARGE_DENSITY = 1.0;
 const float ALTO_DENSITY = 0.12;
-// Blocks per noise tile at feature scale 1, for each layer's weather cells and clumps.
+// Blocks per noise tile at feature scale 1, for each layer's weather cells and clumps. Each
+// divides the frame's wrap, VolumetricClouds.WRAP_PERIOD (180000), or the sky jumps at the wrap.
 const float SMALL_BROAD_PERIOD = 5000.0;
 const float SMALL_FINE_PERIOD = 900.0;
 const float LARGE_BROAD_PERIOD = 10000.0;
-const float LARGE_FINE_PERIOD = 2600.0;
+const float LARGE_FINE_PERIOD = 180000.0 / 69.0;
 const float ALTO_BROAD_PERIOD = 60000.0;
 const float ALTO_FINE_PERIOD = 7500.0;
 const float ALTO_WARP = 3000.0;
