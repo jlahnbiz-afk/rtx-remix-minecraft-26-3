@@ -89,3 +89,10 @@ are not submitted again or heuristically replaced with billboards. This is a
 CPU-quad adapter, not universal support for procedural GPU geometry or arbitrary
 custom shaders. Source-specific extraction/culling policies remain the source's
 responsibility; the adapter does not resurrect geometry absent from a state.
+
+## Layer reuse and emission isolation
+
+Equal layer descriptors reuse one batch even if recreated each frame. Non-emitting
+sprites do not bind the atlas emissive map; authored masks use a separate bucket
+so coarse mip levels cannot make an ordinary sprite glow. Intrinsic albedo
+emission remains independent, and authored masks retain precedence.
