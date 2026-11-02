@@ -34,6 +34,7 @@ public final class ParticleGeometryRenderer implements AutoCloseable {
     private final InstanceInfoBlendEXT blended = InstanceInfoBlendEXT.textureTimesVertexColorAlphaBlend(25);
     private long cutoutPointer, blendedPointer;
     private boolean ready;
+    private ParticleGeometryVertexConsumer vertexConsumer;
     private int capturedQuads, lastQuads, lastDraws;
 
     public ParticleGeometryRenderer(ParticleAtlasManager atlases) { this.atlases = atlases; }
@@ -57,6 +58,11 @@ public final class ParticleGeometryRenderer implements AutoCloseable {
     }
 
     public void finishFrame() { ready = true; }
+    public ParticleGeometryVertexConsumer vertexConsumer(SingleQuadParticle.Layer source) {
+        if (vertexConsumer == null) vertexConsumer = new ParticleGeometryVertexConsumer();
+        vertexConsumer.begin(layer(source), atlases.geometryBounds(source.textureAtlasLocation()));
+        return vertexConsumer;
+    }
     public void discardFrame() { ready = false; lastQuads = lastDraws = 0; }
     public int quadCount() { return lastQuads; }
     public int drawCount() { return lastDraws; }
@@ -197,6 +203,7 @@ public final class ParticleGeometryRenderer implements AutoCloseable {
             if (retired != null) { retired.destroy(); retired = null; }
         }
         void retire() {
+            if (retired == null && mesh == null) return;
             CleanupSteps cleanup = new CleanupSteps();
             if (retired != null) cleanup.run(() -> { retired.destroy(); retired = null; });
             if (mesh != null) cleanup.run(() -> { mesh.destroy(); mesh = null; });

@@ -72,3 +72,20 @@ in both builds. Include dense vanilla particles, custom multi-quad particles,
 bright and dark rooms, translucent layers, resource reload and RTX toggling.
 Check native quad counts and ensure custom raster submission occurs only when
 RTX is off. Keep diagnostic helpers out of the distributable.
+
+## Public extracted-state fallback
+
+A compatibility fallback recognizes public extracted-state methods with the
+same shape as Minecraft's quad state: `isEmpty()`, `layers()` returning an
+`Iterable`, and `buildLayer(SingleQuadParticle.Layer, VertexConsumer)`.
+Method handles are resolved once per state class, with unsupported results
+cached too. It never opens a private field or method, names another mod's
+internal class, or inspects a third-party storage layout. Vanilla's exact quad
+state skips this lookup entirely and retains its existing worker/slot path.
+
+The fallback reuses one quad of vertex scratch space and a reload-scoped UV
+index to find full sprite bounds, including cropped quads. Unsupported states
+are not submitted again or heuristically replaced with billboards. This is a
+CPU-quad adapter, not universal support for procedural GPU geometry or arbitrary
+custom shaders. Source-specific extraction/culling policies remain the source's
+responsibility; the adapter does not resurrect geometry absent from a state.

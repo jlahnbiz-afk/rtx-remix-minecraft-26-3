@@ -581,6 +581,12 @@ lightmap tints, not albedos, and the runtime lights a blended particle from the
 radiance cache with no self-shadowing, so `ParticleTint` draws soot near-black
 to keep smoke dark over a lit floor.
 
+**Public extracted quad sources.** `ParticleGeometryAdapters` also recognizes the
+public `isEmpty`/`layers`/`buildLayer` contract without opening private storage.
+Vanilla slots skip that lookup; explicit geometry providers retain priority and
+all intrinsic attributes. Generic vertex scratch and sprite UV indexing are
+reused, with atlas bounds invalidated on reload.
+
 **Entities.** Entities and block entities that vanilla already draws are
 captured in place, so a model is evaluated once rather than once for OpenGL and
 again for Remix; entities outside vanilla's frustum are swept up closest-first

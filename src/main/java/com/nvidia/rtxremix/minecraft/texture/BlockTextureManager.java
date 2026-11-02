@@ -1445,11 +1445,16 @@ public class BlockTextureManager {
         return new ParticleMaterialTextures(atlasAlbedo, atlasNormalTex, atlasHeightTex,
                 atlasRoughnessTex, atlasMetallicTex, atlasEmissive,
                 BASE_TERRAIN_EMISSION_INTENSITY * appliedTerrainEmissionMultiplier,
-                sprites.stream().filter(sprite -> sprite.emissive != null).mapToLong(sprite ->
+                particleEmissionBounds(sprites));
+    }
+
+    /** Built-in emission shares the atlas without a per-sprite texture object. */
+    static long[] particleEmissionBounds(List<SpriteEntry> entries) {
+        return entries.stream().filter(sprite -> sprite.hasEmission).mapToLong(sprite ->
                         ParticleMaterialTextures.boundsKey(
                                 com.nvidia.rtxremix.HardcodedVertex.packHalf2x16(sprite.u0, sprite.v0),
                                 com.nvidia.rtxremix.HardcodedVertex.packHalf2x16(sprite.u1, sprite.v1)))
-                        .sorted().toArray());
+                        .sorted().toArray();
     }
     public RemixTexture getEmissiveAtlasTexture() { ensureInit(); return atlasEmissive; }
     public RemixTexture getRoughnessAtlasTexture() { ensureInit(); return atlasRoughnessTex; }

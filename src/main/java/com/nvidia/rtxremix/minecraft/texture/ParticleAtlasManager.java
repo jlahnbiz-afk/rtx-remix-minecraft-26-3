@@ -58,6 +58,7 @@ public class ParticleAtlasManager {
     private RemixMaterial material;
     private RemixMaterial itemMaterial;
     private final java.util.Map<Identifier, ParticleMaterialTextures> geometryTextures = new java.util.HashMap<>();
+    private final java.util.Map<Identifier, ParticleSpriteBounds> geometryBounds = new java.util.HashMap<>();
 
     private boolean initialized;
     private boolean initFailed;
@@ -259,6 +260,17 @@ public class ParticleAtlasManager {
     public RemixMaterial getItemMaterial() { return itemMaterial; }
     public boolean isInitialized()     { return initialized; }
 
+    /** Built only for a source using the public vertex stream, never vanilla slots. */
+    public ParticleSpriteBounds geometryBounds(Identifier atlasId) {
+        ParticleSpriteBounds bounds = geometryBounds.get(atlasId);
+        if (bounds != null) return bounds;
+        TextureAtlas atlas = stitchedAtlas(Minecraft.getInstance(), atlasId);
+        if (atlas == null) throw new IllegalStateException("Particle atlas is not stitched: " + atlasId);
+        bounds = ParticleSpriteBounds.sprites(((SpriteAtlasAccessor) atlas).getSprites().values());
+        geometryBounds.put(atlasId, bounds);
+        return bounds;
+    }
+
     /** Reuses the existing atlas uploads; an additional atlas is captured only when requested. */
     public ParticleMaterialTextures geometryTextures(Identifier atlasId) {
         if (TextureAtlas.LOCATION_BLOCKS.equals(atlasId)) {
@@ -316,6 +328,7 @@ public class ParticleAtlasManager {
         material = null;
         itemMaterial = null;
         geometryTextures.clear();
+        geometryBounds.clear();
         initialized = false;
         initFailed = false;
     }

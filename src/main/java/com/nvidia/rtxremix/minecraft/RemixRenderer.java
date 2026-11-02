@@ -39,7 +39,7 @@ import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.texture.ParticleAtlasManager;
 import com.nvidia.rtxremix.minecraft.particle.RemixParticleRenderer.PreparedFrame;
 import com.nvidia.rtxremix.minecraft.particle.RemixParticleRenderer;
-import com.nvidia.rtxremix.minecraft.particle.ExtractedParticleGeometry;
+import com.nvidia.rtxremix.minecraft.particle.ParticleGeometryAdapters;
 import com.nvidia.rtxremix.minecraft.particle.ParticleGeometryRenderer;
 import com.nvidia.rtxremix.minecraft.weather.Puddles;
 import com.nvidia.rtxremix.minecraft.weather.RainSurfaces;
@@ -1087,7 +1087,8 @@ public class RemixRenderer {
         try {
             for (int i = 0; i < states.particles.size(); i++) {
                 var state = states.particles.get(i);
-                if (!(state instanceof ExtractedParticleGeometry source) || !source.rtxremix$hasGeometry()) continue;
+                var source = ParticleGeometryAdapters.forState(state);
+                if (source == null || !source.hasGeometry(state)) continue;
                 if (!begun) {
                     particleAtlasManager.initialize();
                     if (!particleAtlasManager.isInitialized()) throw new IllegalStateException("Particle atlases are not initialized");
@@ -1095,7 +1096,7 @@ public class RemixRenderer {
                     particleGeometryRenderer.beginFrame(camera);
                     begun = true;
                 }
-                source.rtxremix$captureGeometry(particleGeometryRenderer);
+                source.capture(state, particleGeometryRenderer);
             }
             if (begun) particleGeometryRenderer.finishFrame();
         } catch (RuntimeException | Error e) {
