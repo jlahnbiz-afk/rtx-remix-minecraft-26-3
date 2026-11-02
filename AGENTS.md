@@ -522,8 +522,13 @@ toward the sun and the clouds' shadow put the web out.
 **Particles.** Slot preparation and CPU mesh snapshots run on a dedicated worker
 and are double buffered: the render thread publishes the previous frame's
 payload at the top of the frame and joins the worker after submit, so particles
-trail the scene by exactly one frame. Only `SINGLE_QUADS` particles are
-captured; item-atlas particles are alpha-tested. Vanilla particle colours are
+trail the scene by exactly one frame. `SINGLE_QUADS` retains that path. Other
+completed CPU-quad states use `particle/ExtractedParticleGeometry` or the
+public `layers`/`buildLayer` shape adapter, synchronously before vanilla submit
+is suppressed. Generic lookup never opens private storage and skips vanilla's
+exact quad state. Shared native batching and reload-scoped sprite bounds are
+described in `docs/PARTICLES.md`; only explicit intrinsic attributes or authored
+atlas masks provide emission. Item-atlas particles are alpha-tested. Vanilla particle colours are
 lightmap tints, not albedos, and the runtime lights a blended particle from the
 radiance cache with no self-shadowing, so `ParticleTint` draws soot near-black
 to keep smoke dark over a lit floor.

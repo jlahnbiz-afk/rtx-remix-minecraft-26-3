@@ -57,6 +57,8 @@ public class ParticleAtlasManager {
 
     private RemixMaterial material;
     private RemixMaterial itemMaterial;
+    private final java.util.Map<Identifier, ParticleMaterialTextures> geometryTextures = new java.util.HashMap<>();
+    private final java.util.Map<Identifier, ParticleSpriteBounds> geometryBounds = new java.util.HashMap<>();
 
     private boolean initialized;
     private boolean initFailed;
@@ -149,6 +151,7 @@ public class ParticleAtlasManager {
         }
 
         boolean hasAnyNormal = false, hasAnyHeight = false, hasAnyEmissive = false;
+        List<Long> authoredEmissionBounds = new ArrayList<>();
 
         for (var entry : sprites.entrySet()) {
             Identifier spriteId = entry.getKey();
@@ -177,6 +180,9 @@ public class ParticleAtlasManager {
                     LabPBRConverter.blitEmissive(emissiveAtlas, atlasW, albedoRGBA, sImg,
                             pixX, pixY, pixW, pixH, 0);
                     hasAnyEmissive = true;
+                    authoredEmissionBounds.add(ParticleMaterialTextures.boundsKey(
+                            com.nvidia.rtxremix.HardcodedVertex.packHalf2x16(sprite.getU0(), sprite.getV0()),
+                            com.nvidia.rtxremix.HardcodedVertex.packHalf2x16(sprite.getU1(), sprite.getV1())));
                 }
             } finally {
                 if (nImg != null) nImg.close();
@@ -215,6 +221,9 @@ public class ParticleAtlasManager {
 
         RemixMaterial atlasMaterial = buildOpaqueMaterial(albedoTex, normalTex, heightTex,
                 roughnessTex, metallicTex, emissiveTex);
+        geometryTextures.put(atlas.location(), new ParticleMaterialTextures(albedoTex, normalTex, heightTex,
+                roughnessTex, metallicTex, emissiveTex, 40.0f,
+                authoredEmissionBounds.stream().mapToLong(Long::longValue).sorted().toArray()));
         if (atlasMaterial != null) {
             LOGGER.info("{} initialized ({}x{}, {} sprites, normal={}, height={}, emissive={})",
                     name, atlasW, atlasH, sprites.size(), hasAnyNormal, hasAnyHeight, hasAnyEmissive);
@@ -250,6 +259,33 @@ public class ParticleAtlasManager {
     /** The item atlas's material, or null when the item atlas could not be captured. */
     public RemixMaterial getItemMaterial() { return itemMaterial; }
     public boolean isInitialized()     { return initialized; }
+
+    /** Built only for a source using the public vertex stream, never vanilla slots. */
+    public ParticleSpriteBounds geometryBounds(Identifier atlasId) {
+        ParticleSpriteBounds bounds = geometryBounds.get(atlasId);
+        if (bounds != null) return bounds;
+        TextureAtlas atlas = stitchedAtlas(Minecraft.getInstance(), atlasId);
+        if (atlas == null) throw new IllegalStateException("Particle atlas is not stitched: " + atlasId);
+        bounds = ParticleSpriteBounds.sprites(((SpriteAtlasAccessor) atlas).getSprites().values());
+        geometryBounds.put(atlasId, bounds);
+        return bounds;
+    }
+
+    /** Reuses the existing atlas uploads; an additional atlas is captured only when requested. */
+    public ParticleMaterialTextures geometryTextures(Identifier atlasId) {
+        if (TextureAtlas.LOCATION_BLOCKS.equals(atlasId)) {
+            return renderer.getTextureManager().particleGeometryTextures();
+        }
+        ParticleMaterialTextures textures = geometryTextures.get(atlasId);
+        if (textures != null) return textures;
+        TextureAtlas atlas = stitchedAtlas(Minecraft.getInstance(), atlasId);
+        if (atlas == null) throw new IllegalStateException("Particle atlas is not stitched: " + atlasId);
+        buildAtlasMaterial(atlas, "custom_particle_atlas_" + geometryTextures.size(), "",
+                LabPBRConverter.buildVariantCache(Minecraft.getInstance().getResourceManager()));
+        textures = geometryTextures.get(atlasId);
+        if (textures == null) throw new IllegalStateException("Could not capture particle atlas: " + atlasId);
+        return textures;
+    }
 
     private RemixTexture uploadTexture(String name, byte[] data, int w, int h, int fmt, int purpose) {
         ByteBuffer buf = DirectBufferPool.acquire(data.length);
@@ -291,6 +327,8 @@ public class ParticleAtlasManager {
 
         material = null;
         itemMaterial = null;
+        geometryTextures.clear();
+        geometryBounds.clear();
         initialized = false;
         initFailed = false;
     }

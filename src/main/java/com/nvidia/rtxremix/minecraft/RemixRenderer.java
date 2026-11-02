@@ -35,6 +35,8 @@ import com.nvidia.rtxremix.minecraft.texture.BlockTextureManager;
 import com.nvidia.rtxremix.minecraft.texture.ParticleAtlasManager;
 import com.nvidia.rtxremix.minecraft.particle.RemixParticleRenderer.PreparedFrame;
 import com.nvidia.rtxremix.minecraft.particle.RemixParticleRenderer;
+import com.nvidia.rtxremix.minecraft.particle.ParticleGeometryAdapters;
+import com.nvidia.rtxremix.minecraft.particle.ParticleGeometryRenderer;
 import com.nvidia.rtxremix.minecraft.weather.Puddles;
 import com.nvidia.rtxremix.minecraft.weather.RainSurfaces;
 import com.nvidia.rtxremix.minecraft.weather.RemixWeatherRenderer;
@@ -175,6 +177,7 @@ public class RemixRenderer {
         return thread;
     });
     private volatile CompletableFuture<ParticleRenderResult> particleRenderFuture;
+    private ParticleGeometryRenderer particleGeometryRenderer;
     // Double-buffer: holds frame N's prepared particles for submission during frame N+1.
     private PreparedFrame pendingParticleFrame;
     private long particleNanosThisFrame;
@@ -568,6 +571,7 @@ public class RemixRenderer {
         if (entitySubmitter != null) entitySubmitter.reloadMaterials();
         if (entityPass != null) entityPass.discardPoseSnapshots();
         if (particleRenderer != null) particleRenderer.cleanup();
+        clearParticleGeometry();
         if (particleAtlasManager != null) particleAtlasManager.cleanup();
         entityAtlasPreloadPending = true;
         if (weatherRenderer != null) weatherRenderer.cleanup();
@@ -786,6 +790,7 @@ public class RemixRenderer {
                 if (chunkManager != null) chunkManager.hideRetainedInstances();
                 if (lodTerrain != null) lodTerrain.update(remixApi, null, null, false, null);
                 discardPendingParticleFrame();
+                if (particleGeometryRenderer != null) particleGeometryRenderer.discardFrame();
                 // Closed by the finally, like the RTX-disabled branch below. endFrame is not
                 // idempotent: it re-adds elapsed from the same frame start and refolds min,
                 // max and the frame count.
@@ -806,6 +811,7 @@ public class RemixRenderer {
                 // A payload prepared before the toggle holds world-space vertices from the
                 // old camera position; publishing it on re-enable would draw stale geometry.
                 discardPendingParticleFrame();
+                if (particleGeometryRenderer != null) particleGeometryRenderer.discardFrame();
                 return;
             }
 
@@ -819,6 +825,7 @@ public class RemixRenderer {
                 discardPendingParticleFrame();
             }
             submitPendingParticleFrame();
+            if (particleGeometryRenderer != null) particleGeometryRenderer.submit(remixApi);
 
             Camera camera = client.gameRenderer.mainCamera();
             float tickDelta = client.getDeltaTracker().getGameTimeDeltaPartialTick(true);
@@ -1049,6 +1056,50 @@ public class RemixRenderer {
         perfTimer.count(cntBlockEntityMeshCreates, stats.meshCreates());
         perfTimer.injectNanos(perfBlockEntityCapture, stats.captureMicros() * 1000L);
         perfTimer.injectNanos(perfBlockEntitySubmit, stats.submitMicros() * 1000L);
+    }
+
+    /** Consumes custom states synchronously while their source storage is still valid. */
+    public void captureParticleGeometry(net.minecraft.client.renderer.state.level.ParticlesRenderState states, Vec3 camera) {
+        if (!initialized || !RtxRemixMod.isParticlesEnabled()) {
+            if (particleGeometryRenderer != null) particleGeometryRenderer.discardFrame();
+            return;
+        }
+        if (particleGeometryRenderer != null) particleGeometryRenderer.beginFrame(camera);
+        boolean begun = particleGeometryRenderer != null;
+        try {
+            for (int i = 0; i < states.particles.size(); i++) {
+                var state = states.particles.get(i);
+                var source = ParticleGeometryAdapters.forState(state);
+                if (source == null || !source.hasGeometry(state)) continue;
+                if (!begun) {
+                    particleAtlasManager.initialize();
+                    if (!particleAtlasManager.isInitialized()) throw new IllegalStateException("Particle atlases are not initialized");
+                    particleGeometryRenderer = new ParticleGeometryRenderer(particleAtlasManager);
+                    particleGeometryRenderer.beginFrame(camera);
+                    begun = true;
+                }
+                source.capture(state, particleGeometryRenderer);
+            }
+            if (begun) particleGeometryRenderer.finishFrame();
+        } catch (RuntimeException | Error e) {
+            if (particleGeometryRenderer != null) particleGeometryRenderer.discardFrame();
+            throw e;
+        }
+    }
+
+    public int getExtractedParticleQuadCount() {
+        return particleGeometryRenderer == null ? 0 : particleGeometryRenderer.quadCount();
+    }
+
+    public int getExtractedParticleDrawCount() {
+        return particleGeometryRenderer == null ? 0 : particleGeometryRenderer.drawCount();
+    }
+
+    private void clearParticleGeometry() {
+        if (particleGeometryRenderer != null) {
+            particleGeometryRenderer.close();
+            particleGeometryRenderer = null;
+        }
     }
 
     private CompletableFuture<ParticleRenderResult> startParticleRenderTask(float tickDelta, long frameIndex) {
@@ -1545,6 +1596,7 @@ public class RemixRenderer {
         if (blockOutlinePass != null) {
             blockOutlinePass.clear();
         }
+        clearParticleGeometry();
         if (particleRenderer != null) {
             particleRenderer.cleanup();
         }
@@ -1609,6 +1661,7 @@ public class RemixRenderer {
             entitySubmitter.close();
             entitySubmitter = null;
         }
+        clearParticleGeometry();
         if (particleRenderer != null) {
             particleRenderer.cleanup();
             particleRenderer = null;
