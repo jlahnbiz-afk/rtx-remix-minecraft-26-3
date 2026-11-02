@@ -11,6 +11,8 @@ and the particle shader's alpha cutoff. It batches native meshes by layer and
 intrinsic emission, pages at 8192 quads, reuses buffers and existing atlas
 uploads, and releases inactive page storage and world/reload resources.
 It adds no raster pass, particle simulation or second live-particle extraction.
+Equal layer descriptors share a batch even if a source recreates the descriptor
+each frame, preventing a growing collection of equivalent materials/pages.
 
 ## Source contracts
 
@@ -42,6 +44,9 @@ can supply its emission floor; authored emission takes precedence, including
 Minecraft's built-in emitting block sprites. No per-particle light objects or
 duplicate emission atlases are created. Vanilla flames keep their current
 authored materials and worker rendering.
+Non-emitting sprites use a material without the emissive atlas, preserving the
+terrain renderer's protection against emission bleeding at coarse mip levels.
+Authored masks and intrinsic albedo emission remain separate material buckets.
 
 Material emission can contribute to the runtime's indirect lighting, but a bright
 pixel does not guarantee a visible nearby illumination change. Sampling of tiny,

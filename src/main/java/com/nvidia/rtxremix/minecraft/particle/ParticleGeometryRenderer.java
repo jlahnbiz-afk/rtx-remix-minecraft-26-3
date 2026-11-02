@@ -20,7 +20,7 @@ import com.nvidia.rtxremix.minecraft.util.CleanupSteps;
 import com.nvidia.rtxremix.minecraft.util.DirectBufferPool;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
+import java.util.HashMap;
 import net.minecraft.client.particle.SingleQuadParticle;
 import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.world.phys.Vec3;
@@ -28,7 +28,7 @@ import net.minecraft.world.phys.Vec3;
 /** Render-thread batching for extracted quad sources, independent of live billboard slots. */
 public final class ParticleGeometryRenderer implements AutoCloseable {
     private final ParticleAtlasManager atlases;
-    private final IdentityHashMap<SingleQuadParticle.Layer, Layer> layers = new IdentityHashMap<>();
+    private final HashMap<SingleQuadParticle.Layer, Layer> layers = new HashMap<>();
     private final float[] transform = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
     private final InstanceInfoBlendEXT cutout = InstanceInfoBlendEXT.textureTimesVertexColorAlphaTest(25);
     private final InstanceInfoBlendEXT blended = InstanceInfoBlendEXT.textureTimesVertexColorAlphaBlend(25);
@@ -114,7 +114,7 @@ public final class ParticleGeometryRenderer implements AutoCloseable {
 
     private final class Layer implements ParticleGeometrySink, AutoCloseable {
         final SingleQuadParticle.Layer source;
-        final Bucket[] buckets = new Bucket[16];
+        final Bucket[] buckets = new Bucket[ParticleMaterialTextures.AUTHORED_EMISSION + 1];
         ParticleMaterialTextures textures;
         Page active;
         Layer(SingleQuadParticle.Layer source) { this.source = source; }
@@ -126,7 +126,7 @@ public final class ParticleGeometryRenderer implements AutoCloseable {
             if (active != null) throw new IllegalStateException("Unfinished extracted particle quad");
             if (emission < 0 || emission > 15) throw new IllegalArgumentException("Particle emission must be in 0..15");
             if (textures == null) textures = atlases.geometryTextures(source.textureAtlasLocation());
-            emission = textures.effectiveEmission(emission, min, max);
+            emission = textures.materialBucket(emission, min, max);
             Bucket bucket = buckets[emission];
             if (bucket == null) {
                 bucket = new Bucket(textures, emission);
