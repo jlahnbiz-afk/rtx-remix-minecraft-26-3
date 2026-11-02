@@ -459,7 +459,6 @@ public class RemixRenderer {
             LOGGER.info("Config option-layers acquired - conf-layer blending active");
 
             initialized = true;
-            if (RtxRemixMod.isParticlesEnabled()) particleAtlasManager.prepareDeclaredAtlases();
             LOGGER.info("RTX Remix renderer initialized successfully!");
 
         } catch (RemixException e) {
@@ -570,10 +569,12 @@ public class RemixRenderer {
         if (!initialized) return;
 
         applyPendingWorldResourceChanges();
-        if (RtxRemixMod.isParticlesEnabled() && particleAtlasManager != null) particleAtlasManager.prepareDeclaredAtlases();
         if (RtxRemixMod.isBlockEntitiesEnabled()) {
             preloadEntityAtlasesForCapture();
         }
+        // Saved settings and world conf layers are active here. Preparing in initialize()
+        // would allocate materials before those settings and world options are installed.
+        if (RtxRemixMod.isParticlesEnabled() && particleAtlasManager != null) particleAtlasManager.prepareDeclaredAtlases();
     }
 
     private void applyPendingWorldResourceChanges() {
